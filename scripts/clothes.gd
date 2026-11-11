@@ -5,17 +5,17 @@ extends RefCounted
 const SLOTS := [
     {"id": "jacket", "name": "Куртка", "items": [
         ["бирюзовая", Color(0.09, 0.42, 0.52), 0],
-        ["чёрная кожаная", Color(0.08, 0.08, 0.09), 2500],
+        ["чёрная кожаная", Color(0.08, 0.08, 0.09), 2500, "cloth_leather"],
         ["красная", Color(0.65, 0.10, 0.10), 1500],
         ["хаки", Color(0.33, 0.36, 0.22), 1200],
         ["белая", Color(0.92, 0.92, 0.90), 2000],
         ["жёлтая", Color(0.90, 0.70, 0.10), 1800],
-        ["спортивная синяя", Color(0.10, 0.20, 0.60), 3000],
+        ["спортивная синяя", Color(0.10, 0.20, 0.60), 3000, "cloth_tracksuit"],
     ]},
     {"id": "pants", "name": "Штаны", "items": [
         ["джинсы", Color(0.17, 0.24, 0.38), 0],
         ["чёрные", Color(0.08, 0.08, 0.09), 800],
-        ["серые спортивные", Color(0.45, 0.46, 0.48), 900],
+        ["серые спортивные", Color(0.45, 0.46, 0.48), 900, "cloth_tracksuit"],
         ["бежевые", Color(0.70, 0.60, 0.45), 1100],
         ["камуфляж", Color(0.30, 0.33, 0.22), 1500],
     ]},
@@ -48,6 +48,22 @@ static func default_look() -> Dictionary:
     for slot: Dictionary in SLOTS:
         d[slot["id"]] = 0
     return d
+
+
+## Ткань по умолчанию для каждого раздела (у вещи может быть своя — 4-й элемент).
+const DEFAULT_TEX := {"jacket": "cloth_nylon", "pants": "cloth_denim", "shoes": "cloth_sneaker",
+        "hair": "hair", "skin": "skin"}
+
+
+## Текстуры для персонажа: {"jacket": "cloth_leather", ...}.
+static func textures(look: Dictionary) -> Dictionary:
+    var out := {}
+    for slot: Dictionary in SLOTS:
+        var items: Array = slot["items"]
+        var i := clampi(int(look.get(slot["id"], 0)), 0, items.size() - 1)
+        var item: Array = items[i]
+        out[slot["id"]] = item[3] if item.size() > 3 else DEFAULT_TEX.get(slot["id"], "")
+    return out
 
 
 ## Цвета для персонажа по выбранным номерам: {"jacket": Color, ...}.

@@ -32,6 +32,8 @@ signal stepped(run: bool)
 var _step_acc := 0.0
 var _was_on_floor := true
 var _look_mats := {}   # slot -> материал (куртка, штаны, кроссовки, волосы, кожа)
+var _face_mat: ShaderMaterial = null
+var _tex_cache := {}
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _visual: Node3D
@@ -130,12 +132,47 @@ func set_carry(what: String) -> void:
     _visual.add_child(_carry_node)
 
 
-## Перекрасить одежду/внешность: {"jacket": Color, "pants": Color, ...}.
-func set_look(colors: Dictionary) -> void:
+## Перекрасить одежду/внешность: {"jacket": Color, ...} и ткани {"jacket": "cloth_leather", ...}.
+func set_look(colors: Dictionary, textures := {}) -> void:
     for id: String in colors:
         if _look_mats.has(id):
             var m: StandardMaterial3D = _look_mats[id]
             m.albedo_color = colors[id]
+    for id: String in textures:
+        if _look_mats.has(id):
+            _set_cloth(_look_mats[id], String(textures[id]))
+    if _face_mat and colors.has("skin"):
+        var c: Color = colors["skin"]
+        _face_mat.set_shader_parameter("skin", Vector3(c.r, c.g, c.b))
+
+
+## Ткань на материал: по координатам самой детали, повтор каждые ~30 см.
+func _set_cloth(m: StandardMaterial3D, tex_name: String) -> void:
+    var t := _load_tex(tex_name)
+    if t == null:
+        return
+    m.albedo_texture = t
+    m.uv1_triplanar = true
+    m.uv1_scale = Vector3.ONE * 3.5
+
+
+func _load_tex(tex_name: String) -> Texture2D:
+    if tex_name == "":
+        return null
+    if _tex_cache.has(tex_name):
+        return _tex_cache[tex_name]
+    var path := "res://textures/%s.png" % tex_name
+    var t: Texture2D = null
+    if ResourceLoader.exists(path):
+        t = load(path)
+        var img := t.get_image()
+        if img:
+            if img.is_compressed():
+                img.decompress()
+            img.generate_mipmaps()
+            t = ImageTexture.create_from_image(img)
+    _tex_cache[tex_name] = t
+    return t
 
 
 ## Включить/выключить игрока (выключаем, пока он сидит в машине).
@@ -277,6 +314,15 @@ func _build_character() -> void:
     var sole := _mat(Color(0.2, 0.2, 0.2), 0.9)
     var eye := _mat(Color(0.05, 0.05, 0.05), 0.3)
     _look_mats = {"skin": skin, "hair": hair, "jacket": jacket, "pants": jeans, "shoes": shoes}
+    _set_cloth(shirt, "cloth_knit")
+    # Лицо: шейдер с картинкой спереди головы (если есть textures/face.png)
+    var face_tex := _load_tex("face")
+    var head_mat: Material = skin
+    if face_tex and ResourceLoader.exists("res://shaders/face.gdshader"):
+        _face_mat = ShaderMaterial.new()
+        _face_mat.shader = load("res://shaders/face.gdshader")
+        _face_mat.set_shader_parameter("face_tex", face_tex)
+        head_mat = _face_mat
 
     var body := _joint(_visual, Vector3.ZERO, "body")
     var pelvis := _joint(body, Vector3(0, 0.95, 0), "pelvis")
@@ -297,10 +343,11 @@ func _build_character() -> void:
     _part(spine, _cylinder(0.055, 0.1), skin, Vector3(0, 0.55, 0))
 
     var head := _joint(spine, Vector3(0, 0.58, 0), "head")
-    _part(head, _sphere(0.12), skin, Vector3(0, 0.1, 0))
+    _part(head, _sphere(0.12), head_mat, Vector3(0, 0.1, 0))
     _part(head, _sphere(0.13), hair, Vector3(0, 0.14, 0.02), Vector3.ZERO, Vector3(1, 0.85, 1.05))
-    for side in [-1.0, 1.0]:
-        _part(head, _sphere(0.018), eye, Vector3(0.045 * side, 0.11, -0.112))
+    if _face_mat == null:   # без картинки лица — простые глаза
+        for side in [-1.0, 1.0]:
+            _part(head, _sphere(0.018), eye, Vector3(0.045 * side, 0.11, -0.112))
 
     for side in [-1.0, 1.0]:
         var sfx := "_l" if side < 0.0 else "_r"

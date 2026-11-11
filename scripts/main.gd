@@ -72,7 +72,7 @@ const DAY_HORIZON := Color(0.76, 0.82, 0.88)
 const DUSK_HORIZON := Color(0.95, 0.60, 0.40)
 const NIGHT_TOP := Color(0.02, 0.03, 0.08)
 const NIGHT_HORIZON := Color(0.08, 0.10, 0.18)
-const DAY_AMBIENT := Color(0.55, 0.60, 0.70)
+const DAY_AMBIENT := Color(0.36, 0.40, 0.48)
 const NIGHT_AMBIENT := Color(0.10, 0.12, 0.22)
 
 var cash := START_MONEY      # наличные
@@ -130,6 +130,7 @@ var _quiz_ok := 0
 var _sun: DirectionalLight3D
 var _env: Environment
 var _sky_mat: ProceduralSkyMaterial
+var _sky_sh: ShaderMaterial = null   # небо с облаками и звёздами (если есть текстура облаков)
 var _light_timer := 0.0
 var _save_timer := 0.0
 
@@ -359,7 +360,7 @@ func _on_reset() -> void:
     look = Clothes.default_look()
     owned_clothes = {}
     _clear_gps()
-    _player.set_look(Clothes.colors(look))
+    _player.set_look(Clothes.colors(look), Clothes.textures(look))
     _player.global_position = PLAYER_SPAWN
     _player.set_camera_yaw(PI)
     _update_daylight()
@@ -663,8 +664,9 @@ func _spawn_life() -> void:
 
     for i in LAMP_LIGHTS:
         var l := OmniLight3D.new()
-        l.omni_range = 16.0
-        l.light_energy = 1.6
+        l.omni_range = 13.0
+        l.omni_attenuation = 1.6   # свет быстрее гаснет — нет белого «пятна» у стены
+        l.light_energy = 0.8
         l.light_color = Color(1.0, 0.85, 0.6)
         l.shadow_enabled = false
         l.visible = false
@@ -688,7 +690,7 @@ func _update_lamp_lights(focus: Vector3) -> void:
         l.visible = i < lamps.size()
         if l.visible:
             l.global_position = lamps[i]
-            l.light_energy = 1.6 * _night_k
+            l.light_energy = 0.8 * _night_k
 
 
 var _sort_focus := Vector3.ZERO
@@ -744,7 +746,7 @@ func _spawn_player() -> void:
         _player.position = lp + Vector3.UP * 0.3
     add_child(_player)
     _player.touch = _touch
-    _player.set_look(Clothes.colors(look))
+    _player.set_look(Clothes.colors(look), Clothes.textures(look))
     _player.stepped.connect(_on_step)
     _player.set_camera_yaw(float(_loaded.get("player_yaw", PI)))
 
@@ -869,6 +871,18 @@ func _build_environment() -> void:
     _sky_mat.ground_bottom_color = Color(0.25, 0.26, 0.24)
     var sky := Sky.new()
     sky.sky_material = _sky_mat
+    if ResourceLoader.exists("res://shaders/sky.gdshader") and ResourceLoader.exists("res://textures/sky_clouds.png"):
+        _sky_sh = ShaderMaterial.new()
+        _sky_sh.shader = load("res://shaders/sky.gdshader")
+        var ct: Texture2D = load("res://textures/sky_clouds.png")
+        var img := ct.get_image()
+        if img:
+            if img.is_compressed():
+                img.decompress()
+            img.generate_mipmaps()
+            ct = ImageTexture.create_from_image(img)
+        _sky_sh.set_shader_parameter("clouds", ct)
+        sky.sky_material = _sky_sh
     sky.radiance_size = Sky.RADIANCE_SIZE_32
 
     _env = Environment.new()
@@ -880,7 +894,11 @@ func _build_environment() -> void:
     _env.ambient_light_color = DAY_AMBIENT
     _env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
     _env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-    _env.tonemap_exposure = 0.9
+    _env.tonemap_exposure = 0.8
+    # Чуть больше контраста и цвета — фото-текстуры не выглядят «выгоревшими».
+    _env.adjustment_enabled = true
+    _env.adjustment_contrast = 1.12
+    _env.adjustment_saturation = 1.15
     _env.fog_enabled = true
     _env.fog_light_color = DAY_HORIZON
     _env.fog_density = 0.0025
@@ -894,7 +912,7 @@ func _build_environment() -> void:
     _sun = DirectionalLight3D.new()
     _sun.rotation_degrees = Vector3(-48, -35, 0)
     _sun.light_color = Color(1.0, 0.95, 0.86)
-    _sun.light_energy = 1.05
+    _sun.light_energy = 0.95
     _sun.shadow_enabled = true
     _sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
     _sun.directional_shadow_max_distance = 45.0
@@ -910,7 +928,7 @@ func _update_daylight() -> void:
     if elev > 0.0:
         _sun.rotation_degrees = Vector3(-(6.0 + 56.0 * elev), -35.0 + (h - 12.0) * 10.0, 0.0)
         _sun.light_color = Color(1.0, 0.70, 0.50).lerp(Color(1.0, 0.95, 0.86), clampf(elev * 2.5, 0.0, 1.0))
-        _sun.light_energy = lerpf(0.2, 1.05, clampf(elev * 2.0, 0.0, 1.0))
+        _sun.light_energy = lerpf(0.2, 0.95, clampf(elev * 2.0, 0.0, 1.0))
         _sun.shadow_enabled = _shadows_on
     else:
         # Ночью «солнце» становится слабой луной без теней.
@@ -924,6 +942,18 @@ func _update_daylight() -> void:
     _sky_mat.sky_horizon_color = horizon
     _sky_mat.ground_horizon_color = horizon
     _env.fog_light_color = horizon
+    if _sky_sh:
+        var cl := Color(1, 1, 1).lerp(Color(1.0, 0.70, 0.55), dusk).lerp(Color(0.22, 0.24, 0.32), 1.0 - day_k)
+        _sky_sh.set_shader_parameter("top_color", NIGHT_TOP.lerp(DAY_TOP, day_k))
+        _sky_sh.set_shader_parameter("horizon_color", horizon)
+        _sky_sh.set_shader_parameter("cloud_light", cl)
+        _sky_sh.set_shader_parameter("cloud_dark", cl.darkened(0.35))
+        _sky_sh.set_shader_parameter("cloud_alpha", lerpf(0.55, 1.0, day_k))
+        _sky_sh.set_shader_parameter("stars", clampf((1.0 - day_k) * 1.3 - 0.3, 0.0, 1.0))
+        _sky_sh.set_shader_parameter("sun_dir", _sun.global_transform.basis.z)
+        _sky_sh.set_shader_parameter("sun_color", _sun.light_color)
+        _sky_sh.set_shader_parameter("sun_strength", clampf(elev * 3.0, 0.0, 1.0))
+        _sky_sh.set_shader_parameter("drift", minutes / 1440.0 * 0.5)  # облака медленно плывут
     _env.ambient_light_color = NIGHT_AMBIENT.lerp(DAY_AMBIENT, day_k)
     _night_k = 1.0 - day_k
     if _city:
@@ -1352,7 +1382,7 @@ func _open_market() -> void:
 
 func _on_win_closed() -> void:
     if _win_mode == "market":
-        _player.set_look(Clothes.colors(look))   # снять примерку
+        _player.set_look(Clothes.colors(look), Clothes.textures(look))   # снять примерку
     _win_mode = ""
     _touch.blocked = false
 
@@ -1371,7 +1401,7 @@ func _on_win_row(i: int) -> void:
         if p is Dictionary and p["type"] == "cloth":
             _preview_look = look.duplicate()
             _preview_look[p["slot"]] = p["i"]
-            _player.set_look(Clothes.colors(_preview_look))
+            _player.set_look(Clothes.colors(_preview_look), Clothes.textures(_preview_look))
     _update_win_buttons()
 
 
@@ -1638,7 +1668,7 @@ func _market_cloth(slot: String, i: int, price: int) -> void:
         Sfx.play("click")
     look[slot] = i
     _preview_look = look.duplicate()
-    _player.set_look(Clothes.colors(look))
+    _player.set_look(Clothes.colors(look), Clothes.textures(look))
     _hud.show_toast("Обновка надета!")
     _save_game()
 
