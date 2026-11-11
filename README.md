@@ -66,6 +66,12 @@
 - `scripts/player.gd` — движение, камера, персонаж и анимации
 - `scripts/menu.gd` — главное меню, пауза, настройки
 - `scripts/profile.gd`, `scripts/icons.gd` — окна статистики и банка, иконки
+- `textures/icons/*.png` — иконки интерфейса (белые на прозрачном, 256×256);
+  если картинки нет — иконка рисуется кодом
+- `textures/facade_*.png` — атласы фасадов (4×4 окна) и `*_glow.png` — маски ночных окон;
+  `textures/ground_*.png` — асфальт, плитка, трава, земля, песок (бесшовные);
+  `facade_tower`, `metal_wall`, `roof_gravel`, `garage_door`, `wood_planks`, `concrete`
+- `icon.png`, `textures/icon_*.png` — иконка приложения; `textures/menu_bg.jpg` — фон главного меню
 - `scripts/hud.gd` — деньги, часы, телефон, уведомления
 - `scripts/minimap.gd` — мини-карта
 - `scripts/sfx.gd` — все звуки (глобальный Sfx)

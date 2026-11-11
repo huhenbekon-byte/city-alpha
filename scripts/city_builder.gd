@@ -32,6 +32,7 @@ var _mz := 1.0
 
 var _panel_mats: Array[StandardMaterial3D] = []
 var _brick_mats: Array[StandardMaterial3D] = []
+var _tower_mats: Array[StandardMaterial3D] = []   # высотки-«свечки» (если есть текстура)
 var _m := {}
 
 # --- данные для мини-карты и работ (читают main.gd, minimap.gd, job_courier.gd)
@@ -205,6 +206,8 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
     var mat: Material
     if style == "brick":
         mat = _brick_mats[rng.randi() % _brick_mats.size()]
+    elif style == "tower" and not _tower_mats.is_empty():
+        mat = _tower_mats[rng.randi() % _tower_mats.size()]
     else:
         mat = _panel_mats[rng.randi() % _panel_mats.size()]
 
@@ -490,13 +493,32 @@ func _dist_to_lines(t: float, lines: Array[float]) -> float:
 # ================================================================ материалы
 
 func _make_materials() -> void:
-    var panel_tex := _facade_textures(false)
-    var brick_tex := _facade_textures(true)
-    for col: Color in [Color(0.93, 0.93, 0.91), Color(0.86, 0.87, 0.88), Color(0.90, 0.88, 0.82),
-            Color(0.80, 0.86, 0.90), Color(0.92, 0.86, 0.78)]:
+    # Фасады: картинки из textures/, если есть, иначе рисуем кодом.
+    # Процедурные текстуры строим всегда: они расходуют случайные числа, и от этого
+    # зависит планировка кварталов — так город не «переедет» у старых сохранений.
+    var gen_panel := _facade_textures(false)
+    var gen_brick := _facade_textures(true)
+    var panel_tex := _facade_from_files("facade_panel")
+    var brick_tex := _facade_from_files("facade_brick")
+    var panel_tints: Array = [Color(0.93, 0.93, 0.91), Color(0.86, 0.87, 0.88), Color(0.90, 0.88, 0.82),
+            Color(0.80, 0.86, 0.90), Color(0.92, 0.86, 0.78)]
+    var brick_tints: Array = [Color(0.78, 0.45, 0.36), Color(0.86, 0.74, 0.58), Color(0.90, 0.88, 0.82)]
+    if panel_tex.is_empty():
+        panel_tex = gen_panel
+    else:   # настоящая фотография — оттенки почти белые, чтобы не испортить цвет
+        panel_tints = [Color(1, 1, 1), Color(0.93, 0.94, 0.96), Color(1.0, 0.97, 0.92), Color(0.92, 0.96, 1.0)]
+    if brick_tex.is_empty():
+        brick_tex = gen_brick
+    else:
+        brick_tints = [Color(1, 1, 1), Color(1.0, 0.88, 0.80), Color(0.92, 0.90, 0.88)]
+    for col: Color in panel_tints:
         _panel_mats.append(_facade_mat(col, panel_tex))
-    for col: Color in [Color(0.78, 0.45, 0.36), Color(0.86, 0.74, 0.58), Color(0.90, 0.88, 0.82)]:
+    for col: Color in brick_tints:
         _brick_mats.append(_facade_mat(col, brick_tex))
+    var tower_tex := _facade_from_files("facade_tower")
+    if not tower_tex.is_empty():
+        for col: Color in [Color(1, 1, 1), Color(0.97, 0.95, 0.92), Color(0.93, 0.95, 0.98)]:
+            _tower_mats.append(_facade_mat(col, tower_tex))
 
     _m["asphalt"] = _mat(Color(0.19, 0.19, 0.20), 0.95)
     _m["wasteland"] = _mat(Color(0.30, 0.34, 0.22), 1.0)
@@ -516,12 +538,68 @@ func _make_materials() -> void:
     _m["yellow"] = _mat(Color(0.95, 0.75, 0.15), 0.6)
     _m["blue"] = _mat(Color(0.20, 0.45, 0.80), 0.6)
     _m["white"] = _mat(Color(0.95, 0.95, 0.93), 0.7)
+    # Земля: асфальт и плитка из textures/ (по миру, без растяжения)
+    var asphalt := _tex_mip("res://textures/ground_asphalt.png")
+    if asphalt:
+        _ground_tex(_m["asphalt"], asphalt, Color(0.85, 0.85, 0.87), 7.0)
+        _ground_tex(_m["yard_asphalt"], asphalt, Color(1.0, 1.0, 1.0), 7.0)
+    var tiles := _tex_mip("res://textures/ground_tiles.png")
+    if tiles:
+        _ground_tex(_m["sidewalk"], tiles, Color(0.85, 0.85, 0.85), 2.4)
+        _ground_tex(_m["paving"], tiles, Color(1.0, 0.95, 0.86), 2.4)
+    # Остальные поверхности из textures/ (если файла нет — остаётся просто цвет)
+    var surfaces := [
+        ["grass", "ground_grass", Color(0.9, 0.95, 0.85), 4.0],
+        ["soil", "ground_soil", Color(1, 1, 1), 1.5],
+        ["sand", "ground_sand", Color(1, 1, 1), 1.5],
+        ["roof", "roof_gravel", Color(0.9, 0.9, 0.9), 4.0],
+        ["garage", "metal_wall", Color(1, 1, 1), 3.0],
+        ["wood", "wood_planks", Color(1, 1, 1), 1.2],
+        ["concrete", "concrete", Color(1, 1, 1), 3.0],
+        ["plinth", "concrete", Color(0.8, 0.8, 0.8), 3.0],
+    ]
+    for sf: Array in surfaces:
+        var t := _tex_mip("res://textures/%s.png" % sf[1])
+        if t:
+            _ground_tex(_m[sf[0]], t, sf[2], sf[3])
     var glass := _mat(Color(0.18, 0.26, 0.32), 0.1)
     glass.metallic = 0.5
     _m["glass"] = glass
 
 
-## Текстура одной «ячейки» фасада 3 x 2.8 м: панель со швами или кирпич + окно.
+## Загрузить картинку с мипмапами (без них текстура «рябит» вдали). null — файла нет.
+func _tex_mip(path: String) -> Texture2D:
+    if not ResourceLoader.exists(path):
+        return null
+    var t: Texture2D = load(path)
+    var img := t.get_image()
+    if img == null:
+        return t
+    if img.is_compressed():
+        img.decompress()
+    img.generate_mipmaps()
+    return ImageTexture.create_from_image(img)
+
+
+## Атлас фасада и маска ночных окон из textures/<name>.png и <name>_glow.png.
+func _facade_from_files(name_base: String) -> Array:
+    var albedo := _tex_mip("res://textures/%s.png" % name_base)
+    var glow := _tex_mip("res://textures/%s_glow.png" % name_base)
+    if albedo == null or glow == null:
+        return []
+    return [albedo, glow]
+
+
+## Текстура земли по миру: один повтор на meters метров.
+func _ground_tex(m: StandardMaterial3D, tex: Texture2D, tint: Color, meters: float) -> void:
+    m.albedo_texture = tex
+    m.albedo_color = tint
+    m.uv1_triplanar = true
+    m.uv1_world_triplanar = true
+    m.uv1_scale = Vector3.ONE / meters
+    m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+
+
 ## Текстура фасада: атлас 4x4 ячейки (каждая 3 x 2.8 м — панель со швами
 ## или кирпич + окно) и маска свечения окон для ночи: часть окон «горит».
 func _facade_textures(brick: bool) -> Array:
@@ -578,7 +656,7 @@ func _facade_mat(col: Color, tex: Array) -> StandardMaterial3D:
 
 ## 0 — день, 1 — ночь: светятся окна.
 func set_night(k: float) -> void:
-    for m: StandardMaterial3D in _panel_mats + _brick_mats:
+    for m: StandardMaterial3D in _panel_mats + _brick_mats + _tower_mats:
         m.emission_energy_multiplier = k * 1.3
 
 
@@ -607,7 +685,15 @@ func _define_batches() -> void:
     _batch("bench_seat", _box_mesh(Vector3(1.8, 0.07, 0.45)), _m["wood"], 70.0)
     _batch("bench_back", _box_mesh(Vector3(1.8, 0.35, 0.06)), _m["wood"], 70.0)
     _batch("bench_leg", _box_mesh(Vector3(0.07, 0.45, 0.45)), _m["metal"], 70.0)
-    _batch("garage_door", _box_mesh(Vector3(2.6, 2.1, 0.06)), _vc_mat(0.7), 140.0)
+    # Ворота гаражей: серая текстура, цвет даёт каждый гараж свой (через цвет экземпляра).
+    var door_mat := _vc_mat(0.7)
+    var door_tex := _tex_mip("res://textures/garage_door.png")
+    if door_tex:
+        door_mat.albedo_texture = door_tex
+        door_mat.uv1_triplanar = true   # по координатам самой створки: одна картинка на ворота
+        door_mat.uv1_scale = Vector3(1.0 / 2.6, -1.0 / 2.1, 1.0 / 2.6)
+        door_mat.uv1_offset = Vector3(0.5, 0.5, 0.5)
+    _batch("garage_door", _box_mesh(Vector3(2.6, 2.1, 0.06)), door_mat, 140.0)
     for i in PARKED_COLORS.size():
         _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i]), null, 160.0, true)
 

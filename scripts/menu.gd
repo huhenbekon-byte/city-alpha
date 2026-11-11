@@ -15,6 +15,7 @@ const VOLUME_STEPS := [0.0, 0.25, 0.5, 0.75, 1.0]
 var settings := {"quality": 1, "shadows": true, "view": 1, "fps": true, "volume": 3}
 var started := false
 
+var _bg_image: TextureRect
 var _main_box: VBoxContainer
 var _settings_box: VBoxContainer
 var _subtitle: Label
@@ -33,8 +34,18 @@ func _ready() -> void:
     set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     load_settings()
 
+    # Фон главного меню (картинка) — только до старта; на паузе видно саму игру.
+    _bg_image = TextureRect.new()
+    if ResourceLoader.exists("res://textures/menu_bg.jpg"):
+        _bg_image.texture = load("res://textures/menu_bg.jpg")
+    _bg_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    _bg_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    _bg_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    add_child(_bg_image)
+    _bg_image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
     var bg := ColorRect.new()
-    bg.color = Color(0.03, 0.04, 0.07, 0.72)
+    bg.color = Color(0.03, 0.04, 0.07, 0.55)
     add_child(bg)
     bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
@@ -74,6 +85,7 @@ func _ready() -> void:
 func show_menu(is_started: bool, version: String) -> void:
     started = is_started
     visible = true
+    _bg_image.visible = not started
     _subtitle.text = ("Пауза" if started else "альфа-версия") + "  ·  " + version
     _play_btn.text = "Продолжить" if started else "Играть"
     _reset_armed = false

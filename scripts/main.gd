@@ -1513,23 +1513,23 @@ func _nav_places() -> Array:
         out.append({"cat": "work", "icon": "pin", "col": gold, "name": "Текущее задание", "pos": _work.target})
     elif _job.active and _job.has_target():
         out.append({"cat": "work", "icon": "pin", "col": gold, "name": "Текущее задание", "pos": _job.target})
-    out.append({"cat": "work", "icon": "briefcase", "name": "Автобусный парк — водитель", "pos": c.bus_depot})
-    out.append({"cat": "work", "icon": "briefcase", "name": "Склад — грузчик", "pos": c.warehouse_drop})
-    out.append({"cat": "work", "icon": "briefcase", "name": "Стоянка фур — дальнобойщик", "pos": c.truck_depot})
-    out.append({"cat": "work", "icon": "briefcase", "name": "Лесопилка — лесоруб", "pos": c.log_pile})
+    out.append({"cat": "work", "icon": "bus", "name": "Автобусный парк — водитель", "pos": c.bus_depot})
+    out.append({"cat": "work", "icon": "box", "name": "Склад — грузчик", "pos": c.warehouse_drop})
+    out.append({"cat": "work", "icon": "truck", "name": "Стоянка фур — дальнобойщик", "pos": c.truck_depot})
+    out.append({"cat": "work", "icon": "axe", "name": "Лесопилка — лесоруб", "pos": c.log_pile})
     out.append({"cat": "market", "icon": "car", "col": gold, "name": "Общий рынок", "pos": c.market})
     out.append({"cat": "shops", "icon": "cart", "col": gold, "name": "Общий рынок", "pos": c.market})
     for pk: Dictionary in c.pickups:
         out.append({"cat": "shops", "icon": "cart", "name": String(pk["name"]).capitalize(), "pos": pk["pos"]})
     for p: Vector3 in c.atms:
-        out.append({"cat": "bank", "icon": "bank", "name": "Банкомат", "pos": p})
+        out.append({"cat": "bank", "icon": "atm", "name": "Банкомат", "pos": p})
     var pumps: Array = c.fuel_pumps
     var names := ["АЗС — промзона", "АЗС — западная трасса", "АЗС — северная трасса"]
     for k in names.size():
         if k * 2 < pumps.size():
             out.append({"cat": "fuel", "icon": "fuel", "col": Color(1.0, 0.35, 0.3), "name": names[k], "pos": pumps[k * 2]})
-    out.append({"cat": "service", "icon": "wrench", "name": "Мэрия — паспорт", "pos": c.city_hall})
-    out.append({"cat": "service", "icon": "wrench", "name": "Автошкола — права", "pos": c.driving_school})
+    out.append({"cat": "service", "icon": "gavel", "name": "Мэрия — паспорт", "pos": c.city_hall})
+    out.append({"cat": "service", "icon": "wheel", "name": "Автошкола — права", "pos": c.driving_school})
     out.append({"cat": "fun", "icon": "star", "name": "Центральная площадь", "pos": Vector3(0, 0, 0)})
     out.append({"cat": "fun", "icon": "star", "name": "Лес за городом", "pos": Vector3(-270, 0, -270)})
     for p: Vector3 in c.bus_stops:
@@ -1596,7 +1596,7 @@ func _fill_market_rows(rows: Array) -> void:
             rows.append({"icon": "fuel", "icon_col": Color(1.0, 0.35, 0.3), "name": "Канистра бензина 10 л",
                     "value": HudScript.format_money(CANISTER_PRICE), "value_col": gold})
             _win_payload.append({"type": "canister", "price": CANISTER_PRICE})
-            rows.append({"icon": "phone", "name": "Новый номер телефона",
+            rows.append({"icon": "call", "name": "Новый номер телефона",
                     "value": HudScript.format_money(PHONE_PRICE), "value_col": gold})
             _win_payload.append({"type": "phone", "price": PHONE_PRICE})
 

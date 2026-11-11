@@ -4,6 +4,17 @@ extends RefCounted
 ## Плюс скруглённые плашки: Icons.panel(ci, rect, цвет, радиус, обводка, цвет обводки).
 
 const GOLD := Color(1.0, 0.76, 0.18)
+const ICON_DIR := "res://textures/icons/%s.png"
+
+static var _tex := {}   # kind -> Texture2D или null (нет картинки — рисуем кодом)
+
+
+## Картинка иконки из textures/icons, если она есть.
+static func texture(kind: String) -> Texture2D:
+    if not _tex.has(kind):
+        var path := ICON_DIR % kind
+        _tex[kind] = load(path) if ResourceLoader.exists(path) else null
+    return _tex[kind]
 
 
 static func panel(ci: CanvasItem, rect: Rect2, col: Color, radius := 14, border := 0, border_col := Color.BLACK) -> void:
@@ -19,6 +30,16 @@ static func panel(ci: CanvasItem, rect: Rect2, col: Color, radius := 14, border 
 
 static func draw(ci: CanvasItem, kind: String, c: Vector2, s: float, col := Color.WHITE, outline := Color(0, 0, 0, 0)) -> void:
     var o := outline.a > 0.0
+    var tex := texture(kind)
+    if tex:
+        var r := Rect2(c - Vector2(s, s) * 0.5, Vector2(s, s))
+        if o:   # обводка: та же иконка цветом обводки со сдвигами
+            var w := maxf(2.0, s * 0.06)
+            for off: Vector2 in [Vector2(-w, 0), Vector2(w, 0), Vector2(0, -w), Vector2(0, w),
+                    Vector2(-w, -w) * 0.7, Vector2(w, w) * 0.7, Vector2(-w, w) * 0.7, Vector2(w, -w) * 0.7]:
+                ci.draw_texture_rect(tex, Rect2(r.position + off, r.size), false, outline)
+        ci.draw_texture_rect(tex, r, false, col)
+        return
     match kind:
         "wallet":
             var r := Rect2(c - Vector2(s * 0.5, s * 0.36), Vector2(s, s * 0.72))
