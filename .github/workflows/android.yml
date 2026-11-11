@@ -1,0 +1,112 @@
+name: Build Android APK
+
+# Каждый push в main: Godot проверяет скрипты, собирает APK
+# и выкладывает его в Releases → "latest". Скачивай APK прямо с планшета.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.3"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Загрузил с планшета .zip в корень репозитория — распаковываем его
+      # и коммитим файлы. Удобно, когда нельзя загрузить папки по одной.
+      - name: Unpack uploaded project zip
+        run: |
+          ZIP=$(ls *.zip 2>/dev/null | head -n1 || true)
+          if [ -n "$ZIP" ]; then
+            echo "Распаковываю $ZIP"
+            unzip -o -q "$ZIP" -x '.github/*'
+            git rm -q "$ZIP"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -q -m "Распакован $ZIP"
+            git push
+          fi
+          test -f project.godot || { echo "::error::В корне нет project.godot — загрузи архив проекта"; exit 1; }
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Godot + export templates
+        run: |
+          BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          wget -q $BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip
+          wget -q $BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz
+          unzip -q Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip
+          sudo mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 /usr/local/bin/godot
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          unzip -q Godot_v${GODOT_VERSION}-stable_export_templates.tpz
+          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+          rm -rf templates *.zip *.tpz
+
+      - name: Configure Android SDK, JDK and signing key
+        run: |
+          mkdir -p ~/.config/godot
+          for f in editor_settings-4.tres editor_settings-${GODOT_VERSION}.tres; do
+          cat > ~/.config/godot/$f <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$GITHUB_WORKSPACE/android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+          done
+
+      - name: Import project
+        run: godot --headless --path . --import 2>&1 | tee import.log || true
+
+      - name: Check scripts for errors
+        run: |
+          godot --headless --path . --quit-after 60 2>&1 | tee run.log || true
+          if grep -E "SCRIPT ERROR|Parse Error|Failed to load script" import.log run.log; then
+            echo "::error::В скриптах есть ошибки — смотри лог выше"
+            exit 1
+          fi
+
+      - name: Export APK
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ github.workspace }}/android/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+        run: |
+          mkdir -p build
+          godot --headless --path . --export-debug "Android" build/city-alpha.apk 2>&1 | tee export.log
+          test -f build/city-alpha.apk || { echo "::error::APK не собрался — смотри лог экспорта"; exit 1; }
+          ls -la build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: city-alpha-apk
+          path: build/city-alpha.apk
+
+      - name: Publish APK to Releases (tag "latest")
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest build/city-alpha.apk \
+            --title "City Alpha — сборка #${{ github.run_number }}" \
+            --notes "Автосборка из коммита ${{ github.sha }}" \
+            --prerelease
