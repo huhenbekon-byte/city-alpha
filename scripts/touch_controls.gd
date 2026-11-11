@@ -42,7 +42,8 @@ var _held := {}  # id кнопки -> индекс пальца
 
 
 func _ready() -> void:
-    set_anchors_preset(Control.PRESET_FULL_RECT)
+    # Именно *_and_offsets_*: иначе размер остаётся 0x0 и кнопки рисуются за экраном.
+    set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     mouse_filter = Control.MOUSE_FILTER_IGNORE
     resized.connect(queue_redraw)
 

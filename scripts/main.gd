@@ -42,7 +42,7 @@ func _process(_delta: float) -> void:
     else:
         _touch.interact_text = ""
 
-    var text := "CITY ALPHA  v0.3    FPS %d" % Engine.get_frames_per_second()
+    var text := "CITY ALPHA  v0.3.1    FPS %d" % Engine.get_frames_per_second()
     if not _touch.pads_enabled:
         if _driving:
             text += "\nW/S — газ/тормоз   A/D — руль   Пробел — ручник   F — выйти   Мышь — камера"
