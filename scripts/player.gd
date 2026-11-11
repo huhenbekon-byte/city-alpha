@@ -170,10 +170,10 @@ func _physics_process(delta: float) -> void:
     _was_on_floor = grounded
     if grounded and hs > 0.5:
         _step_acc += hs * delta
-        var running := hs > walk_speed + 0.5
-        if _step_acc > (1.05 if running else 0.68):
+        var fast := hs > walk_speed + 0.5
+        if _step_acc > (1.05 if fast else 0.68):
             _step_acc = 0.0
-            stepped.emit(running)
+            stepped.emit(fast)
 
     if hv.length() > 0.3:
         var yaw := atan2(-hv.x, -hv.y)

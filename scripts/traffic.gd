@@ -67,6 +67,7 @@ func _physics_process(delta: float) -> void:
 
         # Есть ли кто-то впереди на полосе?
         var blocked := false
+        a["honked"] = float(a.get("honked", 0.0)) - delta
         if float(a["ghost"]) <= 0.0:
             var who := _blocker(a, pos, fwd)
             blocked = who != 0
@@ -74,7 +75,6 @@ func _physics_process(delta: float) -> void:
             if who == 1 and float(a["blocked"]) > 1.2 and float(a.get("honked", 0.0)) <= 0.0:
                 a["honked"] = 4.0
                 honk.emit(pos)
-        a["honked"] = float(a.get("honked", 0.0)) - delta
         else:
             a["ghost"] = float(a["ghost"]) - delta
         if blocked:
