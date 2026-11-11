@@ -141,9 +141,11 @@ func _draw() -> void:
         return
     var base := _joy_center if _joy_index != -1 else Vector2(210.0, size.y - 200.0)
     var knob := _joy_knob if _joy_index != -1 else base
-    draw_circle(base, JOY_RADIUS, Color(1, 1, 1, 0.10))
-    draw_arc(base, JOY_RADIUS, 0.0, TAU, 48, Color(1, 1, 1, 0.35), 3.0, true)
-    draw_circle(knob, KNOB_RADIUS, Color(1, 1, 1, 0.45))
+    # Тёмная подложка + белая обводка: видно и на светлом асфальте, и на небе.
+    draw_circle(base, JOY_RADIUS, Color(0, 0, 0, 0.28))
+    draw_arc(base, JOY_RADIUS, 0.0, TAU, 48, Color(1, 1, 1, 0.8), 4.0, true)
+    draw_circle(knob, KNOB_RADIUS, Color(1, 1, 1, 0.75))
+    draw_arc(knob, KNOB_RADIUS, 0.0, TAU, 32, Color(0, 0, 0, 0.35), 2.0, true)
 
     var font := ThemeDB.fallback_font
     for b: Dictionary in _buttons():
@@ -152,20 +154,20 @@ func _draw() -> void:
         var id: String = b["id"]
         var text: String = b["text"]
         var down := _held.has(id)
-        var fill := Color(1, 1, 1, 0.32 if down else 0.14)
+        var fill := Color(0, 0, 0, 0.5 if down else 0.3)
         if id == "gas":
-            fill = Color(0.3, 0.9, 0.4, 0.45 if down else 0.25)
+            fill = Color(0.15, 0.6, 0.25, 0.8 if down else 0.55)
         elif id == "brake":
-            fill = Color(0.95, 0.3, 0.25, 0.45 if down else 0.25)
+            fill = Color(0.75, 0.15, 0.12, 0.8 if down else 0.55)
         elif id == "interact":
-            fill = Color(1.0, 0.8, 0.2, 0.55 if down else 0.35)
+            fill = Color(0.9, 0.6, 0.05, 0.9 if down else 0.7)
         draw_circle(pos, r, fill)
-        draw_arc(pos, r, 0.0, TAU, 48, Color(1, 1, 1, 0.55), 3.0, true)
+        draw_arc(pos, r, 0.0, TAU, 48, Color(1, 1, 1, 0.85), 4.0, true)
         if id == "jump":
             draw_colored_polygon(PackedVector2Array([
                 pos + Vector2(0, -24), pos + Vector2(22, 12), pos + Vector2(-22, 12)
-            ]), Color(1, 1, 1, 0.85))
+            ]), Color(1, 1, 1, 0.95))
         else:
-            var fs := 22
+            var fs := 24
             draw_string(font, pos + Vector2(-r, fs * 0.35), text,
                     HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs, Color(1, 1, 1, 0.95))

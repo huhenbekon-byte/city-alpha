@@ -23,7 +23,8 @@ const PARKED_COLORS := [
 
 var rng := RandomNumberGenerator.new()
 
-var _batches := {}
+var _defs := {}      # вид объекта -> меш, материал, дальность, тень
+var _batches := {}   # "вид|кусок" -> трансформы и цвета
 var _occupied: Array[Rect2] = []
 var _c := Vector3.ZERO   # центр текущего квартала
 var _mx := 1.0           # зеркалирование шаблона квартала
@@ -445,9 +446,9 @@ func _make_materials() -> void:
 
     _m["asphalt"] = _mat(Color(0.19, 0.19, 0.20), 0.95)
     _m["wasteland"] = _mat(Color(0.30, 0.34, 0.22), 1.0)
-    _m["sidewalk"] = _mat(Color(0.58, 0.57, 0.55), 0.95)
+    _m["sidewalk"] = _mat(Color(0.46, 0.45, 0.44), 0.95)
     _m["grass"] = _mat(Color(0.33, 0.45, 0.22), 1.0)
-    _m["paving"] = _mat(Color(0.70, 0.66, 0.60), 0.9)
+    _m["paving"] = _mat(Color(0.50, 0.47, 0.43), 0.9)
     _m["soil"] = _mat(Color(0.30, 0.22, 0.15), 1.0)
     _m["yard_asphalt"] = _mat(Color(0.27, 0.27, 0.28), 0.95)
     _m["roof"] = _mat(Color(0.30, 0.30, 0.32), 0.9)
@@ -501,31 +502,33 @@ func _facade_mat(col: Color, tex: Texture2D) -> StandardMaterial3D:
     return m
 
 
+## Виды мелких объектов: меш, материал, дальность видимости (м), тень.
+## Мелочь пропадает вдали и не отбрасывает тени — это сильно ускоряет телефон.
 func _define_batches() -> void:
-    _batch("balcony", _box_mesh(Vector3(2.5, 1.05, 1.0)), _vc_mat(0.85))
-    _batch("door", _box_mesh(Vector3(1.4, 2.2, 0.12)), _mat(Color(0.32, 0.22, 0.15), 0.7))
-    _batch("canopy", _box_mesh(Vector3(2.4, 0.14, 1.3)), _m["concrete"])
-    _batch("roof_box", _box_mesh(Vector3(3.5, 2.4, 3.0)), _m["concrete"])
-    _batch("dash", _box_mesh(Vector3(0.18, 0.02, 2.5)), _m["white"])
-    _batch("zebra", _box_mesh(Vector3(0.55, 0.02, 3.4)), _m["white"])
-    _batch("pole", _cyl_mesh(0.07, 0.09, 7.0, 8), _m["metal"])
-    _batch("lamp_arm", _box_mesh(Vector3(0.08, 0.08, 1.6)), _m["metal"])
+    _batch("balcony", _box_mesh(Vector3(2.5, 1.05, 1.0)), _vc_mat(0.85), 220.0)
+    _batch("door", _box_mesh(Vector3(1.4, 2.2, 0.12)), _mat(Color(0.32, 0.22, 0.15), 0.7), 90.0)
+    _batch("canopy", _box_mesh(Vector3(2.4, 0.14, 1.3)), _m["concrete"], 110.0)
+    _batch("roof_box", _box_mesh(Vector3(3.5, 2.4, 3.0)), _m["concrete"], 250.0)
+    _batch("dash", _box_mesh(Vector3(0.18, 0.02, 2.5)), _m["white"], 90.0)
+    _batch("zebra", _box_mesh(Vector3(0.55, 0.02, 3.4)), _m["white"], 90.0)
+    _batch("pole", _cyl_mesh(0.07, 0.09, 7.0, 6), _m["metal"], 150.0)
+    _batch("lamp_arm", _box_mesh(Vector3(0.08, 0.08, 1.6)), _m["metal"], 150.0)
     var lamp := _mat(Color(1.0, 0.96, 0.85), 0.3)
     lamp.emission_enabled = true
     lamp.emission = Color(1.0, 0.92, 0.75)
     lamp.emission_energy_multiplier = 0.8
-    _batch("lamp_head", _box_mesh(Vector3(0.3, 0.12, 0.55)), lamp)
-    _batch("trunk", _cyl_mesh(0.12, 0.18, 2.6, 7), _mat(Color(0.36, 0.25, 0.17), 0.9))
-    _batch("birch", _cyl_mesh(0.09, 0.13, 5.5, 7), _mat(Color(0.92, 0.90, 0.86), 0.8))
-    _batch("crown", _sphere_mesh(2.0, 3.4), _vc_mat(0.9))
-    _batch("birch_crown", _sphere_mesh(1.3, 4.0), _vc_mat(0.9))
-    _batch("bush", _sphere_mesh(0.7, 1.0), _vc_mat(0.9))
-    _batch("bench_seat", _box_mesh(Vector3(1.8, 0.07, 0.45)), _m["wood"])
-    _batch("bench_back", _box_mesh(Vector3(1.8, 0.35, 0.06)), _m["wood"])
-    _batch("bench_leg", _box_mesh(Vector3(0.07, 0.45, 0.45)), _m["metal"])
-    _batch("garage_door", _box_mesh(Vector3(2.6, 2.1, 0.06)), _vc_mat(0.7))
+    _batch("lamp_head", _box_mesh(Vector3(0.3, 0.12, 0.55)), lamp, 150.0)
+    _batch("trunk", _cyl_mesh(0.12, 0.18, 2.6, 6), _mat(Color(0.36, 0.25, 0.17), 0.9), 180.0)
+    _batch("birch", _cyl_mesh(0.09, 0.13, 5.5, 6), _mat(Color(0.92, 0.90, 0.86), 0.8), 180.0)
+    _batch("crown", _sphere_mesh(2.0, 3.4), _vc_mat(0.9), 200.0, true)
+    _batch("birch_crown", _sphere_mesh(1.3, 4.0), _vc_mat(0.9), 200.0, true)
+    _batch("bush", _sphere_mesh(0.7, 1.0), _vc_mat(0.9), 80.0)
+    _batch("bench_seat", _box_mesh(Vector3(1.8, 0.07, 0.45)), _m["wood"], 70.0)
+    _batch("bench_back", _box_mesh(Vector3(1.8, 0.35, 0.06)), _m["wood"], 70.0)
+    _batch("bench_leg", _box_mesh(Vector3(0.07, 0.45, 0.45)), _m["metal"], 70.0)
+    _batch("garage_door", _box_mesh(Vector3(2.6, 2.1, 0.06)), _vc_mat(0.7), 140.0)
     for i in PARKED_COLORS.size():
-        _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i]), null)
+        _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i]), null, 160.0, true)
 
 
 # ================================================================ помощники
@@ -552,39 +555,47 @@ func _is_free(p: Vector3, margin: float) -> bool:
     return true
 
 
-func _batch(key: String, mesh: Mesh, mat: Material) -> void:
-    _batches[key] = {"mesh": mesh, "mat": mat, "x": [], "c": []}
+func _batch(key: String, mesh: Mesh, mat: Material, range_end: float, shadow := false) -> void:
+    _defs[key] = {"mesh": mesh, "mat": mat, "range": range_end, "shadow": shadow}
 
 
+## Объекты раскладываются по кускам размером с квартал: тогда камера рисует
+## только те куски, что попали в кадр, а не весь город сразу.
 func _put(key: String, pos: Vector3, yaw := 0.0, col := Color.WHITE, scl := Vector3.ONE) -> void:
-    var b: Dictionary = _batches[key]
-    var basis := Basis(Vector3.UP, yaw) * Basis.from_scale(scl)
+    var cx := int(floor(pos.x / PITCH + 0.5))
+    var cz := int(floor(pos.z / PITCH + 0.5))
+    var ck := "%s|%d|%d" % [key, cx, cz]
+    if not _batches.has(ck):
+        _batches[ck] = {"key": key, "x": [], "c": []}
+    var b: Dictionary = _batches[ck]
     var xs: Array = b["x"]
     var cs: Array = b["c"]
-    xs.append(Transform3D(basis, pos))
+    xs.append(Transform3D(Basis(Vector3.UP, yaw) * Basis.from_scale(scl), pos))
     cs.append(col)
 
 
 func _flush_batches() -> void:
-    for key: String in _batches:
-        var b: Dictionary = _batches[key]
+    for ck: String in _batches:
+        var b: Dictionary = _batches[ck]
+        var d: Dictionary = _defs[b["key"]]
         var xs: Array = b["x"]
         var cs: Array = b["c"]
-        if xs.is_empty():
-            continue
         var mm := MultiMesh.new()
         mm.transform_format = MultiMesh.TRANSFORM_3D
         mm.use_colors = true
-        mm.mesh = b["mesh"]
+        mm.mesh = d["mesh"]
         mm.instance_count = xs.size()
         for i in xs.size():
             mm.set_instance_transform(i, xs[i])
             mm.set_instance_color(i, cs[i])
         var mmi := MultiMeshInstance3D.new()
-        mmi.name = "MM_" + key
         mmi.multimesh = mm
-        if b["mat"] != null:
-            mmi.material_override = b["mat"]
+        if d["mat"] != null:
+            mmi.material_override = d["mat"]
+        mmi.visibility_range_end = d["range"]
+        var shadow: bool = d["shadow"]
+        mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadow \
+                else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
         add_child(mmi)
 
 

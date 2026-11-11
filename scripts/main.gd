@@ -42,7 +42,7 @@ func _process(_delta: float) -> void:
     else:
         _touch.interact_text = ""
 
-    var text := "CITY ALPHA  v0.2    FPS %d" % Engine.get_frames_per_second()
+    var text := "CITY ALPHA  v0.3    FPS %d" % Engine.get_frames_per_second()
     if not _touch.pads_enabled:
         if _driving:
             text += "\nW/S — газ/тормоз   A/D — руль   Пробел — ручник   F — выйти   Мышь — камера"
@@ -156,13 +156,14 @@ func _build_environment() -> void:
     env.background_mode = Environment.BG_SKY
     env.sky = sky
     env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+    env.ambient_light_energy = 0.7
     env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+    env.tonemap_exposure = 0.85
     env.fog_enabled = true
     env.fog_light_color = Color(0.76, 0.82, 0.88)
-    env.fog_density = 0.004
+    env.fog_density = 0.0025
     env.fog_sky_affect = 0.3
-    env.glow_enabled = true
-    env.glow_intensity = 0.4
+    env.glow_enabled = false  # на телефоне дорого и «засвечивает» картинку
 
     var we := WorldEnvironment.new()
     we.environment = env
@@ -171,9 +172,10 @@ func _build_environment() -> void:
     var sun := DirectionalLight3D.new()
     sun.rotation_degrees = Vector3(-48, -35, 0)
     sun.light_color = Color(1.0, 0.95, 0.86)
-    sun.light_energy = 1.2
+    sun.light_energy = 1.05
     sun.shadow_enabled = true
-    sun.directional_shadow_max_distance = 90.0
+    sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL  # самый дешёвый режим
+    sun.directional_shadow_max_distance = 45.0
     add_child(sun)
 
 
