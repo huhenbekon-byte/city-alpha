@@ -5,10 +5,13 @@ extends Control
 ## Кнопка действия («Сесть» / «Выйти») появляется над правыми кнопками.
 ## Свайп по свободной части экрана крутит камеру.
 
+const Icons := preload("res://scripts/icons.gd")
+
 signal look_drag(relative: Vector2)
 signal interact_pressed
 signal phone_pressed
 signal horn_pressed
+signal hudmenu_pressed
 
 enum Mode { FOOT, CAR }
 
@@ -71,7 +74,8 @@ func _buttons() -> Array:
         list.append({"id": "horn", "pos": Vector2(w - 305, h - 268), "r": 44.0, "text": "БИП"})
     if interact_text != "":
         list.append({"id": "interact", "pos": Vector2(w - 145, h - 355), "r": 54.0, "text": interact_text})
-    list.append({"id": "phone", "pos": Vector2(w - 284, 62), "r": 38.0, "text": ""})
+    list.append({"id": "phone", "pos": Vector2(w - 62, 62), "r": 38.0, "text": ""})
+    list.append({"id": "hudmenu", "pos": Vector2(282, 46), "r": 32.0, "text": ""})
     return list
 
 
@@ -90,7 +94,7 @@ func _on_touch(e: InputEventScreenTouch) -> void:
             var pos: Vector2 = b["pos"]
             var r: float = b["r"]
             var id: String = b["id"]
-            if not pads_enabled and id != "phone":
+            if not pads_enabled and id != "phone" and id != "hudmenu":
                 continue  # на ПК из кнопок только телефон
             if not _held.has(id) and e.position.distance_to(pos) < r * 1.2:
                 _held[id] = e.index
@@ -150,6 +154,9 @@ func _set_button(id: String, down: bool) -> void:
         "horn":
             if down:
                 horn_pressed.emit()
+        "hudmenu":
+            if down:
+                hudmenu_pressed.emit()
 
 
 func _release_all() -> void:
@@ -192,18 +199,23 @@ func _draw() -> void:
         draw_arc(pos, r, 0.0, TAU, 48, Color(1, 1, 1, 0.85), 4.0, true)
         if id == "phone":
             _draw_phone_icon(pos)
+        elif id == "hudmenu":
+            _draw_hudmenu(pos, r, down)
+            continue
         elif id == "jump":
             draw_colored_polygon(PackedVector2Array([
                 pos + Vector2(0, -24), pos + Vector2(22, 12), pos + Vector2(-22, 12)
             ]), Color(1, 1, 1, 0.95))
         else:
-            var fs := 24
+            var fs := 24 if text.length() <= 6 else 17
             draw_string(font, pos + Vector2(-r, fs * 0.35), text,
                     HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs, Color(1, 1, 1, 0.95))
 
 
 func _draw_phone_button(_font: Font) -> void:
     for b: Dictionary in _buttons():
+        if b["id"] == "hudmenu":
+            _draw_hudmenu(b["pos"], b["r"], _held.has("hudmenu"))
         if b["id"] == "phone":
             var pos: Vector2 = b["pos"]
             var r: float = b["r"]
@@ -217,3 +229,10 @@ func _draw_phone_icon(pos: Vector2) -> void:
     draw_rect(body, Color(1, 1, 1, 0.95), false, 3.0)
     draw_rect(Rect2(pos - Vector2(7, 13), Vector2(14, 21)), Color(0.5, 0.8, 1.0, 0.9))
     draw_circle(pos + Vector2(0, 13), 2.2, Color(1, 1, 1, 0.95))
+
+
+## Кнопка меню игрока: тёмный круг с четырьмя белыми квадратиками.
+func _draw_hudmenu(pos: Vector2, r: float, down: bool) -> void:
+    draw_circle(pos, r + 2.0, Color(0.6, 0.6, 0.62))
+    draw_circle(pos, r, Color(0.13, 0.13, 0.14) if not down else Color(0.25, 0.25, 0.27))
+    Icons.draw(self, "grid", pos, r * 1.1, Color.WHITE)

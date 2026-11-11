@@ -154,7 +154,7 @@ func status_text(focus: Vector3, in_car: bool) -> String:
             if time_left > 0.0:
                 var sec := int(time_left)
                 t = "%d:%02d" % [sec / 60, sec % 60]
-            return "%s: %s · %d руб. · %d м · %s" % [who,
+            return "%s: %s · %d ₽ · %d м · %s" % [who,
                     "вези пассажира" if kind == "taxi" else "доставка", reward, d, t]
         State.WAITING:
             return "%s: ждём новый заказ…" % who
@@ -214,11 +214,11 @@ func _picked_up() -> void:
 func _delivered() -> void:
     var pay := reward
     var what := "Поездка оплачена" if kind == "taxi" else "Доставлено"
-    var text := "%s! +%d руб." % [what, pay]
+    var text := "%s! +%d ₽" % [what, pay]
     if time_left > 0.0:
         var bonus := int(reward * 0.3 / 10.0) * 10
         pay += bonus
-        text = "%s! +%d руб. (бонус за скорость %d)" % [what, pay, bonus]
+        text = "%s! +%d ₽ (бонус за скорость %d)" % [what, pay, bonus]
     paid.emit(pay, text)
     _marker.visible = false
     state = State.WAITING

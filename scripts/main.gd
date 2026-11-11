@@ -1,6 +1,6 @@
 extends Node3D
 ## Точка входа: небо, смена дня и ночи, район, игрок, машины, интерфейс,
-## деньги, работа курьера, сохранение. Посадка в машину и выход из неё.
+## деньги (наличные и карта), документы, работы, заправки, сохранение.
 
 const PlayerScene := preload("res://scenes/player.tscn")
 const CarScene := preload("res://scenes/car.tscn")
@@ -14,8 +14,10 @@ const PedestriansScript := preload("res://scripts/pedestrians.gd")
 const CarModel := preload("res://scripts/car_model.gd")
 const Clothes := preload("res://scripts/clothes.gd")
 const WardrobeScript := preload("res://scripts/wardrobe.gd")
+const DialogScript := preload("res://scripts/dialog.gd")
+const WorkScript := preload("res://scripts/work.gd")
 
-const VERSION := "v0.8"
+const VERSION := "v0.10"
 const SAVE_PATH := "user://save.cfg"
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
@@ -29,6 +31,20 @@ const CAR_MODELS := [
 const ENTER_DISTANCE := 3.2
 const LAMP_LIGHTS := 6   # сколько фонарей рядом с игроком дают настоящий свет ночью
 const PLAYER_SPAWN := Vector3(0, 0.4, 14)
+const FUEL_PRICE := 50          # ₽ за литр
+const EXAM_PRICE := 2000
+const DPS_FINE := 1500
+## Вопросы теории в автошколе: [вопрос, [варианты], номер правильного].
+const QUIZ := [
+    ["На какой свет можно ехать?", ["Красный", "Жёлтый", "Зелёный"], 2],
+    ["Максимальная скорость в городе?", ["60 км/ч", "90 км/ч", "110 км/ч"], 0],
+    ["Кому уступать на нерегулируемом перекрёстке равнозначных дорог?", ["Тому, кто слева", "Тому, кто справа", "Никому"], 1],
+    ["Что делать на «зебре», если идёт пешеход?", ["Посигналить", "Уступить дорогу", "Проехать быстрее"], 1],
+    ["Можно ли говорить по телефону за рулём без гарнитуры?", ["Да", "Только на светофоре", "Нет"], 2],
+    ["Что обязательно делать водителю и пассажирам?", ["Пристёгиваться", "Слушать музыку", "Открывать окна"], 0],
+    ["С какой стороны обгонять?", ["Справа", "Слева", "С любой"], 1],
+    ["Что означает мигающий жёлтый?", ["Стоп", "Нерегулируемый перекрёсток", "Проезд запрещён"], 1],
+]
 
 const DAY_TOP := Color(0.30, 0.50, 0.80)
 const DAY_HORIZON := Color(0.76, 0.82, 0.88)
@@ -38,7 +54,16 @@ const NIGHT_HORIZON := Color(0.08, 0.10, 0.18)
 const DAY_AMBIENT := Color(0.55, 0.60, 0.70)
 const NIGHT_AMBIENT := Color(0.10, 0.12, 0.22)
 
-var money := START_MONEY
+var cash := START_MONEY      # наличные
+var bank := 0                # на карте
+var passport_name := ""      # «Имя_Фамилия», пусто — паспорта нет
+var has_license := false
+var level := 1
+var xp := 0                  # опыт на текущем уровне
+var total_xp := 0            # весь опыт — это и есть рейтинг
+var phone_number := ""
+var card_number := ""
+var history: Array = []      # операции по карте: [сумма, описание]
 var day := 1
 var minutes := 9.0 * 60.0   # время суток в игровых минутах
 var look := Clothes.default_look()   # что надето: slot -> номер вещи
@@ -63,6 +88,17 @@ var _lamp_lights: Array[OmniLight3D] = []
 var _lamp_timer := 0.0
 var _night_k := 0.0
 var _loaded := {}   # что прочитали из сохранения до появления игрока и машин
+var _dialog: DialogScript
+var _work: WorkScript
+var _work_vehicle = null     # автобус / фура / учебная машина
+var _points: Array = []      # точки взаимодействия: {pos, r, text, cb, car}
+var _point = null            # точка, рядом с которой стоим
+var _dps_timer := 40.0
+var _view_far := 300.0
+var _fuel_warned := false
+var _quiz: Array = []
+var _quiz_i := 0
+var _quiz_ok := 0
 
 var _sun: DirectionalLight3D
 var _env: Environment
@@ -83,11 +119,21 @@ func _ready() -> void:
     _job.paid.connect(_on_job_paid)
     _job.message.connect(_on_job_message)
     add_child(_job)
+    _work = WorkScript.new()
+    _work.city = _city
+    _work.paid.connect(_on_job_paid)
+    _work.message.connect(_on_job_message)
+    _work.vehicle_needed.connect(_on_work_vehicle_needed)
+    _work.vehicle_done.connect(_on_work_vehicle_done)
+    _work.exam_finished.connect(_on_exam_finished)
+    add_child(_work)
     _build_ui()
     _spawn_player()
     _spawn_cars()
     _spawn_life()
     _restore_state()
+    _setup_points()
+    _ensure_numbers()
     _apply_settings()
     _open_menu()
 
@@ -108,6 +154,10 @@ func _process(delta: float) -> void:
     if _driving:
         speed = _driving.speed_kmh()
     _job.update(focus, _driving != null, speed, delta)
+    var in_work_vehicle: bool = _driving != null and _driving == _work_vehicle
+    _work.update(focus, in_work_vehicle, speed, delta)
+    _player.set_carry(_work.carrying)
+    _check_dps(delta, speed)
     _traffic.focus = focus
     _peds.focus = focus
     _lamp_timer -= delta
@@ -117,34 +167,47 @@ func _process(delta: float) -> void:
 
     Sfx.night = _night_k
 
-    # Кнопки
-    var near = null if _driving else _nearest_car()
+    # Кнопка действия: работа → точка (банкомат, АЗС…) → машина
     _touch.mode = TouchControlsScript.Mode.CAR if _driving else TouchControlsScript.Mode.FOOT
-    if _driving:
+    _point = _find_point(focus, absf(speed))
+    var work_action := _work.action_text(focus, _driving != null)
+    var near = null if _driving else _nearest_car()
+    if work_action != "":
+        _touch.interact_text = work_action
+    elif _point != null:
+        _touch.interact_text = _point["text"]
+    elif _driving:
         _touch.interact_text = "ВЫЙТИ"
-    elif _near_shop():
-        _touch.interact_text = "ОДЕЖДА"
     elif near:
         _touch.interact_text = "СЕСТЬ" if near.owned else "КУПИТЬ"
     else:
         _touch.interact_text = ""
 
     # Интерфейс
-    _hud.set_money(money)
+    _hud.set_money(cash, bank)
+    _hud.set_nick(passport_name)
+    if _hud.profile.is_open():
+        _hud.profile.set_data(_profile_data())
     var hh := int(minutes) / 60
     var mm := int(minutes) % 60
     _hud.set_clock("%02d:%02d   День %d" % [hh, mm, day])
-    var job_text := _job.status_text(focus, _driving != null)
+    var job_text: String = _work.status_text(focus, in_work_vehicle) if _work.active \
+            else _job.status_text(focus, _driving != null)
     _hud.set_job(job_text)
     if _hud.phone_open:
-        _hud.update_phone(_job.active, job_text)
+        _hud.update_phone(_job.active or _work.active, _phone_text(job_text))
 
     var mini := _hud.minimap
     mini.focus = focus
     mini.heading = _driving.global_transform.basis.z if _driving else _player.get_facing()
-    mini.has_target = _job.has_target()
-    mini.target = _job.target
-    mini.target_color = _job.target_color()
+    if _work.active:
+        mini.has_target = _work.has_target()
+        mini.target = _work.target
+        mini.target_color = _work.target_color()
+    else:
+        mini.has_target = _job.has_target()
+        mini.target = _job.target
+        mini.target_color = _job.target_color()
     mini.queue_redraw()
 
     var text := "CITY ALPHA %s   FPS %d" % [VERSION, Engine.get_frames_per_second()]
@@ -159,8 +222,17 @@ func _process(delta: float) -> void:
     _speed_label.visible = _driving != null
     if _driving:
         var vp := get_viewport().get_visible_rect().size
-        _speed_label.position = Vector2(vp.x * 0.5 - 100.0, vp.y - 90.0)
+        _speed_label.position = Vector2(vp.x * 0.5 - 100.0, vp.y - 110.0)
         _speed_label.text = "%d км/ч" % int(absf(speed))
+        if _driving.uses_fuel:
+            var fuel: float = _driving.fuel
+            var tank: float = _driving.tank
+            _speed_label.text += "\nБензин %d/%d л" % [int(ceil(fuel)), int(tank)]
+            if fuel < tank * 0.15 and not _fuel_warned:
+                _fuel_warned = true
+                _hud.show_toast("Мало бензина! Заправься на АЗС (точки на карте)")
+            elif fuel > tank * 0.3:
+                _fuel_warned = false
 
     _save_timer += delta
     if _save_timer > 15.0:
@@ -170,7 +242,7 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
     if event.is_action_pressed("interact"):
-        _toggle_vehicle()
+        _on_interact()
     elif event.is_action_pressed("phone"):
         _toggle_phone()
     elif event.is_action_pressed("ui_cancel"):
@@ -197,6 +269,7 @@ func _open_menu() -> void:
         _save_game()
     if _hud.phone_open:
         _hud.close_phone()
+    _hud.profile.close_all()
     get_tree().paused = true
     _touch.visible = false
     _menu.show_menu(_started, VERSION)
@@ -204,6 +277,8 @@ func _open_menu() -> void:
 
 func _on_play() -> void:
     Sfx.start_ambient()
+    if not _started and passport_name == "":
+        _hud.show_toast("Получи паспорт в МЭРИИ на площади — синяя точка на карте")
     _started = true
     _menu.visible = false
     _touch.visible = true
@@ -217,10 +292,21 @@ func _on_quit() -> void:
 
 func _on_reset() -> void:
     DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
-    money = START_MONEY
+    cash = START_MONEY
+    bank = 0
+    passport_name = ""
+    has_license = false
+    level = 1
+    xp = 0
+    total_xp = 0
+    history = []
+    phone_number = ""
+    card_number = ""
+    _ensure_numbers()
     day = 1
     minutes = 9.0 * 60.0
     _job.stop()
+    _work.stop()
     if _driving:
         _driving.set_driven(false)
         _driving = null
@@ -228,6 +314,7 @@ func _on_reset() -> void:
     for i in _cars.size():
         _cars[i].reset_to(_car_spawn(i))
         _cars[i].set_owned(false)
+        _cars[i].fuel = _cars[i].tank
     look = Clothes.default_look()
     owned_clothes = {}
     _player.set_look(Clothes.colors(look))
@@ -247,6 +334,7 @@ func _apply_settings() -> void:
     _shadows_on = bool(st["shadows"])
     _env.fog_density = [0.007, 0.0035, 0.0015][v]
     var far: float = [170.0, 300.0, 550.0][v]
+    _view_far = far
     for cam in get_tree().get_nodes_in_group("game_camera"):
         cam.far = far
     _label.visible = bool(st["fps"])
@@ -263,13 +351,15 @@ func _focus() -> Vector3:
 # ---------------------------------------------------------------- телефон и работа
 
 func _toggle_phone() -> void:
-    if _wardrobe.visible:
+    if _wardrobe.visible or _dialog.visible or _hud.profile.is_open():
         return
     if _hud.phone_open:
         _hud.close_phone()
     else:
         _touch.blocked = true
-        _hud.open_phone(_job.active, _job.status_text(_focus(), _driving != null))
+        var t: String = _work.status_text(_focus(), _driving == _work_vehicle) if _work.active \
+                else _job.status_text(_focus(), _driving != null)
+        _hud.open_phone(_job.active or _work.active, _phone_text(t))
 
 
 func _on_phone_closed() -> void:
@@ -278,17 +368,29 @@ func _on_phone_closed() -> void:
 
 
 func _on_job_selected(kind: String) -> void:
+    if not _check_docs(kind == "taxi"):
+        return
     if kind == "taxi" and not _has_owned_car():
         _hud.show_toast("Для такси нужна своя машина — купи в автосалоне на площади")
         return
+    _work.stop()
     _job.start(kind, _focus())
     _hud.close_phone()
 
 
 func _on_job_stopped() -> void:
     _job.stop()
+    _work.stop()
     _hud.show_toast("Смена закончена")
     _hud.close_phone()
+
+
+func _phone_text(job_text: String) -> String:
+    var docs := "Паспорт: %s\nПрава: %s" % [passport_name if passport_name != "" else "нет (мэрия на площади)",
+            "есть" if has_license else "нет (автошкола на площади)"]
+    if job_text != "":
+        return job_text + "\n\n" + docs
+    return docs + "\n\nКурьер и таксист — здесь. Автобус, грузчик, дальнобойщик, лесоруб — на месте (жёлтые точки на карте)."
 
 
 ## Ставит ближайшую свою машину рядом с игроком.
@@ -341,13 +443,89 @@ func _has_owned_car() -> bool:
     return false
 
 
+## Оплата: сначала наличными, остальное с карты. false — не хватает денег.
+func _pay(amount: int, reason := "Покупка") -> bool:
+    if cash + bank < amount:
+        Sfx.play("error")
+        _hud.show_toast("Не хватает %d ₽" % (amount - cash - bank))
+        return false
+    var from_cash := mini(cash, amount)
+    cash -= from_cash
+    bank -= amount - from_cash
+    if amount - from_cash > 0:
+        _bank_log(-(amount - from_cash), reason)
+    return true
+
+
+func _bank_log(amount: int, text: String) -> void:
+    history.append([amount, text])
+    if history.size() > 30:
+        history.pop_front()
+
+
+func _need_xp() -> int:
+    return 100 + (level - 1) * 60
+
+
+func _add_xp(amount: int) -> void:
+    xp += amount
+    total_xp += amount
+    while xp >= _need_xp():
+        xp -= _need_xp()
+        level += 1
+        Sfx.play("notify")
+        _hud.show_toast("Новый уровень: %d!" % level)
+
+
+func _job_name() -> String:
+    var k: String = _work.kind if _work.active else (_job.kind if _job.active else "")
+    match k:
+        "courier":
+            return "Курьер"
+        "taxi":
+            return "Таксист"
+        "bus":
+            return "Водитель автобуса"
+        "loader":
+            return "Грузчик"
+        "truck":
+            return "Дальнобойщик"
+        "lumber":
+            return "Лесоруб"
+        "exam":
+            return "Экзамен в автошколе"
+    return "Безработный"
+
+
+func _profile_data() -> Dictionary:
+    return {"name": passport_name if passport_name != "" else "Без паспорта",
+            "level": level, "xp": xp, "need": _need_xp(), "rating": total_xp,
+            "cash": cash, "bank": bank, "job": _job_name(),
+            "phone": phone_number, "home": "Нет", "org": "Нет",
+            "card": card_number, "history": history}
+
+
+## Номер телефона и карты выдаются один раз и сохраняются.
+func _ensure_numbers() -> void:
+    if phone_number == "":
+        phone_number = "+7 9%02d %03d %02d %02d" % [randi() % 100, randi() % 1000, randi() % 100, randi() % 100]
+    if card_number == "":
+        card_number = "2202  %04d  %04d  %04d" % [randi() % 10000, randi() % 10000, randi() % 10000]
+
+
+func _on_profile_opened() -> void:
+    _touch.blocked = true
+    _hud.profile.set_data(_profile_data())
+
+
+func _on_profile_closed() -> void:
+    _touch.blocked = false
+
+
 func _try_buy(car) -> void:
     var price: int = car.price
-    if money < price:
-        Sfx.play("error")
-        _hud.show_toast("Не хватает %d руб. — заработай курьером" % (price - money))
+    if not _pay(price, "Автосалон: " + String(car.car_name)):
         return
-    money -= price
     Sfx.play("coin")
     car.set_owned(true)
     _hud.show_toast("Куплено: %s! Нажми СЕСТЬ" % car.car_name)
@@ -355,9 +533,11 @@ func _try_buy(car) -> void:
 
 
 func _on_job_paid(amount: int, text: String) -> void:
-    money += amount
+    bank += amount   # зарплата приходит на карту
+    _bank_log(amount, "Зарплата: " + _job_name())
     Sfx.play("coin")
-    _hud.show_toast(text)
+    _hud.show_toast(text + " (на карту)")
+    _add_xp(maxi(5, amount / 20))
     _save_game()
 
 
@@ -395,11 +575,8 @@ func _on_wardrobe_preview(new_look: Dictionary) -> void:
 
 
 func _on_wardrobe_buy(new_look: Dictionary, cost: int) -> void:
-    if money < cost:
-        Sfx.play("error")
-        _hud.show_toast("Не хватает %d руб." % (cost - money))
+    if not _pay(cost, "Магазин одежды"):
         return
-    money -= cost
     for id: String in new_look:
         var list: Array = owned_clothes.get(id, [0])
         if not (int(new_look[id]) in list):
@@ -408,7 +585,7 @@ func _on_wardrobe_buy(new_look: Dictionary, cost: int) -> void:
     look = new_look
     _player.set_look(Clothes.colors(look))
     Sfx.play("coin" if cost > 0 else "click")
-    _hud.show_toast("Обновка! −%d руб." % cost if cost > 0 else "Переоделся")
+    _hud.show_toast("Обновка! −%d ₽" % cost if cost > 0 else "Переоделся")
     _save_game()
     _wardrobe.visible = false
     _on_wardrobe_closed()
@@ -421,12 +598,21 @@ func _on_wardrobe_closed() -> void:
 
 # ---------------------------------------------------------------- машины
 
+## Кнопка действия: сначала работа, потом точка рядом, потом машина.
+func _on_interact() -> void:
+    if _hud.phone_open or _wardrobe.visible or _dialog.visible or _hud.profile.is_open():
+        return
+    if _work.action_text(_focus(), _driving != null) != "":
+        _work.do_action()
+        return
+    if _point != null:
+        var cb: Callable = _point["cb"]
+        cb.call()
+        return
+    _toggle_vehicle()
+
+
 func _toggle_vehicle() -> void:
-    if _hud.phone_open or _wardrobe.visible:
-        return
-    if _near_shop():
-        _open_wardrobe()
-        return
     if _driving:
         var pos: Vector3 = _driving.get_exit_position()
         var yaw: float = _driving.get_camera_yaw()
@@ -450,7 +636,10 @@ func _toggle_vehicle() -> void:
 func _nearest_car():
     var best = null
     var best_d := ENTER_DISTANCE
-    for car in _cars:
+    var all: Array = _cars.duplicate()
+    if _work_vehicle != null:
+        all.append(_work_vehicle)
+    for car in all:
         var d: float = car.global_position.distance_to(_player.global_position)
         if d < best_d:
             best_d = d
@@ -477,7 +666,7 @@ func _spawn_life() -> void:
     _peds = PedestriansScript.new()
     add_child(_peds)
     _peds.player = _player
-    _peds.cars = _cars
+    _peds.cars = _cars.duplicate()  # копия: туда добавляются и рабочие машины
     _peds.setup()
 
     for i in LAMP_LIGHTS:
@@ -533,6 +722,9 @@ func _spawn_cars() -> void:
         car.max_speed_kmh = m["speed"]
         car.max_engine_force = m["force"]
         car.owned = i < owned.size() and bool(owned[i])
+        var fuels: Array = _loaded.get("fuel", [])
+        if i < fuels.size():
+            car.fuel = float(fuels[i])
         car.transform = _car_spawn(i)
         if i < saved.size():
             var e: Array = saved[i]
@@ -588,16 +780,31 @@ func _save_game() -> void:
     if _player == null:
         return
     var cfg := ConfigFile.new()
-    cfg.set_value("player", "money", money)
+    cfg.set_value("player", "money", cash)
+    cfg.set_value("player", "bank", bank)
+    cfg.set_value("player", "passport", passport_name)
+    cfg.set_value("player", "license", has_license)
+    cfg.set_value("player", "level", level)
+    cfg.set_value("player", "xp", xp)
+    cfg.set_value("player", "total_xp", total_xp)
+    cfg.set_value("player", "phone", phone_number)
+    cfg.set_value("player", "card", card_number)
+    cfg.set_value("player", "history", history)
+    var fuel := []
+    for car in _cars:
+        fuel.append(car.fuel)
+    cfg.set_value("world", "fuel", fuel)
     cfg.set_value("player", "pos", _player.global_position)
     cfg.set_value("player", "yaw", _player.get_camera_yaw())
     cfg.set_value("player", "driving", _cars.find(_driving) if _driving else -1)
+    if _driving and _driving == _work_vehicle:
+        cfg.set_value("player", "pos", _driving.global_position + Vector3(3, 0.5, 0))
     var cars := []
     for car in _cars:
         var f: Vector3 = car.global_transform.basis.z
         cars.append([car.global_position, atan2(f.x, f.z)])
     cfg.set_value("world", "cars", cars)
-    cfg.set_value("job", "active", _job.active)
+    cfg.set_value("job", "active", _job.active and not _work.active)
     cfg.set_value("job", "kind", _job.kind)
     cfg.set_value("player", "look", look)
     cfg.set_value("player", "owned_clothes", owned_clothes)
@@ -614,7 +821,17 @@ func _load_game() -> void:
     var cfg := ConfigFile.new()
     if cfg.load(SAVE_PATH) != OK:
         return
-    money = int(cfg.get_value("player", "money", START_MONEY))
+    cash = int(cfg.get_value("player", "money", START_MONEY))
+    bank = int(cfg.get_value("player", "bank", 0))
+    passport_name = String(cfg.get_value("player", "passport", ""))
+    has_license = bool(cfg.get_value("player", "license", false))
+    level = int(cfg.get_value("player", "level", 1))
+    xp = int(cfg.get_value("player", "xp", 0))
+    total_xp = int(cfg.get_value("player", "total_xp", 0))
+    phone_number = String(cfg.get_value("player", "phone", ""))
+    card_number = String(cfg.get_value("player", "card", ""))
+    history = cfg.get_value("player", "history", [])
+    _loaded["fuel"] = cfg.get_value("world", "fuel", [])
     day = int(cfg.get_value("world", "day", 1))
     minutes = float(cfg.get_value("world", "minutes", 9.0 * 60.0))
     _loaded["player_pos"] = cfg.get_value("player", "pos", null)
@@ -739,9 +956,10 @@ func _build_ui() -> void:
     _touch = TouchControlsScript.new()
     _touch.pads_enabled = DisplayServer.is_touchscreen_available() or OS.has_feature("mobile")
     _touch.look_drag.connect(_on_look)
-    _touch.interact_pressed.connect(_toggle_vehicle)
+    _touch.interact_pressed.connect(_on_interact)
     _touch.phone_pressed.connect(_toggle_phone)
     _touch.horn_pressed.connect(_on_horn)
+    _touch.hudmenu_pressed.connect(func() -> void: _hud.profile.toggle_popup())
     layer.add_child(_touch)
 
     _hud = HudScript.new()
@@ -752,12 +970,18 @@ func _build_ui() -> void:
     _hud.summon_car.connect(_on_summon_car)
     _hud.phone_closed.connect(_on_phone_closed)
     _hud.menu_requested.connect(_open_menu)
+    _hud.profile.opened.connect(_on_profile_opened)
+    _hud.profile.closed.connect(_on_profile_closed)
 
     _wardrobe = WardrobeScript.new()
     layer.add_child(_wardrobe)
     _wardrobe.preview_changed.connect(_on_wardrobe_preview)
     _wardrobe.buy_pressed.connect(_on_wardrobe_buy)
     _wardrobe.closed.connect(_on_wardrobe_closed)
+
+    _dialog = DialogScript.new()
+    layer.add_child(_dialog)
+    _dialog.closed.connect(_on_dialog_closed)
 
     var menu_layer := CanvasLayer.new()
     menu_layer.layer = 10
@@ -770,7 +994,7 @@ func _build_ui() -> void:
     _menu.settings_changed.connect(_apply_settings)
 
     _label = Label.new()
-    _label.position = Vector2(22, 120)
+    _label.position = Vector2(560, 6)
     var ls := LabelSettings.new()
     ls.font_size = 14
     ls.font_color = Color(1, 1, 1, 0.8)
@@ -789,3 +1013,332 @@ func _build_ui() -> void:
     _speed_label.label_settings = ss
     _speed_label.visible = false
     layer.add_child(_speed_label)
+
+
+# ================================================================ точки, документы, банк, АЗС, работы
+
+func _add_point(pos: Vector3, r: float, text: String, cb: Callable, in_car := false, color := Color(1, 0.8, 0.1)) -> void:
+    _points.append({"pos": pos, "r": r, "text": text, "cb": cb, "car": in_car})
+    _hud.minimap.points.append([pos, color])
+
+
+func _setup_points() -> void:
+    _add_point(_city.clothes_shop, 3.5, "ОДЕЖДА", _open_wardrobe, false, Color(0.8, 0.4, 0.8))
+    _add_point(_city.city_hall, 3.5, "МЭРИЯ", _open_city_hall, false, Color(0.4, 0.5, 1.0))
+    _add_point(_city.driving_school, 3.5, "АВТОШКОЛА", _open_driving_school, false, Color(1.0, 0.6, 0.1))
+    for p: Vector3 in _city.atms:
+        _add_point(p, 2.2, "БАНКОМАТ", _open_atm, false, Color(0.2, 0.6, 1.0))
+    for p: Vector3 in _city.fuel_pumps:
+        _add_point(p, 5.5, "ЗАПРАВИТЬ", _open_fuel, true, Color(0.9, 0.2, 0.2))
+    _add_point(_city.bus_depot, 3.0, "АВТОБУС", _start_work.bind("bus"))
+    _add_point(_city.warehouse_drop + Vector3(4, 0, 0), 2.5, "ГРУЗЧИК", _start_work.bind("loader"))
+    _add_point(_city.truck_depot, 3.0, "ДАЛЬНОБОЙ", _start_work.bind("truck"))
+    _add_point(_city.log_pile + Vector3(4, 0, 0), 3.0, "ЛЕСОРУБ", _start_work.bind("lumber"))
+
+
+## Ближайшая доступная точка: пешком — «пешие», в своей машине на месте — «машинные».
+func _find_point(focus: Vector3, speed: float):
+    if _dialog.visible or _wardrobe.visible:
+        return null
+    var best = null
+    var best_d := INF
+    for pt: Dictionary in _points:
+        var need_car: bool = pt["car"]
+        if need_car:
+            if _driving == null or not _driving.uses_fuel or speed > 3.0:
+                continue
+        elif _driving != null:
+            continue
+        var pp: Vector3 = pt["pos"]
+        var d := Vector2(focus.x - pp.x, focus.z - pp.z).length()
+        if d < float(pt["r"]) and d < best_d:
+            best_d = d
+            best = pt
+    return best
+
+
+func _open_dialog(title: String, text: String, buttons: Array, input_hint := "") -> void:
+    _touch.blocked = true
+    _dialog.open(title, text, buttons, input_hint)
+
+
+func _on_dialog_closed() -> void:
+    _touch.blocked = false
+
+
+## Есть ли документы для работы. need_license — нужны права.
+func _check_docs(need_license: bool) -> bool:
+    if passport_name == "":
+        Sfx.play("error")
+        _hud.show_toast("Без паспорта на работу не берут — получи его в МЭРИИ на площади")
+        return false
+    if need_license and not has_license:
+        Sfx.play("error")
+        _hud.show_toast("Нужны права — сдай экзамен в АВТОШКОЛЕ на площади")
+        return false
+    return true
+
+
+# ---------------------------------------------------------------- мэрия
+
+func _open_city_hall() -> void:
+    if passport_name != "":
+        _open_dialog("Мэрия", "Паспорт уже выдан.\n\nГражданин: %s" % passport_name,
+                [["Закрыть", _dialog.close]])
+        return
+    _open_dialog("Мэрия — паспорт",
+            "Впиши имя и фамилию через подчёркивание, с больших букв.\nНапример: Иван_Петров",
+            [["Получить паспорт", _issue_passport], ["Закрыть", _dialog.close]], "Имя_Фамилия")
+
+
+func _issue_passport() -> void:
+    var name_text := _dialog.input_text()
+    var re := RegEx.new()
+    re.compile("^[А-ЯЁA-Z][а-яёa-z]{1,15}_[А-ЯЁA-Z][а-яёa-z]{1,20}$")
+    if re.search(name_text) == null:
+        Sfx.play("error")
+        _hud.show_toast("Неверный формат. Пример: Иван_Петров")
+        return
+    passport_name = name_text
+    _ensure_numbers()
+    _add_xp(20)
+    Sfx.play("coin")
+    _dialog.close()
+    _hud.show_toast("Паспорт получен! Добро пожаловать, %s" % passport_name)
+    _save_game()
+
+
+# ---------------------------------------------------------------- автошкола
+
+func _open_driving_school() -> void:
+    if has_license:
+        _open_dialog("Автошкола", "Права уже есть. Удачи на дорогах!", [["Закрыть", _dialog.close]])
+        return
+    if passport_name == "":
+        _open_dialog("Автошкола", "Для записи нужен паспорт. Получи его в мэрии на площади.",
+                [["Закрыть", _dialog.close]])
+        return
+    _open_dialog("Автошкола", ("Экзамен на права категории B:\n1) теория — 5 вопросов, нужно 4 верных;\n"
+            + "2) вождение — проехать по меткам вокруг площади не быстрее 70 км/ч.\n\nСтоимость: %d ₽") % EXAM_PRICE,
+            [["Оплатить и начать", _start_quiz], ["Закрыть", _dialog.close]])
+
+
+func _start_quiz() -> void:
+    if not _pay(EXAM_PRICE, "Автошкола"):
+        return
+    _quiz = QUIZ.duplicate()
+    _quiz.shuffle()
+    _quiz = _quiz.slice(0, 5)
+    _quiz_i = 0
+    _quiz_ok = 0
+    _show_question()
+
+
+func _show_question() -> void:
+    var q: Array = _quiz[_quiz_i]
+    var answers: Array = q[1]
+    var buttons := []
+    for i in answers.size():
+        buttons.append([answers[i], _answer.bind(i == int(q[2]))])
+    _open_dialog("Теория: вопрос %d/5" % (_quiz_i + 1), q[0], buttons)
+
+
+func _answer(correct: bool) -> void:
+    if correct:
+        _quiz_ok += 1
+    _quiz_i += 1
+    if _quiz_i < _quiz.size():
+        _show_question()
+        return
+    if _quiz_ok >= 4:
+        _open_dialog("Теория сдана", "Верных ответов: %d из 5.\nТеперь вождение: учебная машина уже ждёт." % _quiz_ok,
+                [["Начать вождение", _start_exam_drive]])
+    else:
+        Sfx.play("error")
+        _open_dialog("Теория не сдана", "Верных ответов: %d из 5, нужно 4.\nПопробуй ещё раз (экзамен оплачивается заново)." % _quiz_ok,
+                [["Закрыть", _dialog.close]])
+
+
+func _start_exam_drive() -> void:
+    _dialog.close()
+    _job.stop()
+    _work.stop()
+    _work.start("exam")
+
+
+func _on_exam_finished(passed: bool, text: String) -> void:
+    if passed:
+        has_license = true
+        _add_xp(50)
+        Sfx.play("coin")
+        _save_game()
+    else:
+        Sfx.play("error")
+    _hud.show_toast(text)
+
+
+# ---------------------------------------------------------------- банкомат
+
+func _open_atm() -> void:
+    _open_dialog("Банкомат", "Наличные: %s\nНа карте: %s\n\nЗарплата приходит на карту. Покупки — наличными, а если не хватает, то с карты."
+            % [HudScript.format_money(cash), HudScript.format_money(bank)],
+            [["Снять 1 000", _atm_withdraw.bind(1000)], ["Снять 5 000", _atm_withdraw.bind(5000)],
+            ["Снять всё", _atm_withdraw.bind(-1)], ["Положить все наличные", _atm_deposit],
+            ["Закрыть", _dialog.close]])
+
+
+func _atm_withdraw(amount: int) -> void:
+    var a := bank if amount < 0 else mini(amount, bank)
+    if a <= 0:
+        Sfx.play("error")
+        _hud.show_toast("На карте нет денег")
+        return
+    bank -= a
+    cash += a
+    _bank_log(-a, "Снятие наличных")
+    Sfx.play("coin")
+    _open_atm()
+
+
+func _atm_deposit() -> void:
+    if cash <= 0:
+        Sfx.play("error")
+        return
+    _bank_log(cash, "Пополнение наличными")
+    bank += cash
+    cash = 0
+    Sfx.play("coin")
+    _open_atm()
+
+
+# ---------------------------------------------------------------- АЗС
+
+func _open_fuel() -> void:
+    var car = _driving
+    if car == null:
+        return
+    var need := int(ceil(car.tank - car.fuel))
+    _open_dialog("АЗС", "Бензин: %d из %d л\nЦена: %d ₽ за литр" % [int(car.fuel), int(car.tank), FUEL_PRICE],
+            [["+10 л (%d ₽)" % (FUEL_PRICE * 10), _refuel.bind(10)],
+            ["Полный бак (%d ₽)" % (FUEL_PRICE * need), _refuel.bind(need)],
+            ["Закрыть", _dialog.close]])
+
+
+func _refuel(liters: int) -> void:
+    var car = _driving
+    if car == null:
+        _dialog.close()
+        return
+    var l := mini(liters, int(ceil(car.tank - car.fuel)))
+    if l <= 0:
+        _hud.show_toast("Бак уже полный")
+        return
+    if not _pay(l * FUEL_PRICE, "АЗС: %d л" % l):
+        return
+    car.fuel = minf(car.tank, car.fuel + l)
+    Sfx.play("coin")
+    _open_fuel()
+
+
+# ---------------------------------------------------------------- ДПС
+
+## Ездишь без прав в своей машине — патруль может остановить и оштрафовать.
+func _check_dps(delta: float, speed: float) -> void:
+    if _driving == null or has_license or _driving == _work_vehicle or absf(speed) < 30.0:
+        return
+    _dps_timer -= delta
+    if _dps_timer > 0.0:
+        return
+    _dps_timer = 40.0
+    if randf() < 0.4:
+        var fine := mini(DPS_FINE, cash + bank)
+        var from_cash := mini(cash, fine)
+        cash -= from_cash
+        bank -= fine - from_cash
+        if fine - from_cash > 0:
+            _bank_log(-(fine - from_cash), "Штраф ДПС")
+        Sfx.play("error")
+        _hud.show_toast("Тебя остановил ДПС: езда без прав. Штраф %d ₽" % fine)
+
+
+# ---------------------------------------------------------------- работы на месте
+
+func _start_work(kind: String) -> void:
+    if _work.active and _work.kind == kind:
+        _open_dialog("Работа", "Ты уже работаешь здесь. Закончить смену?",
+                [["Закончить смену", _stop_work_from_dialog], ["Продолжить", _dialog.close]])
+        return
+    if not _check_docs(kind == "bus" or kind == "truck"):
+        return
+    _job.stop()
+    _work.stop()
+    _work.start(kind)
+
+
+func _stop_work_from_dialog() -> void:
+    _dialog.close()
+    _work.stop()
+    _hud.show_toast("Смена закончена")
+
+
+func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
+    if _driving:  # выходим из своей машины
+        var pos: Vector3 = _driving.get_exit_position()
+        _driving.set_driven(false)
+        _driving = null
+        _player.global_position = pos
+        _player.set_active(true)
+    var v = CarScene.instantiate()
+    v.owned = true
+    v.price = 0
+    v.uses_fuel = false
+    match vehicle_kind:
+        "bus":
+            v.kind = "bus"
+            v.car_name = "Автобус"
+            v.paint = Color(0.95, 0.75, 0.15)
+            v.max_engine_force = 18000.0
+            v.max_speed_kmh = 80.0
+            v.brake_force = 150.0
+            v.max_steer = 0.5
+        "truck":
+            v.kind = "truck"
+            v.car_name = "Фура"
+            v.paint = Color(0.15, 0.30, 0.65)
+            v.max_engine_force = 22000.0
+            v.max_speed_kmh = 90.0
+            v.brake_force = 180.0
+            v.max_steer = 0.5
+        _:
+            v.car_name = "Учебная"
+            v.paint = Color(0.95, 0.95, 0.95)
+            v.max_engine_force = 4200.0
+            v.max_speed_kmh = 110.0
+    v.transform = at
+    add_child(v)
+    v.touch = _touch
+    v.set_night(_night_k > 0.4)
+    _work_vehicle = v
+    _traffic.obstacles.append(v)
+    _peds.cars.append(v)
+    _player.set_active(false)
+    v.set_driven(true)
+    _driving = v
+    for cam in get_tree().get_nodes_in_group("game_camera"):
+        cam.far = _view_far
+
+
+func _on_work_vehicle_done() -> void:
+    var v = _work_vehicle
+    if v == null:
+        return
+    if _driving == v:
+        var pos: Vector3 = v.get_exit_position()
+        v.set_driven(false)
+        _driving = null
+        _player.global_position = pos
+        _player.set_active(true)
+    _traffic.obstacles.erase(v)
+    _peds.cars.erase(v)
+    _work_vehicle = null
+    v.queue_free()

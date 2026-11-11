@@ -1,6 +1,7 @@
 extends Control
-## Интерфейс поверх игры: деньги, часы, текущее задание, мини-карта,
-## всплывающие уведомления и телефон с меню.
+## Интерфейс поверх игры (по концепту): круглая карта слева вверху, под ней
+## кошелёк с наличными и плашка с короной и ником; часы, задание, уведомления,
+## телефон и меню игрока (статистика, банковский счёт).
 
 signal job_selected(kind: String)
 signal job_stopped
@@ -9,11 +10,16 @@ signal phone_closed
 signal menu_requested
 
 const MinimapScript := preload("res://scripts/minimap.gd")
+const ProfileScript := preload("res://scripts/profile.gd")
+const Icons := preload("res://scripts/icons.gd")
+const ROW_Y := 278.0   # строка «кошелёк + ник» под картой
 
 var minimap: MinimapScript
+var profile: ProfileScript
+var _cash := 0
+var _nick := ""
 var phone_open := false
 
-var _money: Label
 var _clock: Label
 var _job: Label
 var _toast: Label
@@ -30,12 +36,10 @@ func _ready() -> void:
     set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-    _money = _make_label(self, 34, Color(0.65, 1.0, 0.65))
-    _money.position = Vector2(20, 10)
-    _clock = _make_label(self, 22, Color(1, 1, 1))
-    _clock.position = Vector2(22, 56)
-    _job = _make_label(self, 20, Color(1.0, 0.85, 0.3))
-    _job.position = Vector2(22, 88)
+    _clock = _make_label(self, 18, Color(1, 1, 1, 0.9))
+    _clock.position = Vector2(24, ROW_Y + 30)
+    _job = _make_label(self, 19, Color(1.0, 0.85, 0.3))
+    _job.position = Vector2(24, ROW_Y + 56)
 
     _toast = _make_label(self, 32, Color(1, 1, 1))
     _toast.anchor_left = 0.0
@@ -49,16 +53,12 @@ func _ready() -> void:
 
     minimap = MinimapScript.new()
     add_child(minimap)
-    minimap.anchor_left = 1.0
-    minimap.anchor_right = 1.0
-    minimap.anchor_top = 0.0
-    minimap.anchor_bottom = 0.0
-    minimap.offset_left = -240.0
-    minimap.offset_right = -20.0
-    minimap.offset_top = 16.0
-    minimap.offset_bottom = 236.0
+    minimap.position = Vector2(12, 10)
+    minimap.size = Vector2(236, 236)
 
     _build_phone()
+    profile = ProfileScript.new()
+    add_child(profile)
 
 
 func _process(delta: float) -> void:
@@ -67,10 +67,42 @@ func _process(delta: float) -> void:
         _toast.modulate.a = clampf(_toast_time / 0.6, 0.0, 1.0)
 
 
-func set_money(value: int) -> void:
-    var t := format_money(value)
-    _money.text = t
-    _phone_money.text = "Баланс: " + t
+func set_money(cash: int, bank: int) -> void:
+    if cash != _cash:
+        _cash = cash
+        queue_redraw()
+    _phone_money.text = "Наличные: %s\nНа карте: %s" % [format_money(cash), format_money(bank)]
+
+
+func set_nick(nick: String) -> void:
+    if nick != _nick:
+        _nick = nick
+        queue_redraw()
+
+
+## Строка под картой: кошелёк + наличные, плашка с короной и ником.
+func _draw() -> void:
+    var font := ThemeDB.fallback_font
+    var y := ROW_Y
+    Icons.draw(self, "wallet", Vector2(44, y), 40, Color.WHITE, Color.BLACK)
+    var money := _fmt(_cash) + " ₽"
+    draw_string_outline(font, Vector2(78, y + 13), money, HORIZONTAL_ALIGNMENT_LEFT, -1, 38, 12, Color.BLACK)
+    draw_string(font, Vector2(78, y + 13), money, HORIZONTAL_ALIGNMENT_LEFT, -1, 38, Color.WHITE)
+    var bx := 78.0 + font.get_string_size(money, HORIZONTAL_ALIGNMENT_LEFT, -1, 38).x + 16.0
+    var nick := _nick.to_upper() if _nick != "" else "БЕЗ ПАСПОРТА"
+    var nw := font.get_string_size(nick, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x
+    Icons.panel(self, Rect2(bx, y - 23, nw + 78, 46), Color(0.07, 0.07, 0.08, 0.92), 14, 2, Color(0.25, 0.25, 0.27))
+    Icons.draw(self, "crown", Vector2(bx + 30, y + 1), 30, Icons.GOLD)
+    draw_string(font, Vector2(bx + 56, y + 9), nick, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE)
+
+
+static func _fmt(v: int) -> String:
+    var s := str(absi(v))
+    var out := ""
+    while s.length() > 3:
+        out = " " + s.substr(s.length() - 3) + out
+        s = s.substr(0, s.length() - 3)
+    return ("-" if v < 0 else "") + s + out
 
 
 func set_clock(text: String) -> void:
@@ -93,7 +125,7 @@ static func format_money(value: int) -> String:
     while s.length() > 3:
         out = " " + s.substr(s.length() - 3) + out
         s = s.substr(0, s.length() - 3)
-    return ("-" if value < 0 else "") + s + out + " руб."
+    return ("-" if value < 0 else "") + s + out + " ₽"
 
 
 # ---------------------------------------------------------------- телефон
@@ -116,10 +148,7 @@ func update_phone(job_active: bool, job_text: String) -> void:
     _job_active = job_active
     _courier_btn.text = "Закончить смену" if job_active else "Работа: курьер"
     _taxi_btn.visible = not job_active
-    if job_active:
-        _phone_job.text = job_text
-    else:
-        _phone_job.text = "Курьер — можно пешком. Таксист — платят больше, нужна своя машина (автосалон на площади). Успел вовремя — бонус +30%."
+    _phone_job.text = job_text
 
 
 func _build_phone() -> void:

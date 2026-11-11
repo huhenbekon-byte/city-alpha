@@ -100,6 +100,36 @@ func _setup_camera() -> void:
     _spring.add_child(_camera)
 
 
+var _carry_kind := ""
+var _carry_node: MeshInstance3D
+
+
+## Показать, что игрок несёт: "" — ничего, "box" — коробку, "log" — бревно.
+func set_carry(what: String) -> void:
+    if what == _carry_kind:
+        return
+    _carry_kind = what
+    if _carry_node:
+        _carry_node.queue_free()
+        _carry_node = null
+    if what == "":
+        return
+    var bm := BoxMesh.new()
+    var mat := StandardMaterial3D.new()
+    _carry_node = MeshInstance3D.new()
+    if what == "box":
+        bm.size = Vector3(0.6, 0.45, 0.5)
+        mat.albedo_color = Color(0.72, 0.55, 0.35)
+        _carry_node.position = Vector3(0, 1.15, -0.45)
+    else:
+        bm.size = Vector3(0.3, 0.3, 1.6)
+        mat.albedo_color = Color(0.45, 0.30, 0.18)
+        _carry_node.position = Vector3(0.25, 1.62, 0)
+    _carry_node.mesh = bm
+    _carry_node.material_override = mat
+    _visual.add_child(_carry_node)
+
+
 ## Перекрасить одежду/внешность: {"jacket": Color, "pants": Color, ...}.
 func set_look(colors: Dictionary) -> void:
     for id: String in colors:

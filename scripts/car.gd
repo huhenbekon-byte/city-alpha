@@ -11,11 +11,19 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var brake_force := 30.0
 @export var max_steer := 0.55
 @export var look_sensitivity := 0.006
+@export var kind := "car"   # "car", "bus", "truck"
 @export var car_name := "Классика"
 @export var price := 8000
 
 ## Куплена ли машина. Чужую (из автосалона) водить нельзя.
 var owned := false
+
+## Бензин. uses_fuel = false у рабочих машин (автобус, фура, учебная).
+var tank := 40.0
+var fuel := 40.0
+var uses_fuel := true
+var _range_m := 6000.0     # на сколько метров хватает полного бака
+var _last_pos := Vector3.ZERO
 var _price_label: Label3D
 var _headlight: SpotLight3D
 var _night := false
@@ -43,20 +51,28 @@ var _rpm := 0.0
 
 
 func _ready() -> void:
-    mass = 1150.0
     center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
-    center_of_mass = Vector3(0, 0.35, 0.1)  # низкий центр масс — меньше переворотов
+    match kind:
+        "bus":
+            mass = 6000.0
+            center_of_mass = Vector3(0, 0.9, 0)
+        "truck":
+            mass = 7000.0
+            center_of_mass = Vector3(0, 0.9, 0.5)
+        _:
+            mass = 1150.0
+            center_of_mass = Vector3(0, 0.35, 0.1)  # низкий центр масс — меньше переворотов
     _spawn = global_transform
+    _last_pos = global_position
 
-    CarModel.add_collision(self)
+    CarModel.add_collision(self, kind)
     _tail_mat = CarModel.make_tail_material()
     var body_mi := MeshInstance3D.new()
-    body_mi.mesh = CarModel.body_mesh(paint, _tail_mat)
+    body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
     add_child(body_mi)
 
-    for x: float in [CarModel.WHEEL_X, -CarModel.WHEEL_X]:
-        for z: float in [CarModel.WHEEL_Z, -CarModel.WHEEL_Z]:
-            _add_wheel(Vector3(x, 0.42, z), z > 0.0)
+    for spot: Array in CarModel.wheel_spots(kind):
+        _add_wheel(spot[0], spot[1])
 
     _setup_camera()
     _setup_audio()
@@ -91,7 +107,7 @@ func set_night(on: bool) -> void:
 func set_owned(value: bool) -> void:
     owned = value
     _price_label.visible = not owned
-    _price_label.text = "%s\n%d %03d руб.\n%d км/ч" % [car_name, price / 1000, price % 1000, int(max_speed_kmh)]
+    _price_label.text = "%s\n%d %03d ₽\n%d км/ч" % [car_name, price / 1000, price % 1000, int(max_speed_kmh)]
 
 
 func _add_wheel(pos: Vector3, front: bool) -> void:
@@ -99,11 +115,12 @@ func _add_wheel(pos: Vector3, front: bool) -> void:
     w.position = pos
     w.use_as_steering = front
     w.use_as_traction = not front
-    w.wheel_radius = CarModel.WHEEL_RADIUS
+    var r := CarModel.wheel_radius(kind)
+    w.wheel_radius = r
     w.wheel_rest_length = 0.12
     w.suspension_travel = 0.18
     w.suspension_stiffness = 40.0
-    w.suspension_max_force = 12000.0
+    w.suspension_max_force = mass * 12.0
     w.damping_compression = 1.8
     w.damping_relaxation = 2.6
     w.wheel_friction_slip = 3.0 if front else 2.7
@@ -111,6 +128,7 @@ func _add_wheel(pos: Vector3, front: bool) -> void:
     add_child(w)
     var mi := MeshInstance3D.new()
     mi.mesh = CarModel.wheel_mesh()
+    mi.scale = Vector3.ONE * (r / CarModel.WHEEL_RADIUS)
     w.add_child(mi)
     if not front:
         _rear.append(w)
@@ -125,7 +143,7 @@ func set_driven(on: bool) -> void:
         _cam_yaw.rotation.y = _heading_yaw() + PI
         _cam_pitch.rotation.x = -0.22
         _look_timer = 0.0
-        _cam_yaw.global_position = global_position + Vector3(0, 1.5, 0)
+        _cam_yaw.global_position = global_position + Vector3(0, 1.5 if kind == "car" else 3.0, 0)
         _camera.make_current()
         _audio.play()
         _playback = _audio.get_stream_playback()
@@ -154,7 +172,8 @@ func get_exit_position() -> Vector3:
     var basis_now := global_transform.basis
     var from := global_position + Vector3.UP * 0.9
     for side: float in [1.0, -1.0]:
-        var target := global_position + basis_now.x * (1.7 * side)
+        var half := 1.25 if kind != "car" else 0.8
+        var target := global_position + basis_now.x * ((half + 0.9) * side)
         var q := PhysicsRayQueryParameters3D.create(from, target + Vector3.UP * 0.9)
         q.exclude = [get_rid()]
         if space.intersect_ray(q).is_empty():
@@ -216,6 +235,14 @@ func _physics_process(delta: float) -> void:
     else:
         brk = 1.0                      # торможение двигателем
 
+    # Бензин тратится с пройденным расстоянием; пустой бак — мотор не тянет.
+    var moved := global_position.distance_to(_last_pos)
+    _last_pos = global_position
+    if driven and uses_fuel and moved < 5.0:
+        fuel = maxf(0.0, fuel - moved * tank / _range_m)
+    if uses_fuel and fuel <= 0.0:
+        eng = 0.0
+
     engine_force = eng
     brake = brk
     for w in _rear:
@@ -267,7 +294,7 @@ func _setup_camera() -> void:
     _cam_yaw.add_child(_cam_pitch)
 
     var spring := SpringArm3D.new()
-    spring.spring_length = 6.5
+    spring.spring_length = 6.5 if kind == "car" else 11.0
     spring.margin = 0.3
     var probe := SphereShape3D.new()
     probe.radius = 0.3
@@ -287,7 +314,7 @@ func _process(delta: float) -> void:
         return
     if _playback:
         _fill_engine_sound()
-    _cam_yaw.global_position = global_position + Vector3(0, 1.5, 0)
+    _cam_yaw.global_position = global_position + Vector3(0, 1.5 if kind == "car" else 3.0, 0)
     _look_timer -= delta
     # Если игрок не крутит камеру — она плавно встаёт за машину.
     if _look_timer <= 0.0 and linear_velocity.length() > 1.0:

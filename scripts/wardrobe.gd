@@ -84,10 +84,10 @@ func _refresh() -> void:
         var i := int(_look[id])
         var item: Array = _items(id)[i]
         var price: int = item[2]
-        var state := "есть" if _is_owned(id, i) else ("бесплатно" if price == 0 else "%d руб." % price)
+        var state := "есть" if _is_owned(id, i) else ("бесплатно" if price == 0 else "%d ₽" % price)
         var lbl: Label = _rows[id]
         lbl.text = "%s: %s · %s" % [slot["name"], item[0], state]
-    _total.text = "К оплате: %d руб." % total if total > 0 else "Всё уже есть"
+    _total.text = "К оплате: %d ₽" % total if total > 0 else "Всё уже есть"
     _buy_btn.text = "Купить" if total > 0 else "Надеть"
 
 

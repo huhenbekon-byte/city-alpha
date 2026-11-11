@@ -44,6 +44,18 @@ var lamp_mat: StandardMaterial3D      # фонари: ярче ночью
 var lamp_positions: Array[Vector3] = []  # где висят плафоны (для света ночью)
 var road_lines: Array[float] = []     # координаты осей дорог (для трафика)
 var clothes_shop := Vector3.ZERO      # где магазин одежды (вход)
+var city_hall := Vector3.ZERO         # мэрия (паспорт)
+var driving_school := Vector3.ZERO    # автошкола
+var atms: Array[Vector3] = []         # банкоматы (где стоять)
+var fuel_pumps: Array[Vector3] = []   # колонки АЗС (где встать машиной)
+var bus_stops: Array[Vector3] = []    # точки остановки автобуса на полосе
+var bus_depot := Vector3.ZERO         # где взять автобус
+var warehouse_pick := Vector3.ZERO    # грузчик: где брать коробки
+var warehouse_drop := Vector3.ZERO    # грузчик: куда относить
+var truck_depot := Vector3.ZERO       # дальнобойщик: где взять фуру
+var truck_drops: Array[Vector3] = []  # дальнобойщик: куда возить
+var forest_trees: Array[Vector3] = [] # лесоруб: деревья под рубку
+var log_pile := Vector3.ZERO          # лесоруб: куда носить брёвна
 
 
 func _ready() -> void:
@@ -55,6 +67,7 @@ func _ready() -> void:
         for j in range(-GRID, GRID + 1):
             _build_block(i, j)
     _build_road_marks()
+    _build_outskirts()
     _flush_batches()
 
 
@@ -73,6 +86,10 @@ func _build_block(i: int, j: int) -> void:
 
     if is_center:
         _tpl_square()
+    elif i == GRID and j == GRID:
+        _mx = 1.0
+        _mz = 1.0
+        _tpl_industrial()
     else:
         match rng.randi() % 4:
             0:
@@ -84,6 +101,8 @@ func _build_block(i: int, j: int) -> void:
             _:
                 _tpl_towers()
 
+    if not is_center:
+        _block_bus_stop()
     _edge_lamps_and_trees()
     _scatter_trees(5 if is_center else 14)
 
@@ -115,9 +134,18 @@ func _tpl_square() -> void:
     _kiosk(_p(27, -27), Vector3(0, 0, 1), "ПРОДУКТЫ", Color(0.20, 0.50, 0.75))
     _kiosk(_p(-27, 10), Vector3(1, 0, 0), "ЦВЕТЫ", Color(0.30, 0.60, 0.30))
     _kiosk(_p(27, 10), Vector3(-1, 0, 0), "ПЕЧАТЬ", Color(0.70, 0.20, 0.20))
-    _kiosk(_p(-27, -9), Vector3(1, 0, 0), "ОДЕЖДА", Color(0.75, 0.35, 0.65))
+    _kiosk(_p(-27, -9), Vector3(1, 0, 0), "ОДЕЖДА", Color(0.75, 0.35, 0.65), false)
+    _kiosk(_p(27, -9), Vector3(-1, 0, 0), "МЭРИЯ", Color(0.30, 0.35, 0.60), false)
+    city_hall = _p(27, -9) + Vector3(-2.8, 0, 0)
+    _kiosk(_p(-27, 22), Vector3(1, 0, 0), "АВТОШКОЛА", Color(0.90, 0.50, 0.10), false)
+    driving_school = _p(-27, 22) + Vector3(2.8, 0, 0)
+    _atm(_p(-7, -29), Vector3(0, 0, 1))
+    _atm(_p(7, -29), Vector3(0, 0, 1))
     clothes_shop = _p(-27, -9) + Vector3(2.8, 0, 0)
     _bus_stop(_p(21, 31), Vector3(0, 0, 1))
+    bus_depot = _p(21, 29)
+    bus_spawn = Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(14, 0.9, 46.5))
+    bus_stops.append(Vector3(21, 0, 39.5))
 
     _occupy(_p(0, 24), 28.0, 8.0)   # здесь стоят машины игрока (main.gd)
     _occupy(_p(0, 14), 10.0, 6.0)   # точка появления игрока
@@ -248,6 +276,8 @@ func _shop(center: Vector3, length: float, depth: float, front: Vector3, text: S
     _occupy(base, sx + 2.0, sz + 2.0)
     building_rects.append(Rect2(base.x - sx * 0.5, base.z - sz * 0.5, sx, sz))
     pickups.append({"pos": base + front * (out + 3.0), "name": text})
+    var side := Vector3(front.z, 0.0, -front.x)
+    _atm(base + front * (out + 0.5) + side * (length * 0.5 - 1.5) + Vector3(0, SIDE_H, 0), front)
 
 
 func _garages(center: Vector3, count: int, along_x: bool, facing: Vector3) -> void:
@@ -272,7 +302,7 @@ func _garages(center: Vector3, count: int, along_x: bool, facing: Vector3) -> vo
         _put("garage_door", base + axis * u + facing * 3.03 + Vector3(0, 1.1, 0), yaw, col)
 
 
-func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color) -> void:
+func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color, is_pickup := true) -> void:
     var yaw := atan2(facing.x, facing.z)
     var b := Basis(Vector3.UP, yaw)
     _solid(Vector3(3.2, 2.6, 2.4), p + Vector3(0, 1.3, 0), _mat(col, 0.6), yaw)
@@ -282,7 +312,8 @@ func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color) -> void:
     _label(text, p + b * Vector3(0, 2.95, 1.16), facing, 64, col.darkened(0.3))
     _occupy(p, 4.0, 4.0)
     building_rects.append(Rect2(p.x - 1.6, p.z - 1.6, 3.2, 3.2))
-    pickups.append({"pos": p + facing * 2.8, "name": text})
+    if is_pickup:
+        pickups.append({"pos": p + facing * 2.8, "name": text})
 
 
 func _bus_stop(p: Vector3, facing: Vector3) -> void:
@@ -738,3 +769,129 @@ func _sphere_mesh(r: float, h: float) -> SphereMesh:
     m.radial_segments = 12
     m.rings = 6
     return m
+
+
+# ================================================================ службы, промзона, пригород
+
+var bus_spawn := Transform3D()     # где появляется рабочий автобус
+var truck_spawn := Transform3D()   # где появляется рабочая фура
+
+
+func _atm(p: Vector3, facing: Vector3) -> void:
+    var yaw := atan2(facing.x, facing.z)
+    var b := Basis(Vector3.UP, yaw)
+    var base := Vector3(p.x, SIDE_H, p.z)
+    _solid(Vector3(0.9, 1.9, 0.6), base + Vector3(0, 0.95, 0), _mat(Color(0.18, 0.30, 0.55), 0.4), yaw)
+    var screen := _mat(Color(0.3, 0.6, 1.0), 0.2)
+    screen.emission_enabled = true
+    screen.emission = Color(0.3, 0.6, 1.0)
+    screen.emission_energy_multiplier = 0.8
+    _deco(Vector3(0.5, 0.35, 0.03), base + b * Vector3(0, 1.35, 0.31), screen, yaw)
+    _label("БАНКОМАТ", base + b * Vector3(0, 1.75, 0.32), facing, 28, Color(1, 1, 1))
+    atms.append(base + facing * 1.1)
+    _occupy(base, 1.5, 1.5)
+
+
+## Остановка на случайной стороне квартала (для маршрута автобуса).
+func _block_bus_stop() -> void:
+    var dirs: Array[Vector3] = [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)]
+    var n: Vector3 = dirs[rng.randi() % dirs.size()]
+    var a := Vector3(-n.z, 0.0, n.x)
+    var h := BLOCK * 0.5
+    var stop_pos := _c + n * (h - 2.0) + a * 12.0 + Vector3(0, SIDE_H, 0)
+    if not _is_free(stop_pos, 0.5):
+        return
+    _bus_stop(stop_pos, n)
+    bus_stops.append(_c + n * (h + ROAD * 0.5 - 3.5) + a * 12.0)
+
+
+## Промзона: склад (грузчик), стоянка фур (дальнобойщик), АЗС.
+func _tpl_industrial() -> void:
+    var inner := BLOCK - WALK * 2.0
+    _flat(_c, Vector2(inner, inner), _m["yard_asphalt"], SIDE_H + 0.006)
+
+    var wh := _p(-6, -16)
+    _solid(Vector3(34, 9, 16), Vector3(wh.x, 4.5, wh.z), _m["garage"])
+    _deco(Vector3(34.4, 0.4, 16.4), Vector3(wh.x, 9.2, wh.z), _m["roof"])
+    _deco(Vector3(5, 4.5, 0.15), Vector3(wh.x, 2.25, wh.z + 8.05), _m["metal"])
+    _label("СКЛАД", Vector3(wh.x, 7.0, wh.z + 8.1), Vector3(0, 0, 1), 160, Color(0.95, 0.95, 0.95))
+    building_rects.append(Rect2(wh.x - 17.0, wh.z - 8.0, 34.0, 16.0))
+    _occupy(wh, 34.0, 16.0)
+    warehouse_drop = _p(-6, -6)
+    for k in 3:
+        _deco(Vector3(0.8, 0.8, 0.8), _p(-2.5 + k * 0.9, -7) + Vector3(0, 0.4, 0), _m["wood"])
+
+    # Фура, из которой грузчик носит коробки на склад.
+    var tr := _p(-6, 8)
+    _solid(Vector3(2.5, 2.7, 6.5), tr + Vector3(0, 1.9, 0), _m["white"])
+    _solid(Vector3(2.4, 2.4, 2.4), tr + Vector3(0, 1.6, 4.6), _m["blue"])
+    _occupy(tr + Vector3(0, 0, 2), 4.0, 11.0)
+    building_rects.append(Rect2(tr.x - 1.25, tr.z - 3.25, 2.5, 9.0))
+    warehouse_pick = _p(-6, 3.5)
+
+    # Стоянка дальнобойщиков
+    var dep := _p(14, 0)
+    _deco(Vector3(0.15, 3.0, 0.15), dep + Vector3(-2.0, 1.5, 0), _m["metal"])
+    _deco(Vector3(0.15, 3.0, 0.15), dep + Vector3(2.0, 1.5, 0), _m["metal"])
+    _deco(Vector3(4.6, 1.0, 0.1), dep + Vector3(0, 3.2, 0), _m["blue"])
+    _label("ДАЛЬНОБОЙЩИКИ", dep + Vector3(0, 3.2, 0.06), Vector3(0, 0, 1), 44, Color(1, 1, 1))
+    truck_depot = dep + Vector3(0, 0, 2.0)
+    var ts := _p(22, 8)
+    truck_spawn = Transform3D(Basis(), Vector3(ts.x, 0.9, ts.z))
+    _occupy(_p(18, 6), 16.0, 20.0)
+
+    _gas_station(_p(14, 24), true)
+
+
+## АЗС: навес, две колонки, магазинчик.
+func _gas_station(c: Vector3, along_x: bool) -> void:
+    var axis := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
+    var perp := Vector3(-axis.z, 0, axis.x)
+    var y := c.y
+    _flat(c, Vector2(30, 24) if along_x else Vector2(24, 30), _m["yard_asphalt"], y + 0.012)
+    var red := _mat(Color(0.80, 0.12, 0.10), 0.5)
+    _deco(Vector3(14, 0.5, 9) if along_x else Vector3(9, 0.5, 14), Vector3(c.x, y + 5.2, c.z), _m["white"])
+    _deco(Vector3(14.1, 0.25, 9.1) if along_x else Vector3(9.1, 0.25, 14.1), Vector3(c.x, y + 5.0, c.z), red)
+    for sx: float in [-6.0, 6.0]:
+        for sz: float in [-4.0, 4.0]:
+            var post := c + axis * sx + perp * sz
+            _solid(Vector3(0.35, 5.0, 0.35), Vector3(post.x, y + 2.5, post.z), _m["white"])
+    for k: float in [-3.0, 3.0]:
+        var pump := c + axis * k
+        _solid(Vector3(0.8, 1.6, 0.6), Vector3(pump.x, y + 0.8, pump.z), red)
+        fuel_pumps.append(Vector3(pump.x, y, pump.z))
+    for s: float in [-1.0, 1.0]:
+        _label("АЗС", Vector3(c.x, y + 5.2, c.z) + perp * (4.62 * s), perp * s, 120, Color(0.85, 0.1, 0.1))
+    var shop := c - perp * 9.5
+    _solid(Vector3(8, 3.5, 5) if along_x else Vector3(5, 3.5, 8), Vector3(shop.x, y + 1.75, shop.z), _m["concrete"])
+    _label("МАГАЗИН", Vector3(shop.x, y + 2.8, shop.z) + perp * (2.56 if along_x else 2.56), perp, 48, Color(0.2, 0.2, 0.2))
+    building_rects.append(Rect2(shop.x - 4.0, shop.z - 4.0, 8.0, 8.0))
+    _occupy(c, 30.0, 30.0)
+
+
+## За городом: две АЗС на трассах, лес с лесопилкой, точки для дальнобоя.
+func _build_outskirts() -> void:
+    _gas_station(Vector3(-248, 0, 0), false)
+    _gas_station(Vector3(0, 0, -248), true)
+
+    var fc := Vector3(-270, 0, -270)
+    for k in 10:
+        var p := fc + Vector3(rng.randf_range(-26, 26), 0, rng.randf_range(-26, 26))
+        if _is_free(p, 3.0):
+            _tree(p)
+            forest_trees.append(p)
+    for k in 90:
+        var p := fc + Vector3(rng.randf_range(-36, 36), 0, rng.randf_range(-36, 36))
+        if _is_free(p, 2.0):
+            _tree(p)
+
+    log_pile = Vector3(-226, 0, -226)
+    for k in 4:
+        _deco(Vector3(4.0, 0.5, 0.5), log_pile + Vector3(0, 0.25 + (k % 2) * 0.5, -1.2 + k * 0.6), _m["wood"])
+    _deco(Vector3(0.15, 3.0, 0.15), log_pile + Vector3(3.0, 1.5, 0), _m["metal"])
+    _deco(Vector3(3.6, 0.9, 0.1), log_pile + Vector3(3.0, 3.2, 0), _m["wood"])
+    _label("ЛЕСОПИЛКА", log_pile + Vector3(3.0, 3.2, 0.06), Vector3(0, 0, 1), 40, Color(1, 1, 1))
+    log_pile += Vector3(0, 0, 3.0)
+
+    truck_drops = [Vector3(-248, 0, -22), Vector3(22, 0, -248), Vector3(-226, 0, -214),
+            Vector3(-215, 0, 215), Vector3(215, 0, -215)]
