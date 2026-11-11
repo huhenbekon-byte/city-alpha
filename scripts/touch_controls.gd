@@ -7,6 +7,8 @@ extends Control
 
 signal look_drag(relative: Vector2)
 signal interact_pressed
+signal phone_pressed
+signal horn_pressed
 
 enum Mode { FOOT, CAR }
 
@@ -21,6 +23,15 @@ var mode: Mode = Mode.FOOT:
             return
         mode = value
         _release_all()
+        queue_redraw()
+## true, пока открыт телефон: касания уходят в его кнопки, а не в джойстик.
+var blocked := false:
+    set(value):
+        blocked = value
+        _release_all()
+        _joy_index = -1
+        _look_index = -1
+        joy_vector = Vector2.ZERO
         queue_redraw()
 var interact_text := "":
     set(value):
@@ -57,8 +68,10 @@ func _buttons() -> Array:
     else:
         list.append({"id": "gas", "pos": Vector2(w - 140, h - 175), "r": 72.0, "text": "ГАЗ"})
         list.append({"id": "brake", "pos": Vector2(w - 315, h - 120), "r": 58.0, "text": "ТОРМОЗ"})
+        list.append({"id": "horn", "pos": Vector2(w - 305, h - 268), "r": 44.0, "text": "БИП"})
     if interact_text != "":
         list.append({"id": "interact", "pos": Vector2(w - 145, h - 355), "r": 54.0, "text": interact_text})
+    list.append({"id": "phone", "pos": Vector2(w - 284, 62), "r": 38.0, "text": ""})
     return list
 
 
@@ -71,16 +84,20 @@ func _input(event: InputEvent) -> void:
 
 func _on_touch(e: InputEventScreenTouch) -> void:
     if e.pressed:
+        if blocked:
+            return
+        for b: Dictionary in _buttons():
+            var pos: Vector2 = b["pos"]
+            var r: float = b["r"]
+            var id: String = b["id"]
+            if not pads_enabled and id != "phone":
+                continue  # на ПК из кнопок только телефон
+            if not _held.has(id) and e.position.distance_to(pos) < r * 1.2:
+                _held[id] = e.index
+                _set_button(id, true)
+                queue_redraw()
+                return
         if pads_enabled:
-            for b: Dictionary in _buttons():
-                var pos: Vector2 = b["pos"]
-                var r: float = b["r"]
-                var id: String = b["id"]
-                if not _held.has(id) and e.position.distance_to(pos) < r * 1.2:
-                    _held[id] = e.index
-                    _set_button(id, true)
-                    queue_redraw()
-                    return
             if _joy_index == -1 and e.position.x < size.x * 0.45 and e.position.y > size.y * 0.3:
                 _joy_index = e.index
                 _joy_center = e.position
@@ -127,6 +144,12 @@ func _set_button(id: String, down: bool) -> void:
         "interact":
             if down:
                 interact_pressed.emit()
+        "phone":
+            if down:
+                phone_pressed.emit()
+        "horn":
+            if down:
+                horn_pressed.emit()
 
 
 func _release_all() -> void:
@@ -138,7 +161,11 @@ func _release_all() -> void:
 
 
 func _draw() -> void:
+    if blocked:
+        return
+    var font := ThemeDB.fallback_font
     if not pads_enabled:
+        _draw_phone_button(font)
         return
     var base := _joy_center if _joy_index != -1 else Vector2(210.0, size.y - 200.0)
     var knob := _joy_knob if _joy_index != -1 else base
@@ -148,7 +175,6 @@ func _draw() -> void:
     draw_circle(knob, KNOB_RADIUS, Color(1, 1, 1, 0.75))
     draw_arc(knob, KNOB_RADIUS, 0.0, TAU, 32, Color(0, 0, 0, 0.35), 2.0, true)
 
-    var font := ThemeDB.fallback_font
     for b: Dictionary in _buttons():
         var pos: Vector2 = b["pos"]
         var r: float = b["r"]
@@ -164,7 +190,9 @@ func _draw() -> void:
             fill = Color(0.9, 0.6, 0.05, 0.9 if down else 0.7)
         draw_circle(pos, r, fill)
         draw_arc(pos, r, 0.0, TAU, 48, Color(1, 1, 1, 0.85), 4.0, true)
-        if id == "jump":
+        if id == "phone":
+            _draw_phone_icon(pos)
+        elif id == "jump":
             draw_colored_polygon(PackedVector2Array([
                 pos + Vector2(0, -24), pos + Vector2(22, 12), pos + Vector2(-22, 12)
             ]), Color(1, 1, 1, 0.95))
@@ -172,3 +200,20 @@ func _draw() -> void:
             var fs := 24
             draw_string(font, pos + Vector2(-r, fs * 0.35), text,
                     HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs, Color(1, 1, 1, 0.95))
+
+
+func _draw_phone_button(_font: Font) -> void:
+    for b: Dictionary in _buttons():
+        if b["id"] == "phone":
+            var pos: Vector2 = b["pos"]
+            var r: float = b["r"]
+            draw_circle(pos, r, Color(0, 0, 0, 0.5 if _held.has("phone") else 0.3))
+            draw_arc(pos, r, 0.0, TAU, 48, Color(1, 1, 1, 0.85), 4.0, true)
+            _draw_phone_icon(pos)
+
+
+func _draw_phone_icon(pos: Vector2) -> void:
+    var body := Rect2(pos - Vector2(11, 18), Vector2(22, 36))
+    draw_rect(body, Color(1, 1, 1, 0.95), false, 3.0)
+    draw_rect(Rect2(pos - Vector2(7, 13), Vector2(14, 21)), Color(0.5, 0.8, 1.0, 0.9))
+    draw_circle(pos + Vector2(0, 13), 2.2, Color(1, 1, 1, 0.95))

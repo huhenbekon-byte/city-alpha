@@ -27,6 +27,12 @@ const TouchControlsScript := preload("res://scripts/touch_controls.gd")
 
 var touch: TouchControlsScript = null
 
+## Шаг (для звука). run — бежит.
+signal stepped(run: bool)
+var _step_acc := 0.0
+var _was_on_floor := true
+var _look_mats := {}   # slot -> материал (куртка, штаны, кроссовки, волосы, кожа)
+
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _visual: Node3D
 var _cam_yaw: Node3D
@@ -90,7 +96,16 @@ func _setup_camera() -> void:
     _camera.fov = 70.0
     _camera.near = 0.05
     _camera.current = true
+    _camera.add_to_group("game_camera")
     _spring.add_child(_camera)
+
+
+## Перекрасить одежду/внешность: {"jacket": Color, "pants": Color, ...}.
+func set_look(colors: Dictionary) -> void:
+    for id: String in colors:
+        if _look_mats.has(id):
+            var m: StandardMaterial3D = _look_mats[id]
+            m.albedo_color = colors[id]
 
 
 ## Включить/выключить игрока (выключаем, пока он сидит в машине).
@@ -106,6 +121,15 @@ func set_active(on: bool) -> void:
 func set_camera_yaw(yaw: float) -> void:
     _cam_yaw.rotation.y = yaw
     _visual.rotation.y = yaw
+
+
+func get_camera_yaw() -> float:
+    return _cam_yaw.rotation.y
+
+
+## Куда смотрит персонаж (для стрелки на мини-карте).
+func get_facing() -> Vector3:
+    return -_visual.global_transform.basis.z
 
 
 ## Вызывается из TouchControls (свайп пальцем или drag мышью).
@@ -138,6 +162,18 @@ func _physics_process(delta: float) -> void:
     velocity.z = hv.y
 
     move_and_slide()
+
+    var hs := Vector2(velocity.x, velocity.z).length()
+    var grounded := is_on_floor()
+    if grounded and not _was_on_floor:
+        stepped.emit(true)  # приземлился
+    _was_on_floor = grounded
+    if grounded and hs > 0.5:
+        _step_acc += hs * delta
+        var running := hs > walk_speed + 0.5
+        if _step_acc > (1.05 if running else 0.68):
+            _step_acc = 0.0
+            stepped.emit(running)
 
     if hv.length() > 0.3:
         var yaw := atan2(-hv.x, -hv.y)
@@ -210,6 +246,7 @@ func _build_character() -> void:
     var shoes := _mat(Color(0.96, 0.96, 0.96), 0.5)
     var sole := _mat(Color(0.2, 0.2, 0.2), 0.9)
     var eye := _mat(Color(0.05, 0.05, 0.05), 0.3)
+    _look_mats = {"skin": skin, "hair": hair, "jacket": jacket, "pants": jeans, "shoes": shoes}
 
     var body := _joint(_visual, Vector3.ZERO, "body")
     var pelvis := _joint(body, Vector3(0, 0.95, 0), "pelvis")

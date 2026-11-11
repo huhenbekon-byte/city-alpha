@@ -34,6 +34,17 @@ var _panel_mats: Array[StandardMaterial3D] = []
 var _brick_mats: Array[StandardMaterial3D] = []
 var _m := {}
 
+# --- данные для мини-карты и работ (читают main.gd, minimap.gd, job_courier.gd)
+var extent := (GRID + 0.5) * PITCH + ROAD * 0.5   # половина размера города
+var block_rects: Array[Rect2] = []
+var building_rects: Array[Rect2] = []
+var pickups: Array[Dictionary] = []   # {"pos": Vector3, "name": String} — ларьки, магазины
+var dropoffs: Array[Vector3] = []     # точки у подъездов
+var lamp_mat: StandardMaterial3D      # фонари: ярче ночью
+var lamp_positions: Array[Vector3] = []  # где висят плафоны (для света ночью)
+var road_lines: Array[float] = []     # координаты осей дорог (для трафика)
+var clothes_shop := Vector3.ZERO      # где магазин одежды (вход)
+
 
 func _ready() -> void:
     rng.seed = 1977
@@ -56,6 +67,7 @@ func _build_block(i: int, j: int) -> void:
     _mz = 1.0 if is_center or rng.randf() < 0.5 else -1.0
 
     _solid(Vector3(BLOCK, SIDE_H, BLOCK), _c + Vector3(0, SIDE_H * 0.5, 0), _m["sidewalk"])
+    block_rects.append(Rect2(_c.x - BLOCK * 0.5, _c.z - BLOCK * 0.5, BLOCK, BLOCK))
     var inner := BLOCK - WALK * 2.0
     _flat(_c, Vector2(inner, inner), _m["paving"] if is_center else _m["grass"], SIDE_H + 0.004)
 
@@ -103,6 +115,8 @@ func _tpl_square() -> void:
     _kiosk(_p(27, -27), Vector3(0, 0, 1), "ПРОДУКТЫ", Color(0.20, 0.50, 0.75))
     _kiosk(_p(-27, 10), Vector3(1, 0, 0), "ЦВЕТЫ", Color(0.30, 0.60, 0.30))
     _kiosk(_p(27, 10), Vector3(-1, 0, 0), "ПЕЧАТЬ", Color(0.70, 0.20, 0.20))
+    _kiosk(_p(-27, -9), Vector3(1, 0, 0), "ОДЕЖДА", Color(0.75, 0.35, 0.65))
+    clothes_shop = _p(-27, -9) + Vector3(2.8, 0, 0)
     _bus_stop(_p(21, 31), Vector3(0, 0, 1))
 
     _occupy(_p(0, 24), 28.0, 8.0)   # здесь стоят машины игрока (main.gd)
@@ -170,6 +184,7 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
     _deco(Vector3(sx + 0.2, 0.7, sz + 0.2), base + Vector3(0, 0.35, 0), _m["plinth"])
     _deco(Vector3(sx + 0.3, 0.45, sz + 0.3), base + Vector3(0, h + 0.2, 0), _m["roof"])
     _occupy(base, sx, sz)
+    building_rects.append(Rect2(base.x - sx * 0.5, base.z - sz * 0.5, sx, sz))
 
     # Балконы
     var every := 3 if style == "brick" else 2
@@ -210,6 +225,7 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
         var u := -flen * 0.5 + flen * (e + 0.5) / count
         var p := base + axis * u + entrance * e_out
         _put("door", p + Vector3(0, 1.1, 0) + entrance * 0.06, yaw)
+        dropoffs.append(p + entrance * 2.5 + Vector3(0, SIDE_H, 0))
         _put("canopy", p + Vector3(0, 2.55, 0) + entrance * 0.65, yaw)
         if style != "brick":
             _put("roof_box", base + axis * u + Vector3(0, h + 1.4, 0), yaw)
@@ -230,6 +246,8 @@ func _shop(center: Vector3, length: float, depth: float, front: Vector3, text: S
     _deco(Vector3(length * 0.6, 1.0, 0.12), base + front * (out + 0.1) + Vector3(0, 3.6, 0), _m["white"], yaw)
     _label(text, base + front * (out + 0.17) + Vector3(0, 3.6, 0), front, 120, Color(0.8, 0.1, 0.1))
     _occupy(base, sx + 2.0, sz + 2.0)
+    building_rects.append(Rect2(base.x - sx * 0.5, base.z - sz * 0.5, sx, sz))
+    pickups.append({"pos": base + front * (out + 3.0), "name": text})
 
 
 func _garages(center: Vector3, count: int, along_x: bool, facing: Vector3) -> void:
@@ -241,6 +259,7 @@ func _garages(center: Vector3, count: int, along_x: bool, facing: Vector3) -> vo
     _flat(base + facing * 6.0, Vector2(flen, 6.0) if along_x else Vector2(6.0, flen),
             _m["yard_asphalt"], SIDE_H + 0.008)
     _occupy(base, size.x, size.z)
+    building_rects.append(Rect2(base.x - size.x * 0.5, base.z - size.z * 0.5, size.x, size.z))
     _occupy(base + facing * 6.0, size.x, size.z)
 
     var axis := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
@@ -262,6 +281,8 @@ func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color) -> void:
     _deco(Vector3(3.2, 0.55, 0.08), p + b * Vector3(0, 2.95, 1.1), _m["white"], yaw)
     _label(text, p + b * Vector3(0, 2.95, 1.16), facing, 64, col.darkened(0.3))
     _occupy(p, 4.0, 4.0)
+    building_rects.append(Rect2(p.x - 1.6, p.z - 1.6, 3.2, 3.2))
+    pickups.append({"pos": p + facing * 2.8, "name": text})
 
 
 func _bus_stop(p: Vector3, facing: Vector3) -> void:
@@ -380,6 +401,7 @@ func _lamp(base: Vector3, toward: Vector3) -> void:
     _put("pole", base + Vector3(0, 3.5, 0))
     _put("lamp_arm", base + Vector3(0, 6.9, 0) + toward * 0.75, yaw)
     _put("lamp_head", base + Vector3(0, 6.85, 0) + toward * 1.45, yaw)
+    lamp_positions.append(base + Vector3(0, 6.6, 0) + toward * 1.45)
 
 
 # ================================================================ земля и дороги
@@ -405,6 +427,7 @@ func _build_road_marks() -> void:
     for k: int in range(-GRID - 1, GRID + 1):
         lines.append((k + 0.5) * PITCH)
 
+    road_lines = lines
     for r: float in lines:
         var t := -extent
         while t <= extent:
@@ -436,8 +459,8 @@ func _dist_to_lines(t: float, lines: Array[float]) -> float:
 # ================================================================ материалы
 
 func _make_materials() -> void:
-    var panel_tex := _facade_texture(false)
-    var brick_tex := _facade_texture(true)
+    var panel_tex := _facade_textures(false)
+    var brick_tex := _facade_textures(true)
     for col: Color in [Color(0.93, 0.93, 0.91), Color(0.86, 0.87, 0.88), Color(0.90, 0.88, 0.82),
             Color(0.80, 0.86, 0.90), Color(0.92, 0.86, 0.78)]:
         _panel_mats.append(_facade_mat(col, panel_tex))
@@ -468,38 +491,64 @@ func _make_materials() -> void:
 
 
 ## Текстура одной «ячейки» фасада 3 x 2.8 м: панель со швами или кирпич + окно.
-func _facade_texture(brick: bool) -> ImageTexture:
-    var img := Image.create_empty(64, 64, false, Image.FORMAT_RGBA8)
-    img.fill(Color(0.96, 0.96, 0.96))
+## Текстура фасада: атлас 4x4 ячейки (каждая 3 x 2.8 м — панель со швами
+## или кирпич + окно) и маска свечения окон для ночи: часть окон «горит».
+func _facade_textures(brick: bool) -> Array:
+    const C := 64
+    const N := 4
+    var cell := Image.create_empty(C, C, false, Image.FORMAT_RGBA8)
+    cell.fill(Color(0.96, 0.96, 0.96))
     var line := Color(0.78, 0.78, 0.78)
     if brick:
-        for y in range(0, 64, 4):
-            img.fill_rect(Rect2i(0, y, 64, 1), line)
+        for y in range(0, C, 4):
+            cell.fill_rect(Rect2i(0, y, C, 1), line)
             var off := 0 if y % 8 == 0 else 4
-            for x in range(off, 64, 8):
-                img.fill_rect(Rect2i(x, y, 1, 4), line)
+            for x in range(off, C, 8):
+                cell.fill_rect(Rect2i(x, y, 1, 4), line)
     else:
-        img.fill_rect(Rect2i(0, 0, 64, 1), Color(0.7, 0.7, 0.7))
-        img.fill_rect(Rect2i(0, 0, 1, 64), Color(0.7, 0.7, 0.7))
-    img.fill_rect(Rect2i(15, 14, 34, 34), Color(1, 1, 1))            # рама
-    img.fill_rect(Rect2i(17, 16, 30, 30), Color(0.20, 0.27, 0.34))   # стекло
-    img.fill_rect(Rect2i(31, 16, 2, 30), Color(1, 1, 1))             # импост
-    img.fill_rect(Rect2i(17, 28, 14, 2), Color(1, 1, 1))             # форточка
-    img.fill_rect(Rect2i(13, 48, 38, 2), Color(0.65, 0.65, 0.65))    # отлив
-    img.generate_mipmaps()
-    return ImageTexture.create_from_image(img)
+        cell.fill_rect(Rect2i(0, 0, C, 1), Color(0.7, 0.7, 0.7))
+        cell.fill_rect(Rect2i(0, 0, 1, C), Color(0.7, 0.7, 0.7))
+    cell.fill_rect(Rect2i(15, 14, 34, 34), Color(1, 1, 1))            # рама
+    cell.fill_rect(Rect2i(17, 16, 30, 30), Color(0.20, 0.27, 0.34))   # стекло
+    cell.fill_rect(Rect2i(31, 16, 2, 30), Color(1, 1, 1))             # импост
+    cell.fill_rect(Rect2i(17, 28, 14, 2), Color(1, 1, 1))             # форточка
+    cell.fill_rect(Rect2i(13, 48, 38, 2), Color(0.65, 0.65, 0.65))    # отлив
+
+    var albedo := Image.create_empty(C * N, C * N, false, Image.FORMAT_RGBA8)
+    var glow := Image.create_empty(C * N, C * N, false, Image.FORMAT_RGBA8)
+    glow.fill(Color(0, 0, 0))
+    for cx in N:
+        for cy in N:
+            albedo.blit_rect(cell, Rect2i(0, 0, C, C), Vector2i(cx * C, cy * C))
+            if rng.randf() < 0.45:
+                var warm := Color(1.0, 0.82, 0.5) if rng.randf() < 0.75 else Color(0.75, 0.85, 1.0)
+                warm = warm * rng.randf_range(0.6, 1.0)
+                glow.fill_rect(Rect2i(cx * C + 17, cy * C + 16, 30, 30), warm)
+    albedo.generate_mipmaps()
+    glow.generate_mipmaps()
+    return [ImageTexture.create_from_image(albedo), ImageTexture.create_from_image(glow)]
 
 
-func _facade_mat(col: Color, tex: Texture2D) -> StandardMaterial3D:
+func _facade_mat(col: Color, tex: Array) -> StandardMaterial3D:
     var m := StandardMaterial3D.new()
     m.albedo_color = col
-    m.albedo_texture = tex
+    m.albedo_texture = tex[0]
+    m.emission_enabled = true
+    m.emission = Color(1, 1, 1)
+    m.emission_texture = tex[1]
+    m.emission_energy_multiplier = 0.0   # днём окна не светятся
     m.uv1_triplanar = true
     m.uv1_world_triplanar = true
-    m.uv1_scale = Vector3(1.0 / CELL, 1.0 / FLOOR_H, 1.0 / CELL)
+    m.uv1_scale = Vector3(1.0 / (CELL * 4.0), 1.0 / (FLOOR_H * 4.0), 1.0 / (CELL * 4.0))
     m.roughness = 0.9
     m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
     return m
+
+
+## 0 — день, 1 — ночь: светятся окна.
+func set_night(k: float) -> void:
+    for m: StandardMaterial3D in _panel_mats + _brick_mats:
+        m.emission_energy_multiplier = k * 1.3
 
 
 ## Виды мелких объектов: меш, материал, дальность видимости (м), тень.
@@ -517,6 +566,7 @@ func _define_batches() -> void:
     lamp.emission_enabled = true
     lamp.emission = Color(1.0, 0.92, 0.75)
     lamp.emission_energy_multiplier = 0.8
+    lamp_mat = lamp
     _batch("lamp_head", _box_mesh(Vector3(0.3, 0.12, 0.55)), lamp, 150.0)
     _batch("trunk", _cyl_mesh(0.12, 0.18, 2.6, 6), _mat(Color(0.36, 0.25, 0.17), 0.9), 180.0)
     _batch("birch", _cyl_mesh(0.09, 0.13, 5.5, 6), _mat(Color(0.92, 0.90, 0.86), 0.8), 180.0)

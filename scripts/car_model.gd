@@ -38,6 +38,12 @@ static func parked_mesh(paint: Color) -> ArrayMesh:
     return _merge(parts)
 
 
+## Ночью фары и задние фонари всех машин светятся ярче (0 — день, 1 — ночь).
+static func set_night(k: float) -> void:
+    _mat("head", Color(1.0, 0.96, 0.85), 0.2, 0.0, 0.6).emission_energy_multiplier = lerpf(0.6, 4.0, k)
+    _mat("tail_static", Color(0.55, 0.04, 0.04), 0.3, 0.0, 0.3).emission_energy_multiplier = lerpf(0.3, 1.6, k)
+
+
 ## Отдельный материал стоп-сигналов: у каждой ездящей машины свой.
 static func make_tail_material() -> StandardMaterial3D:
     var m := StandardMaterial3D.new()
