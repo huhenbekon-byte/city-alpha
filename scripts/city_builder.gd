@@ -43,7 +43,7 @@ var dropoffs: Array[Vector3] = []     # точки у подъездов
 var lamp_mat: StandardMaterial3D      # фонари: ярче ночью
 var lamp_positions: Array[Vector3] = []  # где висят плафоны (для света ночью)
 var road_lines: Array[float] = []     # координаты осей дорог (для трафика)
-var clothes_shop := Vector3.ZERO      # где магазин одежды (вход)
+var market := Vector3.ZERO            # вход в Общий рынок (машины, одежда, прочее)
 var city_hall := Vector3.ZERO         # мэрия (паспорт)
 var driving_school := Vector3.ZERO    # автошкола
 var atms: Array[Vector3] = []         # банкоматы (где стоять)
@@ -134,20 +134,20 @@ func _tpl_square() -> void:
     _kiosk(_p(27, -27), Vector3(0, 0, 1), "ПРОДУКТЫ", Color(0.20, 0.50, 0.75))
     _kiosk(_p(-27, 10), Vector3(1, 0, 0), "ЦВЕТЫ", Color(0.30, 0.60, 0.30))
     _kiosk(_p(27, 10), Vector3(-1, 0, 0), "ПЕЧАТЬ", Color(0.70, 0.20, 0.20))
-    _kiosk(_p(-27, -9), Vector3(1, 0, 0), "ОДЕЖДА", Color(0.75, 0.35, 0.65), false)
+    _kiosk(_p(-27, -9), Vector3(1, 0, 0), "КОФЕ", Color(0.45, 0.30, 0.20))
+    _market(_p(0, 29))
     _kiosk(_p(27, -9), Vector3(-1, 0, 0), "МЭРИЯ", Color(0.30, 0.35, 0.60), false)
     city_hall = _p(27, -9) + Vector3(-2.8, 0, 0)
     _kiosk(_p(-27, 22), Vector3(1, 0, 0), "АВТОШКОЛА", Color(0.90, 0.50, 0.10), false)
     driving_school = _p(-27, 22) + Vector3(2.8, 0, 0)
     _atm(_p(-7, -29), Vector3(0, 0, 1))
     _atm(_p(7, -29), Vector3(0, 0, 1))
-    clothes_shop = _p(-27, -9) + Vector3(2.8, 0, 0)
     _bus_stop(_p(21, 31), Vector3(0, 0, 1))
     bus_depot = _p(21, 29)
     bus_spawn = Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(14, 0.9, 46.5))
     bus_stops.append(Vector3(21, 0, 39.5))
 
-    _occupy(_p(0, 24), 28.0, 8.0)   # здесь стоят машины игрока (main.gd)
+    _occupy(_p(0, 20), 40.0, 6.0)   # стоянка у рынка: сюда доставляют купленные машины
     _occupy(_p(0, 14), 10.0, 6.0)   # точка появления игрока
 
 
@@ -895,3 +895,19 @@ func _build_outskirts() -> void:
 
     truck_drops = [Vector3(-248, 0, -22), Vector3(22, 0, -248), Vector3(-226, 0, -214),
             Vector3(-215, 0, 215), Vector3(215, 0, -215)]
+
+
+## Павильон «ОБЩИЙ РЫНОК»: вход смотрит на площадь (-Z).
+func _market(c: Vector3) -> void:
+    var base := Vector3(c.x, SIDE_H, c.z)
+    var stripe_a := _mat(Color(0.95, 0.72, 0.12), 0.6)
+    var stripe_b := _mat(Color(0.95, 0.95, 0.92), 0.6)
+    _solid(Vector3(14, 3.6, 5), base + Vector3(0, 1.8, 0), _m["concrete"])
+    _deco(Vector3(12, 2.2, 0.06), base + Vector3(0, 1.4, -2.53), _m["glass"])
+    for k in 7:   # полосатый навес
+        _deco(Vector3(2.0, 0.12, 2.0), base + Vector3(-6 + k * 2.0, 3.0, -3.4), stripe_a if k % 2 == 0 else stripe_b)
+    _deco(Vector3(14.4, 1.4, 0.15), base + Vector3(0, 4.4, -2.55), _m["white"])
+    _label("ОБЩИЙ РЫНОК", base + Vector3(0, 4.4, -2.65), Vector3(0, 0, -1), 150, Color(0.85, 0.55, 0.05))
+    building_rects.append(Rect2(base.x - 7.0, base.z - 2.5, 14.0, 5.0))
+    _occupy(base, 16.0, 8.0)
+    market = base + Vector3(0, 0, -4.6)

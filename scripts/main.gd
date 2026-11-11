@@ -13,15 +13,16 @@ const TrafficScript := preload("res://scripts/traffic.gd")
 const PedestriansScript := preload("res://scripts/pedestrians.gd")
 const CarModel := preload("res://scripts/car_model.gd")
 const Clothes := preload("res://scripts/clothes.gd")
-const WardrobeScript := preload("res://scripts/wardrobe.gd")
+const ListWindowScript := preload("res://scripts/list_window.gd")
+const MarkerScript := preload("res://scripts/marker.gd")
 const DialogScript := preload("res://scripts/dialog.gd")
 const WorkScript := preload("res://scripts/work.gd")
 
-const VERSION := "v0.10"
+const VERSION := "v0.11"
 const SAVE_PATH := "user://save.cfg"
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
-## Машины автосалона на площади: название, цена, цвет, макс. скорость, мощность.
+## Машины на Общем рынке: название, цена, цвет, макс. скорость, мощность.
 const CAR_MODELS := [
     {"name": "Классика", "price": 8000, "color": Color(0.92, 0.92, 0.90), "speed": 105.0, "force": 4200.0},
     {"name": "Комфорт", "price": 15000, "color": Color(0.15, 0.22, 0.45), "speed": 125.0, "force": 5000.0},
@@ -34,6 +35,26 @@ const PLAYER_SPAWN := Vector3(0, 0.4, 14)
 const FUEL_PRICE := 50          # ₽ за литр
 const EXAM_PRICE := 2000
 const DPS_FINE := 1500
+const CANISTER_PRICE := 600
+const PHONE_PRICE := 1000
+const MARKET_CATS := [
+    {"id": "cars", "name": "Транспорт", "icon": "car"},
+    {"id": "clothes", "name": "Одежда", "icon": "shirt"},
+    {"id": "other", "name": "Прочее", "icon": "dots"},
+]
+const NAV_CATS := [
+    {"id": "home", "name": "Дом", "icon": "house"},
+    {"id": "work", "name": "Работа", "icon": "briefcase"},
+    {"id": "market", "name": "Рынок", "icon": "car"},
+    {"id": "shops", "name": "Магазины", "icon": "cart"},
+    {"id": "hospital", "name": "Больницы", "icon": "cross"},
+    {"id": "police", "name": "Полиция", "icon": "shield"},
+    {"id": "bank", "name": "Банки", "icon": "bank"},
+    {"id": "fuel", "name": "АЗС", "icon": "fuel"},
+    {"id": "service", "name": "Сервисы", "icon": "wrench"},
+    {"id": "fun", "name": "Развлечения", "icon": "star"},
+    {"id": "other", "name": "Другое", "icon": "dots"},
+]
 ## Вопросы теории в автошколе: [вопрос, [варианты], номер правильного].
 const QUIZ := [
     ["На какой свет можно ехать?", ["Красный", "Жёлтый", "Зелёный"], 2],
@@ -81,7 +102,13 @@ var _driving = null
 var _menu: MenuScript
 var _started := false
 var _shadows_on := true
-var _wardrobe: WardrobeScript
+var _win: ListWindowScript     # большое окно: Навигатор или Общий рынок
+var _win_mode := ""            # "gps" / "market"
+var _win_payload: Array = []   # что стоит за каждой строкой списка
+var _preview_look := {}
+var _gps_target = null         # Vector3 — куда ведёт навигатор
+var _gps_name := ""
+var _gps_marker: MarkerScript
 var _traffic: TrafficScript
 var _peds: PedestriansScript
 var _lamp_lights: Array[OmniLight3D] = []
@@ -179,7 +206,7 @@ func _process(delta: float) -> void:
     elif _driving:
         _touch.interact_text = "ВЫЙТИ"
     elif near:
-        _touch.interact_text = "СЕСТЬ" if near.owned else "КУПИТЬ"
+        _touch.interact_text = "СЕСТЬ"
     else:
         _touch.interact_text = ""
 
@@ -190,7 +217,16 @@ func _process(delta: float) -> void:
         _hud.profile.set_data(_profile_data())
     var hh := int(minutes) / 60
     var mm := int(minutes) % 60
-    _hud.set_clock("%02d:%02d   День %d" % [hh, mm, day])
+    var clock := "%02d:%02d   День %d" % [hh, mm, day]
+    if _gps_target != null:
+        var gd := Vector2(focus.x - _gps_target.x, focus.z - _gps_target.z).length()
+        clock += "   ·   GPS: %s — %s" % [_gps_name, _dist_text(gd)]
+        _gps_marker.update_distance(focus)
+        if gd < 12.0:
+            Sfx.play("notify")
+            _hud.show_toast("Вы прибыли: %s" % _gps_name)
+            _clear_gps()
+    _hud.set_clock(clock)
     var job_text: String = _work.status_text(focus, in_work_vehicle) if _work.active \
             else _job.status_text(focus, _driving != null)
     _hud.set_job(job_text)
@@ -208,6 +244,9 @@ func _process(delta: float) -> void:
         mini.has_target = _job.has_target()
         mini.target = _job.target
         mini.target_color = _job.target_color()
+    mini.has_gps = _gps_target != null
+    if _gps_target != null:
+        mini.gps_target = _gps_target
     mini.queue_redraw()
 
     var text := "CITY ALPHA %s   FPS %d" % [VERSION, Engine.get_frames_per_second()]
@@ -270,6 +309,7 @@ func _open_menu() -> void:
     if _hud.phone_open:
         _hud.close_phone()
     _hud.profile.close_all()
+    _win.close_window()
     get_tree().paused = true
     _touch.visible = false
     _menu.show_menu(_started, VERSION)
@@ -314,9 +354,11 @@ func _on_reset() -> void:
     for i in _cars.size():
         _cars[i].reset_to(_car_spawn(i))
         _cars[i].set_owned(false)
+        _cars[i].set_available(false)
         _cars[i].fuel = _cars[i].tank
     look = Clothes.default_look()
     owned_clothes = {}
+    _clear_gps()
     _player.set_look(Clothes.colors(look))
     _player.global_position = PLAYER_SPAWN
     _player.set_camera_yaw(PI)
@@ -351,7 +393,7 @@ func _focus() -> Vector3:
 # ---------------------------------------------------------------- телефон и работа
 
 func _toggle_phone() -> void:
-    if _wardrobe.visible or _dialog.visible or _hud.profile.is_open():
+    if _win.visible or _dialog.visible or _hud.profile.is_open():
         return
     if _hud.phone_open:
         _hud.close_phone()
@@ -371,7 +413,7 @@ func _on_job_selected(kind: String) -> void:
     if not _check_docs(kind == "taxi"):
         return
     if kind == "taxi" and not _has_owned_car():
-        _hud.show_toast("Для такси нужна своя машина — купи в автосалоне на площади")
+        _hud.show_toast("Для такси нужна своя машина — купи на Общем рынке на площади")
         return
     _work.stop()
     _job.start(kind, _focus())
@@ -408,7 +450,7 @@ func _on_summon_car() -> void:
             best_d = d
             best = car
     if best == null:
-        _hud.show_toast("У тебя нет машины — купи в автосалоне на площади")
+        _hud.show_toast("У тебя нет машины — купи на Общем рынке на площади")
         return
     var spot = _free_spot_near(_player.global_position, _player.get_camera_yaw())
     if spot == null:
@@ -522,16 +564,6 @@ func _on_profile_closed() -> void:
     _touch.blocked = false
 
 
-func _try_buy(car) -> void:
-    var price: int = car.price
-    if not _pay(price, "Автосалон: " + String(car.car_name)):
-        return
-    Sfx.play("coin")
-    car.set_owned(true)
-    _hud.show_toast("Куплено: %s! Нажми СЕСТЬ" % car.car_name)
-    _save_game()
-
-
 func _on_job_paid(amount: int, text: String) -> void:
     bank += amount   # зарплата приходит на карту
     _bank_log(amount, "Зарплата: " + _job_name())
@@ -557,50 +589,11 @@ func _on_step(run: bool) -> void:
     Sfx.play("step", -8.0 if run else -12.0, randf_range(0.85, 1.15))
 
 
-func _near_shop() -> bool:
-    if _driving or _city == null:
-        return false
-    var p: Vector3 = _player.global_position
-    var s: Vector3 = _city.clothes_shop
-    return Vector2(p.x - s.x, p.z - s.z).length() < 3.5
-
-
-func _open_wardrobe() -> void:
-    _touch.blocked = true
-    _wardrobe.open(look, owned_clothes)
-
-
-func _on_wardrobe_preview(new_look: Dictionary) -> void:
-    _player.set_look(Clothes.colors(new_look))
-
-
-func _on_wardrobe_buy(new_look: Dictionary, cost: int) -> void:
-    if not _pay(cost, "Магазин одежды"):
-        return
-    for id: String in new_look:
-        var list: Array = owned_clothes.get(id, [0])
-        if not (int(new_look[id]) in list):
-            list.append(int(new_look[id]))
-        owned_clothes[id] = list
-    look = new_look
-    _player.set_look(Clothes.colors(look))
-    Sfx.play("coin" if cost > 0 else "click")
-    _hud.show_toast("Обновка! −%d ₽" % cost if cost > 0 else "Переоделся")
-    _save_game()
-    _wardrobe.visible = false
-    _on_wardrobe_closed()
-
-
-func _on_wardrobe_closed() -> void:
-    _player.set_look(Clothes.colors(look))  # снять примерку
-    _touch.blocked = false
-
-
 # ---------------------------------------------------------------- машины
 
 ## Кнопка действия: сначала работа, потом точка рядом, потом машина.
 func _on_interact() -> void:
-    if _hud.phone_open or _wardrobe.visible or _dialog.visible or _hud.profile.is_open():
+    if _hud.phone_open or _win.visible or _dialog.visible or _hud.profile.is_open():
         return
     if _work.action_text(_focus(), _driving != null) != "":
         _work.do_action()
@@ -625,9 +618,6 @@ func _toggle_vehicle() -> void:
         var car = _nearest_car()
         if car == null:
             return
-        if not car.owned:
-            _try_buy(car)
-            return
         _player.set_active(false)
         car.set_driven(true)
         _driving = car
@@ -640,6 +630,8 @@ func _nearest_car():
     if _work_vehicle != null:
         all.append(_work_vehicle)
     for car in all:
+        if not car.owned or not car.visible:
+            continue
         var d: float = car.global_position.distance_to(_player.global_position)
         if d < best_d:
             best_d = d
@@ -706,8 +698,10 @@ func _closer_to_focus(a: Vector3, b: Vector3) -> bool:
     return a.distance_squared_to(_sort_focus) < b.distance_squared_to(_sort_focus)
 
 
+## Стоянка у рынка: сюда доставляют купленные машины.
 func _car_spawn(i: int) -> Transform3D:
-    return Transform3D(Basis(), Vector3(-9.0 + i * 6.0, 0.6, 24.0))
+    var xs := [-16.0, -10.0, 10.0, 16.0]
+    return Transform3D(Basis(), Vector3(xs[i % xs.size()], 0.6, 20.0))
 
 
 func _spawn_cars() -> void:
@@ -734,19 +728,12 @@ func _spawn_cars() -> void:
                 car.rotation.y = float(e[1])
         add_child(car)
         car.touch = _touch
+        car.set_available(car.owned)   # некупленные машины «лежат на складе» рынка
         _cars.append(car)
     _hud.minimap.cars = _cars
 
-    # Вывеска автосалона над рядом машин
-    var sign := Label3D.new()
-    sign.text = "АВТОСАЛОН"
-    sign.font_size = 160
-    sign.pixel_size = 0.01
-    sign.outline_size = 24
-    sign.modulate = Color(1.0, 0.85, 0.3)
-    sign.position = Vector3(0, 6.0, 28.5)
-    sign.rotation.y = PI  # лицом к площади
-    add_child(sign)
+    _gps_marker = MarkerScript.new()
+    add_child(_gps_marker)
 
 
 func _spawn_player() -> void:
@@ -972,12 +959,16 @@ func _build_ui() -> void:
     _hud.menu_requested.connect(_open_menu)
     _hud.profile.opened.connect(_on_profile_opened)
     _hud.profile.closed.connect(_on_profile_closed)
+    _hud.profile.navigator_requested.connect(_open_gps)
 
-    _wardrobe = WardrobeScript.new()
-    layer.add_child(_wardrobe)
-    _wardrobe.preview_changed.connect(_on_wardrobe_preview)
-    _wardrobe.buy_pressed.connect(_on_wardrobe_buy)
-    _wardrobe.closed.connect(_on_wardrobe_closed)
+    _win = ListWindowScript.new()
+    layer.add_child(_win)
+    _win.category_selected.connect(_on_win_category)
+    _win.row_selected.connect(_on_win_row)
+    _win.search_changed.connect(_on_win_search)
+    _win.left_pressed.connect(_on_win_left)
+    _win.right_pressed.connect(_on_win_right)
+    _win.closed.connect(_on_win_closed)
 
     _dialog = DialogScript.new()
     layer.add_child(_dialog)
@@ -1023,7 +1014,7 @@ func _add_point(pos: Vector3, r: float, text: String, cb: Callable, in_car := fa
 
 
 func _setup_points() -> void:
-    _add_point(_city.clothes_shop, 3.5, "ОДЕЖДА", _open_wardrobe, false, Color(0.8, 0.4, 0.8))
+    _add_point(_city.market, 4.0, "РЫНОК", _open_market, false, Color(1.0, 0.7, 0.1))
     _add_point(_city.city_hall, 3.5, "МЭРИЯ", _open_city_hall, false, Color(0.4, 0.5, 1.0))
     _add_point(_city.driving_school, 3.5, "АВТОШКОЛА", _open_driving_school, false, Color(1.0, 0.6, 0.1))
     for p: Vector3 in _city.atms:
@@ -1038,7 +1029,7 @@ func _setup_points() -> void:
 
 ## Ближайшая доступная точка: пешком — «пешие», в своей машине на месте — «машинные».
 func _find_point(focus: Vector3, speed: float):
-    if _dialog.visible or _wardrobe.visible:
+    if _dialog.visible or _win.visible:
         return null
     var best = null
     var best_d := INF
@@ -1342,3 +1333,330 @@ func _on_work_vehicle_done() -> void:
     _peds.cars.erase(v)
     _work_vehicle = null
     v.queue_free()
+
+
+# ================================================================ большое окно: Навигатор и Общий рынок
+
+func _open_gps() -> void:
+    _touch.blocked = true
+    _win_mode = "gps"
+    _win.open_window("GPS", "pin", NAV_CATS, true, "Поиск по GPS...")
+
+
+func _open_market() -> void:
+    _touch.blocked = true
+    _win_mode = "market"
+    _preview_look = look.duplicate()
+    _win.open_window("РЫНОК", "cart", MARKET_CATS, false)
+
+
+func _on_win_closed() -> void:
+    if _win_mode == "market":
+        _player.set_look(Clothes.colors(look))   # снять примерку
+    _win_mode = ""
+    _touch.blocked = false
+
+
+func _on_win_category(_id: String) -> void:
+    _refresh_win(false)
+
+
+func _on_win_search(_text: String) -> void:
+    _refresh_win(false)
+
+
+func _on_win_row(i: int) -> void:
+    if _win_mode == "market" and i < _win_payload.size():
+        var p = _win_payload[i]
+        if p is Dictionary and p["type"] == "cloth":
+            _preview_look = look.duplicate()
+            _preview_look[p["slot"]] = p["i"]
+            _player.set_look(Clothes.colors(_preview_look))
+    _update_win_buttons()
+
+
+func _refresh_win(keep_selection: bool) -> void:
+    var rows := []
+    _win_payload = []
+    if _win_mode == "gps":
+        _fill_gps_rows(rows)
+    else:
+        _fill_market_rows(rows)
+    _win.set_rows(rows, keep_selection)
+    _update_win_buttons()
+
+
+func _selected_payload():
+    var i := _win.selected
+    if i < 0 or i >= _win_payload.size():
+        return null
+    return _win_payload[i]
+
+
+func _update_win_buttons() -> void:
+    var p = _selected_payload()
+    if _win_mode == "gps":
+        if p == null and _gps_target != null:
+            _win.set_buttons("Убрать метку", "Установить метку", true, false)
+        else:
+            _win.set_buttons("Отметить на карте", "Установить метку", p != null, p != null)
+        return
+    # рынок
+    if p == null:
+        _win.set_buttons("Закрыть", "Выбери товар", true, false)
+        return
+    match String(p["type"]):
+        "car":
+            var car = _cars[int(p["i"])]
+            if car.owned:
+                _win.set_buttons("Закрыть", "Подогнать к рынку", true, true)
+            else:
+                _win.set_buttons("Закрыть", "Купить за %s" % HudScript.format_money(int(car.price)), true, true)
+        "cloth":
+            var slot: String = p["slot"]
+            var idx: int = p["i"]
+            if int(look.get(slot, 0)) == idx:
+                _win.set_buttons("Закрыть", "Надето", true, false)
+            elif _cloth_owned(slot, idx):
+                _win.set_buttons("Закрыть", "Надеть", true, true)
+            else:
+                _win.set_buttons("Закрыть", "Купить за %s" % HudScript.format_money(int(p["price"])), true, true)
+        _:
+            _win.set_buttons("Закрыть", "Купить за %s" % HudScript.format_money(int(p["price"])), true, true)
+
+
+func _on_win_left() -> void:
+    if _win_mode == "market":
+        _win.close_window()
+        return
+    var p = _selected_payload()
+    if p == null:
+        _clear_gps()
+        _hud.show_toast("Метка убрана")
+        _update_win_buttons()
+        return
+    _set_gps(p["pos"], p["name"], false)
+    _hud.show_toast("Отмечено на карте: %s" % p["name"])
+    _win.close_window()
+
+
+func _on_win_right() -> void:
+    var p = _selected_payload()
+    if p == null:
+        return
+    if _win_mode == "gps":
+        _set_gps(p["pos"], p["name"], true)
+        _hud.show_toast("Метка установлена: %s" % p["name"])
+        _win.close_window()
+        return
+    match String(p["type"]):
+        "car":
+            _market_car(int(p["i"]))
+        "cloth":
+            _market_cloth(String(p["slot"]), int(p["i"]), int(p["price"]))
+        "canister":
+            _market_canister()
+        "phone":
+            if _pay(PHONE_PRICE, "Рынок: новый номер"):
+                phone_number = ""
+                _ensure_numbers()
+                Sfx.play("coin")
+                _hud.show_toast("Новый номер: %s" % phone_number)
+    _refresh_win(true)
+
+
+# ---------------------------------------------------------------- навигатор
+
+func _fill_gps_rows(rows: Array) -> void:
+    var focus := _focus()
+    var q := _win.search_text().to_lower()
+    var places := _nav_places()
+    var list := []
+    for pl: Dictionary in places:
+        if q != "":
+            if String(pl["name"]).to_lower().find(q) < 0:
+                continue
+        elif pl["cat"] != _win.category:
+            continue
+        list.append(pl)
+    _sort_focus = focus
+    list.sort_custom(_place_closer)
+    for pl: Dictionary in list:
+        var pos: Vector3 = pl["pos"]
+        var d := Vector2(focus.x - pos.x, focus.z - pos.z).length()
+        rows.append({"icon": pl["icon"], "icon_col": pl.get("col", Color.WHITE), "name": pl["name"],
+                "value": _dist_text(d), "pin": true})
+        _win_payload.append(pl)
+    if rows.is_empty():
+        var msg := "Ничего не найдено"
+        var cat := _win.category if q == "" else ""
+        match cat:
+            "home":
+                msg = "Дом пока не куплен — скоро"
+            "hospital", "police":
+                msg = "Пока нет в городе — скоро"
+        rows.append({"icon": "dots", "name": msg, "value": "", "enabled": false})
+        _win_payload.append(null)
+
+
+func _place_closer(a: Dictionary, b: Dictionary) -> bool:
+    var pa: Vector3 = a["pos"]
+    var pb: Vector3 = b["pos"]
+    return pa.distance_squared_to(_sort_focus) < pb.distance_squared_to(_sort_focus)
+
+
+func _nav_places() -> Array:
+    var c = _city
+    var out := []
+    var gold := Color(1.0, 0.72, 0.1)
+    if _work.active and _work.has_target():
+        out.append({"cat": "work", "icon": "pin", "col": gold, "name": "Текущее задание", "pos": _work.target})
+    elif _job.active and _job.has_target():
+        out.append({"cat": "work", "icon": "pin", "col": gold, "name": "Текущее задание", "pos": _job.target})
+    out.append({"cat": "work", "icon": "briefcase", "name": "Автобусный парк — водитель", "pos": c.bus_depot})
+    out.append({"cat": "work", "icon": "briefcase", "name": "Склад — грузчик", "pos": c.warehouse_drop})
+    out.append({"cat": "work", "icon": "briefcase", "name": "Стоянка фур — дальнобойщик", "pos": c.truck_depot})
+    out.append({"cat": "work", "icon": "briefcase", "name": "Лесопилка — лесоруб", "pos": c.log_pile})
+    out.append({"cat": "market", "icon": "car", "col": gold, "name": "Общий рынок", "pos": c.market})
+    out.append({"cat": "shops", "icon": "cart", "col": gold, "name": "Общий рынок", "pos": c.market})
+    for pk: Dictionary in c.pickups:
+        out.append({"cat": "shops", "icon": "cart", "name": String(pk["name"]).capitalize(), "pos": pk["pos"]})
+    for p: Vector3 in c.atms:
+        out.append({"cat": "bank", "icon": "bank", "name": "Банкомат", "pos": p})
+    var pumps: Array = c.fuel_pumps
+    var names := ["АЗС — промзона", "АЗС — западная трасса", "АЗС — северная трасса"]
+    for k in names.size():
+        if k * 2 < pumps.size():
+            out.append({"cat": "fuel", "icon": "fuel", "col": Color(1.0, 0.35, 0.3), "name": names[k], "pos": pumps[k * 2]})
+    out.append({"cat": "service", "icon": "wrench", "name": "Мэрия — паспорт", "pos": c.city_hall})
+    out.append({"cat": "service", "icon": "wrench", "name": "Автошкола — права", "pos": c.driving_school})
+    out.append({"cat": "fun", "icon": "star", "name": "Центральная площадь", "pos": Vector3(0, 0, 0)})
+    out.append({"cat": "fun", "icon": "star", "name": "Лес за городом", "pos": Vector3(-270, 0, -270)})
+    for p: Vector3 in c.bus_stops:
+        out.append({"cat": "other", "icon": "dots", "name": "Остановка", "pos": p})
+    for car in _cars:
+        if car.owned:
+            out.append({"cat": "other", "icon": "car", "col": gold, "name": "Моя машина: %s" % car.car_name,
+                    "pos": car.global_position})
+    return out
+
+
+func _set_gps(pos: Vector3, place: String, beam: bool) -> void:
+    _gps_target = pos
+    _gps_name = place
+    if beam:
+        _gps_marker.show_at(pos, "GPS: " + place, Color(0.75, 0.45, 1.0))
+    else:
+        _gps_marker.visible = false
+    Sfx.play("notify", -4.0)
+
+
+func _clear_gps() -> void:
+    _gps_target = null
+    _gps_name = ""
+    if _gps_marker:
+        _gps_marker.visible = false
+
+
+func _dist_text(d: float) -> String:
+    if d < 1000.0:
+        return "%d м" % int(d)
+    return "%.1f км" % (d / 1000.0)
+
+
+# ---------------------------------------------------------------- рынок
+
+func _fill_market_rows(rows: Array) -> void:
+    var gold := Color(1.0, 0.75, 0.2)
+    var green := Color(0.45, 0.9, 0.5)
+    match _win.category:
+        "cars":
+            for i in _cars.size():
+                var car = _cars[i]
+                var m: Dictionary = CAR_MODELS[i]
+                rows.append({"icon": "car", "icon_col": m["color"].lightened(0.2),
+                        "name": "%s · до %d км/ч" % [m["name"], int(m["speed"])],
+                        "value": "Куплено" if car.owned else HudScript.format_money(int(m["price"])),
+                        "value_col": green if car.owned else gold})
+                _win_payload.append({"type": "car", "i": i})
+        "clothes":
+            for slot: Dictionary in Clothes.SLOTS:
+                var id: String = slot["id"]
+                var items: Array = slot["items"]
+                for k in items.size():
+                    var item: Array = items[k]
+                    var price: int = item[2]
+                    var worn := int(look.get(id, 0)) == k
+                    var have := _cloth_owned(id, k)
+                    var value := "Надето" if worn else ("Есть" if have else ("Бесплатно" if price == 0 else HudScript.format_money(price)))
+                    rows.append({"icon": "shirt", "icon_col": item[1], "name": "%s: %s" % [slot["name"], item[0]],
+                            "value": value, "value_col": green if (worn or have) else gold})
+                    _win_payload.append({"type": "cloth", "slot": id, "i": k, "price": price})
+        _:
+            rows.append({"icon": "fuel", "icon_col": Color(1.0, 0.35, 0.3), "name": "Канистра бензина 10 л",
+                    "value": HudScript.format_money(CANISTER_PRICE), "value_col": gold})
+            _win_payload.append({"type": "canister", "price": CANISTER_PRICE})
+            rows.append({"icon": "phone", "name": "Новый номер телефона",
+                    "value": HudScript.format_money(PHONE_PRICE), "value_col": gold})
+            _win_payload.append({"type": "phone", "price": PHONE_PRICE})
+
+
+func _cloth_owned(slot: String, i: int) -> bool:
+    var list: Array = owned_clothes.get(slot, [0])
+    return i in list
+
+
+func _market_car(i: int) -> void:
+    var car = _cars[i]
+    if car.owned:
+        if car == _driving:
+            _hud.show_toast("Ты сейчас в этой машине")
+            return
+        car.reset_to(_car_spawn(i))
+        _hud.show_toast("%s ждёт на стоянке у рынка" % car.car_name)
+        return
+    if not _pay(int(car.price), "Рынок: " + String(car.car_name)):
+        return
+    car.set_owned(true)
+    car.set_available(true)
+    car.reset_to(_car_spawn(i))
+    car.fuel = car.tank
+    Sfx.play("coin")
+    _hud.show_toast("Куплено: %s! Машина ждёт на стоянке у рынка" % car.car_name)
+    _save_game()
+
+
+func _market_cloth(slot: String, i: int, price: int) -> void:
+    if not _cloth_owned(slot, i):
+        if not _pay(price, "Рынок: одежда"):
+            return
+        var list: Array = owned_clothes.get(slot, [0])
+        list.append(i)
+        owned_clothes[slot] = list
+        Sfx.play("coin")
+    else:
+        Sfx.play("click")
+    look[slot] = i
+    _preview_look = look.duplicate()
+    _player.set_look(Clothes.colors(look))
+    _hud.show_toast("Обновка надета!")
+    _save_game()
+
+
+func _market_canister() -> void:
+    var best = null
+    for car in _cars:
+        if car.owned and car.visible and car.global_position.distance_to(_focus()) < 25.0:
+            best = car
+    if best == null:
+        Sfx.play("error")
+        _hud.show_toast("Подгони свою машину к рынку — канистру зальём прямо в бак")
+        return
+    if best.fuel >= best.tank - 0.5:
+        _hud.show_toast("Бак и так полный")
+        return
+    if not _pay(CANISTER_PRICE, "Рынок: канистра"):
+        return
+    best.fuel = minf(best.tank, best.fuel + 10.0)
+    Sfx.play("coin")
+    _hud.show_toast("+10 л в бак: %s" % best.car_name)

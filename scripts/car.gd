@@ -15,7 +15,7 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var car_name := "Классика"
 @export var price := 8000
 
-## Куплена ли машина. Чужую (из автосалона) водить нельзя.
+## Куплена ли машина. Чужую (с рынка, не купленную) водить нельзя.
 var owned := false
 
 ## Бензин. uses_fuel = false у рабочих машин (автобус, фура, учебная).
@@ -102,6 +102,12 @@ func _ready() -> void:
 func set_night(on: bool) -> void:
     _night = on
     _headlight.visible = on and driven
+
+
+## Некупленная машина спрятана и выключена (её «нет в городе»).
+func set_available(on: bool) -> void:
+    visible = on
+    process_mode = Node.PROCESS_MODE_INHERIT if on else Node.PROCESS_MODE_DISABLED
 
 
 func set_owned(value: bool) -> void:

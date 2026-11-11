@@ -13,6 +13,8 @@ var has_target := false
 var target := Vector3.ZERO
 var target_color := Color(1, 0.8, 0.1)
 var cars: Array = []
+var has_gps := false
+var gps_target := Vector3.ZERO
 var points: Array = []   # [[Vector3, Color], ...] — банкоматы, АЗС, работы
 
 var _circle := PackedVector2Array()
@@ -49,9 +51,18 @@ func _draw() -> void:
             draw_arc(pp, 4.5, 0.0, TAU, 12, Color(0, 0, 0, 0.8), 1.5, true)
 
     for car in cars:
+        if not car.visible:
+            continue
         var cp := _to_map(car.global_position, c, s)
         if cp.distance_to(c) < R - 4.0:
             draw_circle(cp, 3.5, Color(0.3, 0.55, 1.0))
+
+    if has_gps:
+        var gp := _to_map(gps_target, c, s)
+        if gp.distance_to(c) > R - 10.0:
+            gp = c + (gp - c).normalized() * (R - 10.0)
+        draw_circle(gp, 9.0, Color(0.75, 0.45, 1.0))
+        draw_arc(gp, 9.0, 0.0, TAU, 20, Color(1, 1, 1), 2.5, true)
 
     if has_target:
         var tp := _to_map(target, c, s)

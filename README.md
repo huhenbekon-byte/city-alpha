@@ -1,4 +1,4 @@
-# City Alpha — v0.10
+# City Alpha — v0.11
 
 Альфа-прототип городской RP-игры на Godot 4 (3D, вид от третьего лица).
 
@@ -69,7 +69,8 @@
 - `scripts/hud.gd` — деньги, часы, телефон, уведомления
 - `scripts/minimap.gd` — мини-карта
 - `scripts/sfx.gd` — все звуки (глобальный Sfx)
-- `scripts/clothes.gd`, `scripts/wardrobe.gd` — одежда и магазин
+- `scripts/clothes.gd` — каталог одежды
+- `scripts/list_window.gd` — окно Навигатора и Общего рынка
 - `scripts/traffic.gd` — машины-боты
 - `scripts/pedestrians.gd` — прохожие
 - `scripts/work.gd` — автобус, грузчик, дальнобойщик, лесоруб, экзамен

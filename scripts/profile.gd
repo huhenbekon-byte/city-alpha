@@ -5,6 +5,7 @@ extends Control
 
 signal opened
 signal closed
+signal navigator_requested
 
 const Icons := preload("res://scripts/icons.gd")
 const BG := Color(0.06, 0.06, 0.07, 0.97)
@@ -32,6 +33,7 @@ func _ready() -> void:
     add_child(_popup)
     _pill_button(_popup, "Статистика", open_stats)
     _pill_button(_popup, "Банковский счёт", open_bank)
+    _pill_button(_popup, "Навигатор", _on_navigator)
 
     _stats = _make_window(Vector2(780, 520))
     _stats.draw.connect(_draw_stats.bind(_stats))
@@ -72,6 +74,11 @@ func open_bank() -> void:
     _stats.visible = false
     _bank.visible = true
     _bank.queue_redraw()
+
+
+func _on_navigator() -> void:
+    close_all()
+    navigator_requested.emit()
 
 
 func close_all() -> void:
