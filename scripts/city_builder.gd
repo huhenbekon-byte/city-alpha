@@ -976,15 +976,15 @@ func _define_batches() -> void:
     cone_mat = pool_mat.duplicate()
     cone_mat.albedo_texture = ct
     cone_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-    var cone := CylinderMesh.new()
-    cone.top_radius = 0.18
-    cone.bottom_radius = 2.6
-    cone.height = 6.4
-    cone.radial_segments = 12
-    cone.rings = 1
-    cone.cap_top = false
-    cone.cap_bottom = false
-    _batch("light_cone", cone, cone_mat, 90.0)
+    var beam := CylinderMesh.new()
+    beam.top_radius = 0.18
+    beam.bottom_radius = 2.6
+    beam.height = 6.4
+    beam.radial_segments = 12
+    beam.rings = 1
+    beam.cap_top = false
+    beam.cap_bottom = false
+    _batch("light_cone", beam, cone_mat, 90.0)
     _batch("trunk", _cyl_mesh(0.12, 0.18, 2.6, 6), _nature("bark_tree", Color(0.36, 0.25, 0.17), 1.0, false), 180.0)
     _batch("birch", _cyl_mesh(0.09, 0.13, 5.5, 6), _nature("bark_birch", Color(0.92, 0.90, 0.86), 1.0, false), 180.0)
     _batch("crown", _sphere_mesh(2.0, 3.4), _nature("foliage_tree", Color.WHITE, 2.5, true), 200.0, true)
