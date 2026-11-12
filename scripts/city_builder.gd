@@ -49,6 +49,8 @@ var building_rects: Array[Rect2] = []
 var pickups: Array[Dictionary] = []   # {"pos": Vector3, "name": String} — ларьки, магазины
 var dropoffs: Array[Vector3] = []     # точки у подъездов
 var lamp_mat: StandardMaterial3D      # фонари: ярче ночью
+var pool_mat: StandardMaterial3D = null   # пятна света под фонарями
+var cone_mat: StandardMaterial3D = null
 var lamp_positions: Array[Vector3] = []  # где висят плафоны (для света ночью)
 var road_lines: Array[float] = []     # координаты осей дорог (для трафика)
 var market := Vector3.ZERO            # вход в Общий рынок (машины, одежда, прочее)
@@ -162,7 +164,7 @@ func _tpl_square() -> void:
     for x: float in [-12.0, 12.0]:
         for z: float in [-12.0, 4.0]:
             var bed := _p(x, z)
-            _deco(Vector3(4.0, 0.4, 4.0), bed + Vector3(0, 0.2, 0), _m["granite"])
+            _solid(Vector3(4.0, 0.4, 4.0), bed + Vector3(0, 0.2, 0), _m["granite"])
             _deco(Vector3(3.6, 0.42, 3.6), bed + Vector3(0, 0.21, 0), _m["flowers"])
             for k in 6:
                 var off := Vector3(rng.randf_range(-1.2, 1.2), 0.55, rng.randf_range(-1.2, 1.2))
@@ -383,9 +385,9 @@ func _bus_stop(p: Vector3, facing: Vector3) -> void:
     _deco(Vector3(4.2, 0.12, 1.9), p + b * Vector3(0, 2.6, 0.1), _m["blue"], yaw)
     _solid(Vector3(4.0, 2.4, 0.06), p + b * Vector3(0, 1.3, -0.75), _m["glass"], yaw)
     for sx: float in [-2.0, 2.0]:
-        _deco(Vector3(0.06, 2.4, 1.4), p + b * Vector3(sx, 1.3, -0.1), _m["glass"], yaw)
+        _solid(Vector3(0.06, 2.4, 1.4), p + b * Vector3(sx, 1.3, -0.1), _m["glass"], yaw)
     _bench(p + b * Vector3(0, 0, -0.4), facing)
-    _deco(Vector3(0.08, 2.8, 0.08), p + b * Vector3(2.7, 1.4, 0.8), _m["metal"], yaw)
+    _solid(Vector3(0.08, 2.8, 0.08), p + b * Vector3(2.7, 1.4, 0.8), _m["metal"], yaw)
     if _signs_ok:
         _sign_plate("bus_stop", p + b * Vector3(2.7, 2.55, 0.83), yaw)
     else:
@@ -403,7 +405,7 @@ func _playground(c: Vector3) -> void:
     var floor_mat: Material = _m["rubber_red"] if int(absf(c.x + c.z)) % 2 == 0 else _m["rubber_green"]
     _flat(c, Vector2(11.0, 9.0), floor_mat, SIDE_H + 0.01)
     # домик
-    _deco(Vector3(1.6, 1.4, 1.6), c + Vector3(-3.6, 0.7, 2.2), _m["playhouse"])
+    _solid(Vector3(1.6, 1.4, 1.6), c + Vector3(-3.6, 0.7, 2.2), _m["playhouse"])
     _deco(Vector3(1.9, 0.15, 1.9), c + Vector3(-3.6, 1.48, 2.2), _m["red"])
     # песочница
     _deco(Vector3(3.0, 0.25, 3.0), c + Vector3(-3, 0.125, -2), _m["sandbox"])
@@ -411,7 +413,7 @@ func _playground(c: Vector3) -> void:
     # качели
     var s := c + Vector3(2.5, 0, -2)
     for dx: float in [-1.2, 1.2]:
-        _deco(Vector3(0.1, 2.4, 0.1), s + Vector3(dx, 1.2, 0), _m["blue"])
+        _solid(Vector3(0.1, 2.4, 0.1), s + Vector3(dx, 1.2, 0), _m["blue"])
     _deco(Vector3(2.6, 0.1, 0.1), s + Vector3(0, 2.4, 0), _m["blue"])
     _deco(Vector3(0.6, 0.05, 0.35), s + Vector3(0, 0.5, 0), _m["wood"])
     for dx: float in [-0.25, 0.25]:
@@ -421,10 +423,10 @@ func _playground(c: Vector3) -> void:
     _deco(Vector3(1.2, 0.1, 1.2), g + Vector3(0, 1.5, 0), _m["red"])
     for px: float in [-0.55, 0.55]:
         for pz: float in [-0.55, 0.55]:
-            _deco(Vector3(0.08, 1.5, 0.08), g + Vector3(px, 0.75, pz), _m["pipe"])
+            _solid(Vector3(0.08, 1.5, 0.08), g + Vector3(px, 0.75, pz), _m["pipe"])
     var slide := _deco(Vector3(0.7, 0.06, 2.63), g + Vector3(0, 0.78, 1.7), _m["slide"])
     slide.rotation.x = 0.583
-    _deco(Vector3(0.6, 1.6, 0.06), g + Vector3(0, 0.8, -0.65), _m["yellow"])
+    _solid(Vector3(0.6, 1.6, 0.06), g + Vector3(0, 0.8, -0.65), _m["yellow"])
     # лавочки
     _bench(c + Vector3(-4.5, 0, 3.5), Vector3(0, 0, -1))
     _bench(c + Vector3(-2.0, 0, 3.5), Vector3(0, 0, -1))
@@ -478,10 +480,42 @@ func _nature(tex_name: String, fallback: Color, meters: float, vc: bool) -> Stan
 var _has_foliage_tex := false
 
 
+var _nature_keys := {}   # "birch" -> ["nt_birch1", ...]
+
+
+## Меш готового дерева из models/nature (null — модели нет, тогда дерево из кода).
+func _nature_mesh(model: String) -> Mesh:
+    var path := "res://models/nature/%s.gltf" % model
+    if not ResourceLoader.exists(path):
+        return null
+    var ps = load(path)
+    if not (ps is PackedScene):
+        return null
+    var root: Node = (ps as PackedScene).instantiate()
+    var found: Mesh = null
+    for n: Node in root.find_children("*", "MeshInstance3D", true, false):
+        found = (n as MeshInstance3D).mesh
+        break
+    root.free()
+    return found
+
+
+func _nature_key(kind: String) -> String:
+    var keys: Array = _nature_keys.get(kind, [])
+    if keys.is_empty():
+        return ""
+    return String(keys[rng.randi() % keys.size()])
+
+
 ## Ель: ствол и конус хвои (для леса за городом).
 func _pine(p: Vector3) -> void:
     var s := rng.randf_range(0.8, 1.3)
     var base := Vector3(p.x, 0.0, p.z)
+    var nk := _nature_key("pine")
+    if nk != "":
+        _put(nk, base, rng.randf() * TAU, Color.WHITE, Vector3.ONE * 3.2 * s)
+        _occupy(base, 1.5, 1.5)
+        return
     _put("pine_trunk", base + Vector3(0, 1.5 * s, 0), 0.0, Color.WHITE, Vector3(s, s, s))
     _put("pine_crown", base + Vector3(0, 5.2 * s, 0), rng.randf() * TAU,
             Color(1, 1, 1).lerp(Color(0.8, 0.9, 0.8), rng.randf()), Vector3(s, s, s))
@@ -492,6 +526,11 @@ func _tree(p: Vector3) -> void:
     var s := rng.randf_range(0.85, 1.2)
     var sc := Vector3(s, s, s)
     var base := Vector3(p.x, SIDE_H, p.z)
+    var nk := _nature_key("birch" if rng.randf() < 0.55 else "tree")
+    if nk != "":
+        _put(nk, base, rng.randf() * TAU, Color.WHITE, Vector3.ONE * (3.0 if nk.contains("birch") else 3.4) * s)
+        _occupy(base, 1.5, 1.5)
+        return
     if rng.randf() < 0.55:  # берёза
         _put("birch", base + Vector3(0, 2.75 * s, 0), 0.0, Color.WHITE, sc)
         var bk := rng.randf()
@@ -534,6 +573,9 @@ func _lamp(base: Vector3, toward: Vector3) -> void:
     _put("lamp_arm", base + Vector3(0, 6.9, 0) + toward * 0.75, yaw)
     _put("lamp_head", base + Vector3(0, 6.85, 0) + toward * 1.45, yaw)
     lamp_positions.append(base + Vector3(0, 6.6, 0) + toward * 1.45)
+    var lp := base + toward * 1.45
+    _put("light_pool", Vector3(lp.x, base.y + 0.05, lp.z))
+    _put("light_cone", lp + Vector3(0, 3.4, 0))
 
 
 # ================================================================ земля и дороги
@@ -825,6 +867,11 @@ func set_night(k: float) -> void:
     if absf(k - _night_k) < 0.02:
         return
     _night_k = k
+    var lk := clampf((k - 0.3) / 0.5, 0.0, 1.0)   # фонари зажигаются в сумерках
+    if pool_mat:
+        pool_mat.albedo_color = Color(1.0, 0.78, 0.42) * (0.75 * lk)
+    if cone_mat:
+        cone_mat.albedo_color = Color(1.0, 0.82, 0.5) * (0.10 * lk)
     if _night_base.is_empty():
         var mats: Array = _panel_mats + _brick_mats + _tower_mats
         for m in _m.values():
@@ -894,11 +941,65 @@ func _define_batches() -> void:
     lamp.emission_energy_multiplier = 0.8
     lamp_mat = lamp
     _batch("lamp_head", _box_mesh(Vector3(0.3, 0.12, 0.55)), lamp, 150.0)
+    # Ночной свет фонарей без настоящих источников: светлое пятно на земле и лёгкий конус
+    var grad := Gradient.new()
+    grad.set_color(0, Color(1, 1, 1, 1))
+    grad.set_color(1, Color(1, 1, 1, 0))
+    grad.add_point(0.45, Color(1, 1, 1, 0.55))
+    var gt := GradientTexture2D.new()
+    gt.gradient = grad
+    gt.fill = GradientTexture2D.FILL_RADIAL
+    gt.fill_from = Vector2(0.5, 0.5)
+    gt.fill_to = Vector2(1.0, 0.5)
+    gt.width = 128
+    gt.height = 128
+    pool_mat = StandardMaterial3D.new()
+    pool_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    pool_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    pool_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+    pool_mat.albedo_texture = gt
+    pool_mat.albedo_color = Color(0, 0, 0, 1)
+    pool_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+    pool_mat.set("disable_fog", true)
+    var pm := PlaneMesh.new()
+    pm.size = Vector2(13.0, 13.0)
+    _batch("light_pool", pm, pool_mat, 120.0)
+    var cg := Gradient.new()
+    cg.set_color(0, Color(1, 1, 1, 0.0))
+    cg.set_color(1, Color(1, 1, 1, 1.0))
+    var ct := GradientTexture2D.new()
+    ct.gradient = cg
+    ct.fill_from = Vector2(0.5, 1.0)
+    ct.fill_to = Vector2(0.5, 0.0)
+    ct.width = 8
+    ct.height = 64
+    cone_mat = pool_mat.duplicate()
+    cone_mat.albedo_texture = ct
+    cone_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+    var cone := CylinderMesh.new()
+    cone.top_radius = 0.18
+    cone.bottom_radius = 2.6
+    cone.height = 6.4
+    cone.radial_segments = 12
+    cone.rings = 1
+    cone.cap_top = false
+    cone.cap_bottom = false
+    _batch("light_cone", cone, cone_mat, 90.0)
     _batch("trunk", _cyl_mesh(0.12, 0.18, 2.6, 6), _nature("bark_tree", Color(0.36, 0.25, 0.17), 1.0, false), 180.0)
     _batch("birch", _cyl_mesh(0.09, 0.13, 5.5, 6), _nature("bark_birch", Color(0.92, 0.90, 0.86), 1.0, false), 180.0)
     _batch("crown", _sphere_mesh(2.0, 3.4), _nature("foliage_tree", Color.WHITE, 2.5, true), 200.0, true)
     _batch("birch_crown", _sphere_mesh(1.3, 4.0), _nature("foliage_birch", Color.WHITE, 2.0, true), 200.0, true)
     _batch("bush", _sphere_mesh(0.7, 1.0), _nature("foliage_bush", Color.WHITE, 1.2, true), 80.0)
+    # Готовые деревья Quaternius (models/nature): по 3 варианта берёзы, лиственного дерева и ели
+    for kind: String in ["birch", "tree", "pine", "bush"]:
+        var found: Array[String] = []
+        for i in range(1, 4):
+            var mesh := _nature_mesh("%s%d" % [kind, i])
+            if mesh:
+                var nk := "nt_%s%d" % [kind, i]
+                _batch(nk, mesh, null, 90.0 if kind == "bush" else 220.0, kind != "bush")
+                found.append(nk)
+        _nature_keys[kind] = found
     _batch("pine_trunk", _cyl_mesh(0.14, 0.2, 3.0, 6), _nature("bark_tree", Color(0.36, 0.25, 0.17), 1.0, false), 200.0)
     var cone := CylinderMesh.new()
     cone.top_radius = 0.05
@@ -970,10 +1071,70 @@ func _put(key: String, pos: Vector3, yaw := 0.0, col := Color.WHITE, scl := Vect
     cs.append(col)
 
 
+## Через что нельзя пройти: стволы, фонари, столбы знаков, лавочки, припаркованные машины.
+const SOLID_KEYS := ["trunk", "birch", "pine_trunk", "pole", "sign_pole", "bench_seat", "bench_back"]
+var _shape_cache := {}
+
+
+func _batch_colliders(key: String, mesh: Mesh, xs: Array) -> void:
+    if mesh == null:
+        return
+    var aabb := mesh.get_aabb()
+    var body := StaticBody3D.new()
+    add_child(body)
+    for x: Transform3D in xs:
+        var scl := x.basis.get_scale()
+        if key.begins_with("nt_"):   # дерево: только ствол
+            var trunk := Vector3(0.12, 1.0, 0.12) * scl.x
+            var tk := "trunk|%.2f" % trunk.x
+            if not _shape_cache.has(tk):
+                var ts := BoxShape3D.new()
+                ts.size = trunk
+                _shape_cache[tk] = ts
+            var tcs := CollisionShape3D.new()
+            tcs.shape = _shape_cache[tk]
+            tcs.position = x.origin + Vector3(0, trunk.y * 0.5, 0)
+            body.add_child(tcs)
+            continue
+        var size := aabb.size * scl
+        if key.begins_with("car"):
+            size = Vector3(size.x * 0.95, size.y * 0.85, size.z * 0.95)
+        elif not key.begins_with("bench"):
+            size = Vector3(maxf(size.x * 0.5, 0.12), size.y, maxf(size.z * 0.5, 0.12))   # круглые стволы и столбы — уже коробки
+        var sk := "%.2f|%.2f|%.2f" % [size.x, size.y, size.z]
+        if not _shape_cache.has(sk):
+            var bs := BoxShape3D.new()
+            bs.size = size
+            _shape_cache[sk] = bs
+        var cs := CollisionShape3D.new()
+        cs.shape = _shape_cache[sk]
+        var rot := x.basis.orthonormalized()
+        cs.transform = Transform3D(rot, x.origin + x.basis * aabb.get_center())
+        body.add_child(cs)
+
+
+## Невидимая коробка-препятствие (для мебели из мелких деталей).
+func _collider(size: Vector3, center: Vector3, yaw := 0.0) -> void:
+    var body := StaticBody3D.new()
+    body.position = center
+    body.rotation.y = yaw
+    var bs := BoxShape3D.new()
+    bs.size = size
+    var cs := CollisionShape3D.new()
+    cs.shape = bs
+    body.add_child(cs)
+    add_child(body)
+
+
 func _flush_batches() -> void:
     for ck: String in _batches:
         var b: Dictionary = _batches[ck]
         var d: Dictionary = _defs[b["key"]]
+        var bkey := String(b["key"])
+        var is_car := bkey.begins_with("car") and bkey.substr(3).is_valid_int()
+        var is_tree := bkey.begins_with("nt_") and not bkey.contains("bush")
+        if bkey in SOLID_KEYS or is_car or is_tree:
+            _batch_colliders(bkey, d["mesh"], b["x"])
         var xs: Array = b["x"]
         var cs: Array = b["c"]
         var mm := MultiMesh.new()
@@ -1138,10 +1299,10 @@ func _tpl_industrial() -> void:
     warehouse_drop = _p(-6, -6)
     var box_mat := _fit_mat("box_cardboard", Vector3(0.8, 0.8, 0.8), Color(0.72, 0.55, 0.35))
     var pallet := _fit_mat("pallet", Vector3(2.8, 0.15, 1.2), Color(0.6, 0.45, 0.3))
-    _deco(Vector3(2.8, 0.15, 1.2), _p(-1.6, -7) + Vector3(0, 0.075, 0), pallet)
+    _solid(Vector3(2.8, 0.15, 1.2), _p(-1.6, -7) + Vector3(0, 0.075, 0), pallet)
     for k in 3:
-        _deco(Vector3(0.8, 0.8, 0.8), _p(-2.5 + k * 0.9, -7) + Vector3(0, 0.55, 0), box_mat)
-    _deco(Vector3(0.8, 0.8, 0.8), _p(-2.05, -7) + Vector3(0, 1.35, 0), box_mat)
+        _solid(Vector3(0.8, 0.8, 0.8), _p(-2.5 + k * 0.9, -7) + Vector3(0, 0.55, 0), box_mat)
+    _solid(Vector3(0.8, 0.8, 0.8), _p(-2.05, -7) + Vector3(0, 1.35, 0), box_mat)
 
     # Фура, из которой грузчик носит коробки на склад.
     var tr := _p(-6, 8)
@@ -1155,8 +1316,8 @@ func _tpl_industrial() -> void:
 
     # Стоянка дальнобойщиков
     var dep := _p(14, 0)
-    _deco(Vector3(0.15, 3.0, 0.15), dep + Vector3(-2.0, 1.5, 0), _m["metal"])
-    _deco(Vector3(0.15, 3.0, 0.15), dep + Vector3(2.0, 1.5, 0), _m["metal"])
+    _solid(Vector3(0.15, 3.0, 0.15), dep + Vector3(-2.0, 1.5, 0), _m["metal"])
+    _solid(Vector3(0.15, 3.0, 0.15), dep + Vector3(2.0, 1.5, 0), _m["metal"])
     _deco(Vector3(4.6, 1.0, 0.1), dep + Vector3(0, 3.2, 0), _m["blue"])
     _label("ДАЛЬНОБОЙЩИКИ", dep + Vector3(0, 3.2, 0.06), Vector3(0, 0, 1), 44, Color(1, 1, 1))
     truck_depot = dep + Vector3(0, 0, 2.0)
@@ -1220,11 +1381,11 @@ func _build_outskirts() -> void:
 
     log_pile = Vector3(-226, 0, -226)
     var logs := _fit_mat("logs_side", Vector3(4.0, 1.4, 2.6), Color(0.45, 0.3, 0.18))
-    _deco(Vector3(4.0, 1.4, 2.6), log_pile + Vector3(0, 0.7, -0.3), logs)
+    _solid(Vector3(4.0, 1.4, 2.6), log_pile + Vector3(0, 0.7, -0.3), logs)
     var shed: Material = _tinted("shed_wall", Color(1, 1, 1), 3.0) if _tex_mip("res://textures/shed_wall.png") != null else _m["wood"]
     _solid(Vector3(6.0, 3.6, 4.0), log_pile + Vector3(-6.5, 1.8, -3.0), shed)
     _deco(Vector3(6.6, 0.3, 4.6), log_pile + Vector3(-6.5, 3.75, -3.0), _tinted("roof_slate", Color(1, 1, 1), 2.0))
-    _deco(Vector3(0.15, 3.0, 0.15), log_pile + Vector3(3.0, 1.5, 0), _m["metal"])
+    _solid(Vector3(0.15, 3.0, 0.15), log_pile + Vector3(3.0, 1.5, 0), _m["metal"])
     _deco(Vector3(3.6, 0.9, 0.1), log_pile + Vector3(3.0, 3.2, 0), _m["wood"])
     _label("ЛЕСОПИЛКА", log_pile + Vector3(3.0, 3.2, 0.06), Vector3(0, 0, 1), 40, Color(1, 1, 1))
     log_pile += Vector3(0, 0, 3.0)
@@ -1453,10 +1614,11 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
             for fx: float in [-8.0, 8.0]:
                 var fp := _fp(fx, 1.5)
                 _deco(Vector3(0.12, 9.0, 0.12), fp + Vector3(0, 4.5, 0), _m["metal"])
-                var stripes := [Color(0.95, 0.95, 0.95), Color(0.10, 0.30, 0.75), Color(0.80, 0.12, 0.12)]
-                for k in 3:
-                    _deco(Vector3(2.2, 0.45, 0.04), fp + Vector3(0, 8.6 - k * 0.45, 0) + _fb * Vector3(1.15 * signf(fx), 0, 0),
-                            _mat(stripes[k], 0.8), yaw)
+                var flag := _fit_mat("flag_ussr", Vector3(2.2, 1.35, 0.04), Color(0.80, 0.08, 0.06))
+                if fx < 0.0:
+                    flag = flag.duplicate()
+                    flag.uv1_scale.x = -flag.uv1_scale.x   # древко слева от полотнища — герб у древка
+                _deco(Vector3(2.2, 1.35, 0.04), fp + Vector3(0, 8.15, 0) + _fb * Vector3(1.15 * signf(fx), 0, 0), flag, yaw)
         "police":
             _deco(Vector3(BW + 0.1, 0.45, 0.05), _fp(0, -3.96) + Vector3(0, 3.3, 0), _mat(Color(0.12, 0.25, 0.65), 0.6), yaw)
         "hospital":
@@ -1636,9 +1798,7 @@ func _build_interiors() -> void:
                 _flat(o + Vector3(0, 0, 0), Vector2(2.6, D - 1.0), carpet, SIDE_H + 0.01)
                 for fx: float in [-2.5, 2.5]:
                     _deco(Vector3(0.08, 3.0, 0.08), o + Vector3(fx, 1.5, -D * 0.5 + 0.6), _m["metal"])
-                    var cols := [Color(0.95, 0.95, 0.95), Color(0.10, 0.30, 0.75), Color(0.80, 0.12, 0.12)]
-                    for c in 3:
-                        _deco(Vector3(1.2, 0.3, 0.03), o + Vector3(fx + 0.65, 2.75 - c * 0.3, -D * 0.5 + 0.6), _mat(cols[c], 0.8))
+                    _deco(Vector3(1.2, 0.75, 0.03), o + Vector3(fx + 0.65, 2.6, -D * 0.5 + 0.6), _fit_mat("flag_ussr", Vector3(1.2, 0.75, 0.03), Color(0.80, 0.08, 0.06)))
                 for px: float in [-10.5, 10.5]:
                     _deco(Vector3(0.8, 1.2, 0.8), o + Vector3(px, 0.6, 6.5), _m["concrete"])
                     _put("bush", o + Vector3(px, 1.5, 6.5), 0.0, Color.WHITE, Vector3(0.8, 0.9, 0.8))
@@ -1673,7 +1833,7 @@ func _build_interiors() -> void:
             "hospital":
                 for bz: float in [-1.5, 1.5, 4.5]:
                     _f_hospital_bed(o + Vector3(10.6, 0, bz), 0.0)
-                    _deco(Vector3(0.05, 1.8, 1.4), o + Vector3(9.3, 0.9, bz + 1.4), _tinted("mat_teal_fabric", Color(1, 1, 1), 0.8))
+                    _solid(Vector3(0.05, 1.8, 1.4), o + Vector3(9.3, 0.9, bz + 1.4), _tinted("mat_teal_fabric", Color(1, 1, 1), 0.8))
                 # шкаф с лекарствами и кабинет врача
                 _solid(Vector3(1.2, 1.9, 0.45), o + Vector3(3.0, 0.95, -D * 0.5 + 0.45), _fm("med_cabinet"))
                 for mk in (0 if ResourceLoader.exists("res://textures/obj_med_cabinet.png") else 8):
@@ -1699,6 +1859,7 @@ func _build_interiors() -> void:
                     reel.mesh = _cyl_mesh(0.45, 0.45, 0.35, 16)
                     reel.material_override = _fm("red")
                     reel.position = o + Vector3(-3.0, 0.5, rz)
+                    _collider(Vector3(0.35, 0.9, 0.9), reel.position)
                     reel.rotation.z = PI * 0.5
                     add_child(reel)
                 _f_desk(o + Vector3(-3.0, 0, 2.5), PI * 0.5)
@@ -2469,6 +2630,7 @@ func _mdeco(mesh: Mesh, center: Vector3, mat: Material, yaw := 0.0) -> void:
 func _f_chair(p: Vector3, yaw: float, mat: Material = null) -> void:
     var m: Material = mat if mat else _fm("wood_dark")
     _solid(Vector3(0.46, 0.05, 0.46), _at(p, yaw, Vector3(0, 0.45, 0)), m, yaw)
+    _collider(Vector3(0.46, 0.45, 0.46), _at(p, yaw, Vector3(0, 0.225, 0)), yaw)
     _deco(Vector3(0.46, 0.5, 0.04), _at(p, yaw, Vector3(0, 0.72, -0.21)), m, yaw)
     for lx: float in [-0.2, 0.2]:
         for lz: float in [-0.2, 0.2]:
@@ -2479,6 +2641,7 @@ func _f_chair(p: Vector3, yaw: float, mat: Material = null) -> void:
 func _f_table(p: Vector3, yaw: float, w: float, d: float, h := 0.75, mat: Material = null) -> void:
     var m: Material = mat if mat else _fm("wood_dark")
     _solid(Vector3(w, 0.05, d), _at(p, yaw, Vector3(0, h - 0.025, 0)), m, yaw)
+    _collider(Vector3(w, h - 0.05, d), _at(p, yaw, Vector3(0, (h - 0.05) * 0.5, 0)), yaw)
     for lx: float in [-w * 0.5 + 0.06, w * 0.5 - 0.06]:
         for lz: float in [-d * 0.5 + 0.06, d * 0.5 - 0.06]:
             _deco(Vector3(0.05, h - 0.05, 0.05), _at(p, yaw, Vector3(lx, (h - 0.05) * 0.5, lz)), m, yaw)
@@ -2488,6 +2651,7 @@ func _f_table(p: Vector3, yaw: float, w: float, d: float, h := 0.75, mat: Materi
 func _f_desk(p: Vector3, yaw: float, green_lamp := false) -> void:
     var wood := _fm("wood_dark")
     _solid(Vector3(1.5, 0.05, 0.75), _at(p, yaw, Vector3(0, 0.75, 0)), wood, yaw)
+    _collider(Vector3(1.5, 0.72, 0.75), _at(p, yaw, Vector3(0, 0.36, 0)), yaw)
     _deco(Vector3(0.45, 0.72, 0.7), _at(p, yaw, Vector3(0.48, 0.36, 0)), wood, yaw)
     for dy: float in [0.18, 0.4, 0.62]:
         _deco(Vector3(0.12, 0.02, 0.02), _at(p, yaw, Vector3(0.48, dy, 0.36)), _fm("chrome"), yaw)
@@ -2510,6 +2674,7 @@ func _f_desk(p: Vector3, yaw: float, green_lamp := false) -> void:
 ## Книжный шкаф с книгами разных цветов.
 func _f_bookshelf(p: Vector3, yaw: float, w := 1.2, h := 2.0) -> void:
     var wood := _fm("wood_dark")
+    _collider(Vector3(w + 0.04, h, 0.4), _at(p, yaw, Vector3(0, h * 0.5, 0)), yaw)
     _solid(Vector3(w, h, 0.05), _at(p, yaw, Vector3(0, h * 0.5, -0.17)), wood, yaw)
     for sx: float in [-w * 0.5, w * 0.5]:
         _deco(Vector3(0.04, h, 0.38), _at(p, yaw, Vector3(sx, h * 0.5, 0)), wood, yaw)
@@ -2602,6 +2767,7 @@ func _f_radiator(p: Vector3, yaw: float, length := 1.4) -> void:
         var m := _obj_mat("obj_radiator", Vector3(0.3, 0.62, 0.09), Color(0.9, 0.9, 0.88), true)
         m.uv1_scale = Vector3(1.0 / 0.3, -1.0 / 0.62, 1.0 / 0.09)
         _deco(Vector3(length, 0.62, 0.09), _at(p, yaw, Vector3(0, 0.45, 0)), m, yaw)
+        _collider(Vector3(length, 0.62, 0.12), _at(p, yaw, Vector3(0, 0.45, 0)), yaw)
         return
     var n := int(length / 0.09)
     for i in n:
@@ -2611,6 +2777,7 @@ func _f_radiator(p: Vector3, yaw: float, length := 1.4) -> void:
 ## Цветок в горшке.
 func _f_plant(p: Vector3, big := false) -> void:
     var k := 1.4 if big else 1.0
+    _collider(Vector3(0.4, 1.0, 0.4) * k, p + Vector3(0, 0.5 * k, 0))
     _mdeco(_cyl_mesh(0.2 * k, 0.15 * k, 0.4 * k, 10), p + Vector3(0, 0.2 * k, 0), _fm("pot"))
     _mdeco(_cyl_mesh(0.19 * k, 0.19 * k, 0.02, 10), p + Vector3(0, 0.4 * k, 0), _fm("soil"))
     _put("bush", p + Vector3(0, 0.75 * k, 0), _drng.randf() * TAU, Color(0.8, 1.0, 0.8), Vector3(0.45, 0.6, 0.45) * k)
@@ -2701,6 +2868,7 @@ func _f_crates(p: Vector3, yaw: float, n := 3) -> void:
 ## Бочка из-под масла.
 func _f_barrel(p: Vector3) -> void:
     _mdeco(_cyl_mesh(0.29, 0.29, 0.88, 14), p + Vector3(0, 0.44, 0), _fm("barrel"))
+    _collider(Vector3(0.52, 0.88, 0.52), p + Vector3(0, 0.44, 0))
 
 
 ## Стопка покрышек.
@@ -2712,6 +2880,7 @@ func _f_tires(p: Vector3) -> void:
 func _f_tv(p: Vector3, yaw: float) -> void:
     _solid(Vector3(0.8, 0.5, 0.45), _at(p, yaw, Vector3(0, 0.25, 0)), _fm("wood_dark"), yaw)
     _deco(Vector3(0.6, 0.5, 0.45), _at(p, yaw, Vector3(0, 0.75, 0)), _fm("tv"), yaw)
+    _collider(Vector3(0.8, 1.0, 0.45), _at(p, yaw, Vector3(0, 0.5, 0)), yaw)
     _deco(Vector3(0.44, 0.34, 0.01), _at(p, yaw, Vector3(-0.04, 0.76, 0.226)), _fm("screen"), yaw)
 
 

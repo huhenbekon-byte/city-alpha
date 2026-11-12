@@ -21,7 +21,10 @@ var ambient_on := false
 func _ready() -> void:
     process_mode = Node.PROCESS_MODE_ALWAYS  # клики в меню звучат и на паузе
     _rng.seed = 7
-    _sounds["step"] = _make_step()
+    _sounds["shot"] = _make_shot()
+    _sounds["step"] = _make_step(0)
+    _sounds["step2"] = _make_step(1)
+    _sounds["step3"] = _make_step(2)
     _sounds["horn"] = _make_horn()
     _sounds["coin"] = _make_coin()
     _sounds["click"] = _make_tone([900.0], 0.045, 0.35)
@@ -131,14 +134,35 @@ func _buf(seconds: float) -> PackedFloat32Array:
     return s
 
 
-## Шаг: короткий приглушённый шорох.
-func _make_step() -> AudioStreamWAV:
-    var s := _buf(0.09)
+## Шаг: мягкий глухой «топ» подошвой (без щелчка в начале), три варианта.
+func _make_step(variant := 0) -> AudioStreamWAV:
+    var s := _buf(0.13)
+    var lp := 0.0
+    var lp2 := 0.0
+    var f0: float = [75.0, 85.0, 95.0][variant % 3]
+    for i in s.size():
+        var t := float(i) / RATE
+        var env := minf(t / 0.006, 1.0) * exp(-t * 38.0)
+        lp += (_rng.randf_range(-1.0, 1.0) - lp) * 0.05
+        lp2 += (lp - lp2) * 0.3
+        var thump := sin(TAU * f0 * t) * exp(-t * 55.0)
+        s[i] = (lp2 * 1.4 + thump * 0.45) * env
+    return _wav(s)
+
+
+## Выстрел: резкий хлопок и короткий низкий «бум» с эхом.
+func _make_shot() -> AudioStreamWAV:
+    var s := _buf(0.45)
     var lp := 0.0
     for i in s.size():
-        var t := float(i) / s.size()
-        lp += (_rng.randf_range(-1.0, 1.0) - lp) * 0.12
-        s[i] = lp * 2.2 * pow(1.0 - t, 3.0)
+        var t := float(i) / RATE
+        var crack := _rng.randf_range(-1.0, 1.0) * exp(-t * 60.0)
+        lp += (_rng.randf_range(-1.0, 1.0) - lp) * 0.08
+        var boom := (sin(TAU * 70.0 * t) * 0.6 + lp * 1.8) * exp(-t * 9.0)
+        var echo := 0.0
+        if t > 0.12:
+            echo = _rng.randf_range(-1.0, 1.0) * 0.12 * exp(-(t - 0.12) * 14.0)
+        s[i] = clampf(crack * 0.9 + boom * 0.7 + echo, -1.0, 1.0) * minf(t / 0.0015, 1.0)
     return _wav(s)
 
 

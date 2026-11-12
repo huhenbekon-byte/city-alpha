@@ -83,14 +83,7 @@ func _process(delta: float) -> void:
         # Сбили машиной?
         for car in cars:
             if car.driven and absf(car.speed_kmh()) > 12.0 and car.global_position.distance_to(pos) < 2.0:
-                p["down"] = true
-                p["timer"] = 5.0
-                var ap_d = p.get("anim")
-                if ap_d is AnimationPlayer and (ap_d as AnimationPlayer).has_animation("Death01"):
-                    (ap_d as AnimationPlayer).play("Death01", 0.1)
-                else:
-                    root.rotation.x = -PI * 0.5
-                    root.position = pos + Vector3(0, 0.25, 0)
+                _knock_down(p, 5.0)
                 Sfx.play_at("hit", pos)
                 knocked.emit(pos)
                 break
@@ -126,8 +119,8 @@ func _process(delta: float) -> void:
             if near:
                 root.position = pos
                 root.rotation.y = atan2(dir.x, dir.z)
-                var want := "Idle_Loop" if stop else "Walk_Loop"
-                if String(p.get("anim_state", "")) != want and anim_p.has_animation(want):
+                var want := String(p["idle"]) if stop else String(p["walk"])
+                if want != "" and String(p.get("anim_state", "")) != want and anim_p.has_animation(want):
                     anim_p.play(want, 0.25)
                     p["anim_state"] = want
                 anim_p.speed_scale = 1.0 if stop else SPEED * float(p["speed_k"]) / 1.5
@@ -314,12 +307,16 @@ func _make_ped_3d() -> Dictionary:
     root.add_child(model)
     var players := model.find_children("*", "AnimationPlayer", true, false)
     var ap: AnimationPlayer = players[0] if not players.is_empty() else null
+    # Godot при импорте убирает «_Loop» из имён: Walk_Loop -> Walk. Ищем по началу имени.
+    var walk_a := _find_anim(ap, "walk")
+    var idle_a := _find_anim(ap, "idle")
+    var die_a := _find_anim(ap, "death")
     if ap:
-        for an: String in ["Walk_Loop", "Idle_Loop"]:
-            if ap.has_animation(an):
+        for an: String in [walk_a, idle_a]:
+            if an != "":
                 ap.get_animation(an).loop_mode = Animation.LOOP_LINEAR
-        if ap.has_animation("Walk_Loop"):
-            ap.play("Walk_Loop")
+        if walk_a != "":
+            ap.play(walk_a)
             ap.seek(_rng.randf() * 1.0, true)
 
     # одежда
@@ -373,5 +370,63 @@ func _make_ped_3d() -> Dictionary:
             mesh_i.material_override = hair_mat
         elif nm.contains("superhero") or nm.contains("body"):
             mesh_i.material_override = mat
-    return {"root": root, "legs": [], "pos": Vector3.ZERO, "corners": [], "idx": 0, "anim": ap, "anim_state": "Walk_Loop",
+    return {"root": root, "legs": [], "pos": Vector3.ZERO, "corners": [], "idx": 0, "anim": ap, "anim_state": walk_a,
+            "walk": walk_a, "idle": idle_a, "die": die_a,
             "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0}
+
+
+## Анимация, имя которой начинается с base (без учёта регистра); точное совпадение — в приоритете.
+func _find_anim(ap: AnimationPlayer, base: String) -> String:
+    if ap == null:
+        return ""
+    var best := ""
+    for an in ap.get_animation_list():
+        var low := String(an).to_lower()
+        if low == base or low == base + "_loop" or low == base + "01":
+            return String(an)
+        if best == "" and low.begins_with(base):
+            best = String(an)
+    return best
+
+
+
+## Уронить прохожего (сбили, ударили, подстрелили).
+func _knock_down(p: Dictionary, seconds: float) -> void:
+    var root: Node3D = p["root"]
+    var pos: Vector3 = p["pos"]
+    p["down"] = true
+    p["timer"] = seconds
+    var ap_d = p.get("anim")
+    var die_name := String(p.get("die", ""))
+    if ap_d is AnimationPlayer and die_name != "":
+        (ap_d as AnimationPlayer).active = true
+        (ap_d as AnimationPlayer).play(die_name, 0.1)
+    else:
+        root.rotation.x = -PI * 0.5
+        root.position = pos + Vector3(0, 0.25, 0)
+
+
+## Удар или выстрел: ближайший прохожий в конусе перед стреляющим падает.
+## Возвращает точку попадания или Vector3.INF, если никого не задело.
+func hit(origin: Vector3, dir: Vector3, max_range: float, cone_deg: float) -> Vector3:
+    var best: Dictionary = {}
+    var best_d := max_range
+    var cone_cos := cos(deg_to_rad(cone_deg))
+    for p: Dictionary in _peds:
+        if p["down"]:
+            continue
+        var pos: Vector3 = p["pos"]
+        var to := pos + Vector3(0, 1.1, 0) - origin
+        var d := to.length()
+        if d > best_d or d < 0.05:
+            continue
+        var flat := Vector3(to.x, 0, to.z).normalized()
+        if flat.dot(Vector3(dir.x, 0, dir.z).normalized()) < cone_cos:
+            continue
+        best = p
+        best_d = d
+    if best.is_empty():
+        return Vector3.INF
+    _knock_down(best, 8.0)
+    var hp: Vector3 = best["pos"]
+    return hp + Vector3(0, 1.1, 0)

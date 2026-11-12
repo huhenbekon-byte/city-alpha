@@ -13,6 +13,7 @@ signal phone_pressed
 signal horn_pressed
 signal hudmenu_pressed
 signal radio_pressed
+signal weapon_pressed
 
 enum Mode { FOOT, CAR }
 
@@ -37,6 +38,15 @@ var blocked := false:
         _look_index = -1
         joy_vector = Vector2.ZERO
         queue_redraw()
+## Подпись на кнопке оружия («КУЛАК», «ПМ»...). Пусто — кнопок оружия нет.
+var weapon_text := "":
+    set(value):
+        if value == weapon_text:
+            return
+        weapon_text = value
+        queue_redraw()
+## Кнопка «удар/огонь» зажата (автомат стреляет очередью).
+var attack_held := false
 var interact_text := "":
     set(value):
         if value == interact_text:
@@ -69,6 +79,10 @@ func _buttons() -> Array:
     var list := []
     if mode == Mode.FOOT:
         list.append({"id": "jump", "pos": Vector2(w - 150, h - 160), "r": 66.0, "text": ""})
+        if weapon_text != "":
+            list.append({"id": "attack", "pos": Vector2(w - 320, h - 125), "r": 62.0,
+                    "text": "УДАР" if weapon_text == "КУЛАК" else "ОГОНЬ"})
+            list.append({"id": "weapon", "pos": Vector2(w - 330, h - 285), "r": 44.0, "text": weapon_text})
     else:
         list.append({"id": "gas", "pos": Vector2(w - 140, h - 175), "r": 72.0, "text": "ГАЗ"})
         list.append({"id": "brake", "pos": Vector2(w - 315, h - 120), "r": 58.0, "text": "ТОРМОЗ"})
@@ -162,12 +176,18 @@ func _set_button(id: String, down: bool) -> void:
         "radio":
             if down:
                 radio_pressed.emit()
+        "attack":
+            attack_held = down
+        "weapon":
+            if down:
+                weapon_pressed.emit()
 
 
 func _release_all() -> void:
     if _held.has("jump"):
         Input.action_release("jump")
     _held.clear()
+    attack_held = false
     gas = false
     brake = false
 
@@ -200,6 +220,8 @@ func _draw() -> void:
             fill = Color(0.75, 0.15, 0.12, 0.8 if down else 0.55)
         elif id == "interact":
             fill = Color(0.9, 0.6, 0.05, 0.9 if down else 0.7)
+        elif id == "attack":
+            fill = Color(0.7, 0.12, 0.1, 0.85 if down else 0.55)
         draw_circle(pos, r, fill)
         draw_arc(pos, r, 0.0, TAU, 48, Color(1, 1, 1, 0.85), 4.0, true)
         if id == "phone":

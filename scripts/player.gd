@@ -53,6 +53,13 @@ var _phase := 0.0
 var _time := 0.0
 var _anim: AnimationPlayer
 var _anim_map := {}
+var _model: Node3D = null
+var _gun_holder: BoneAttachment3D = null
+var _gun: Node3D = null
+var _gun_muzzle := Vector3.ZERO
+var armed := false            # в руке оружие (не кулак)
+var _action_until := 0.0      # пока идёт удар/выстрел — другие анимации не включаем
+var _punch_flip := false
 var _spawn := Vector3.ZERO
 
 
@@ -294,6 +301,7 @@ func _setup_model() -> void:
     if m == null:
         _build_character()
         return
+    _model = m
     if model_faces_plus_z:
         m.rotation.y = PI
     m.scale = Vector3.ONE * model_scale
@@ -306,21 +314,32 @@ func _setup_model() -> void:
     _anim = players[0] as AnimationPlayer
     _setup_character_look(m)
     for key: String in ANIM_NAMES:
-        if _anim.has_animation(ANIM_NAMES[key]):
-            _anim_map[key] = ANIM_NAMES[key]
+        var want_name := String(ANIM_NAMES[key])
+        if _anim.has_animation(want_name):
+            _anim_map[key] = want_name
+        elif _anim.has_animation(want_name.trim_suffix("_Loop")):   # Godot убирает «_Loop» при импорте
+            _anim_map[key] = want_name.trim_suffix("_Loop")
     for anim_name in _anim.get_animation_list():
         var low := String(anim_name).to_lower()
         for key in ["idle", "walk", "run", "jump"]:
             if low.contains(key) and not _anim_map.has(key):
                 _anim_map[key] = anim_name
+    for extra: Array in [["pistol_idle", "pistol_idle"], ["shoot", "pistol_shoot"], ["punch1", "punch_jab"], ["punch2", "punch_cross"]]:
+        for an in _anim.get_animation_list():
+            if String(an).to_lower().begins_with(String(extra[1])) and not _anim_map.has(extra[0]):
+                _anim_map[extra[0]] = String(an)
+    if _anim_map.has("pistol_idle"):
+        _anim.get_animation(_anim_map["pistol_idle"]).loop_mode = Animation.LOOP_LINEAR
     for key in ["idle", "walk", "run", "jog", "jump"]:
         if _anim_map.has(key):
             _anim.get_animation(_anim_map[key]).loop_mode = Animation.LOOP_LINEAR
 
 
 func _animate_model() -> void:
+    if _time < _action_until:
+        return
     var hspeed := Vector2(velocity.x, velocity.z).length()
-    var want := "idle"
+    var want := "pistol_idle" if armed and _anim_map.has("pistol_idle") else "idle"
     var rate := 1.0
     if not is_on_floor() and _anim_map.has("jump"):
         want = "jump"
@@ -546,3 +565,65 @@ func _box(size: Vector3) -> BoxMesh:
     var m := BoxMesh.new()
     m.size = size
     return m
+
+
+
+# ---------------------------------------------------------------- оружие
+
+## Положить оружие в правую руку (path — .gltf из models/guns) или убрать ("").
+func set_weapon(path: String, muzzle := Vector3.ZERO) -> void:
+    if _gun:
+        _gun.queue_free()
+        _gun = null
+    armed = path != ""
+    if not armed or _model == null or not ResourceLoader.exists(path):
+        return
+    if _gun_holder == null:
+        var skels := _model.find_children("*", "Skeleton3D", true, false)
+        if skels.is_empty():
+            return
+        var sk := skels[0] as Skeleton3D
+        if sk.find_bone("hand_r") < 0:
+            return
+        _gun_holder = BoneAttachment3D.new()
+        _gun_holder.bone_name = "hand_r"
+        sk.add_child(_gun_holder)
+    var ps = load(path)
+    if not (ps is PackedScene):
+        return
+    _gun = (ps as PackedScene).instantiate() as Node3D
+    # ствол вперёд, когда персонаж держит пистолет двумя руками (рассчитано по позе Pistol_Idle)
+    _gun.transform = Transform3D(Basis(Vector3(0.03, 0.9824, -0.1844), Vector3(-0.0419, 0.1856, 0.9817),
+            Vector3(0.9987, -0.0217, 0.0467)), Vector3(0.0, 0.0556, 0.0251))
+    _gun_holder.add_child(_gun)
+    _gun_muzzle = muzzle
+
+
+## Где дуло (для вспышки и трассера). Без оружия — перед грудью.
+func muzzle_position() -> Vector3:
+    if _gun and _gun.is_inside_tree():
+        return _gun.global_transform * _gun_muzzle
+    return global_position + Vector3(0, 1.4, 0) + aim_direction() * 0.5
+
+
+## Куда смотрит камера (по горизонтали) — туда бьём и стреляем.
+func aim_direction() -> Vector3:
+    var f := -_cam_yaw.global_transform.basis.z
+    f.y = 0.0
+    return f.normalized()
+
+
+## Удар или выстрел: повернуться по камере и проиграть анимацию.
+func attack(melee: bool) -> void:
+    _visual.rotation.y = _cam_yaw.rotation.y
+    if _anim == null:
+        return
+    var key := "shoot"
+    if melee:
+        _punch_flip = not _punch_flip
+        key = "punch2" if _punch_flip else "punch1"
+    if not _anim_map.has(key):
+        return
+    _anim.play(_anim_map[key], 0.08)
+    _anim.speed_scale = 1.6 if melee else 1.4
+    _action_until = _time + (0.45 if melee else 0.3)

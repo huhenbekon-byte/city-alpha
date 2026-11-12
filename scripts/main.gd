@@ -7,6 +7,7 @@ const CarScene := preload("res://scenes/car.tscn")
 const CityBuilder := preload("res://scripts/city_builder.gd")
 const TouchControlsScript := preload("res://scripts/touch_controls.gd")
 const HudScript := preload("res://scripts/hud.gd")
+const Weapons := preload("res://scripts/weapons.gd")
 const JobScript := preload("res://scripts/job.gd")
 const MenuScript := preload("res://scripts/menu.gd")
 const TrafficScript := preload("res://scripts/traffic.gd")
@@ -59,7 +60,7 @@ const QUESTS := [
 ]
 const WEATHER_NAMES := {"clear": "Ясно", "cloudy": "Пасмурно", "rain": "Дождь", "snow": "Снег"}
 const ENTER_DISTANCE := 3.2
-const LAMP_LIGHTS := 6   # сколько фонарей рядом с игроком дают настоящий свет ночью
+const LAMP_LIGHTS := 8   # сколько фонарей рядом с игроком дают настоящий свет ночью
 const PLAYER_SPAWN := Vector3(0, 0.4, 14)
 const FUEL_PRICE := 50          # ₽ за литр
 const EXAM_PRICE := 2000
@@ -118,8 +119,26 @@ const DAY_HORIZON := Color(0.76, 0.82, 0.88)
 const DUSK_HORIZON := Color(0.95, 0.60, 0.40)
 const NIGHT_TOP := Color(0.02, 0.03, 0.08)
 const NIGHT_HORIZON := Color(0.08, 0.10, 0.18)
+## Что сказать в чате при смене погоды.
+const WEATHER_TIPS := {"clear": "ясно, без осадков.", "cloudy": "облачно, возможен дождь.",
+        "rain": "дождь — асфальт мокрый, тормозной путь длиннее.", "snow": "снег — дороги скользкие, одевайтесь теплее."}
+## Городские новости и объявления (радио «Маяк» и горисполком).
+const NEWS := [
+    "Радио «Маяк»: на заводе перевыполнен план квартала. Слава труду!",
+    "Горисполком: в субботу субботник во дворах. Явка обязательна.",
+    "Милиция: участились угоны «Жигулей». Не оставляйте машины без присмотра.",
+    "В универсам завезли колбасу. Очередь с восьми утра.",
+    "Автошкола на площади набирает группы на права категорий B, A и C.",
+    "Больница напоминает: при плохом самочувствии обращайтесь в регистратуру.",
+    "Пожарная часть: не разводите костры во дворах.",
+    "ДК приглашает на танцы в субботу вечером.",
+    "КГБ: о подозрительных лицах сообщайте в приёмную.",
+    "Требуются водители автобуса и таксисты — работа в телефоне.",
+    "На рынке подешевели канистры с бензином.",
+    "Сберкасса: храните деньги на карте — так надёжнее.",
+]
 const DAY_AMBIENT := Color(0.36, 0.40, 0.48)
-const NIGHT_AMBIENT := Color(0.05, 0.06, 0.12)
+const NIGHT_AMBIENT := Color(0.13, 0.14, 0.22)
 
 var cash := START_MONEY      # наличные
 var bank := 0                # на карте
@@ -137,6 +156,12 @@ var look := Clothes.default_look()   # что надето: slot -> номер �
 var owned_clothes := {}              # slot -> Array купленных номеров
 var faction := ""            # id фракции ("mayor", "police"...), пусто — не во фракции
 var faction_rank := 0        # 1..6
+var has_pistol := false      # купленный на рынке ПМ
+var weapon_id := "fist"      # что в руках
+var _fire_cd := 0.0
+var _flash: OmniLight3D = null
+var _tracer: MeshInstance3D = null
+var _tracer_t := 0.0
 var faction_exp := 0         # стаж: сколько получек получено на текущем ранге
 var _payday_acc := 0.0       # игровых минут с последней получки
 var _faction_car = null      # машина из автопарка (одна на игрока)
@@ -207,7 +232,7 @@ var _gps_name := ""
 var _gps_marker: MarkerScript
 var _traffic: TrafficScript
 var _peds: PedestriansScript
-var _lamp_lights: Array[OmniLight3D] = []
+var _lamp_lights: Array[SpotLight3D] = []
 var _lamp_timer := 0.0
 var _night_k := 0.0
 var _loaded := {}   # что прочитали из сохранения до появления игрока и машин
@@ -301,6 +326,9 @@ func _setup() -> void:
     _setup_points()
     _ensure_numbers()
     _apply_settings()
+    _hud.chat("Добро пожаловать в City Alpha! Коснись чата, чтобы открыть историю сообщений.", "info")
+    if faction != "":
+        _hud.chat("Ты во фракции «%s», ранг: %s." % [_faction_name(), FactionData.rank_name(faction_rank, faction)], "faction")
     _open_menu()
 
 
@@ -354,6 +382,9 @@ func _process(delta: float) -> void:
         _update_lamp_lights(focus)
 
     Sfx.night = _night_k
+
+    _update_weapons(delta)
+    _update_chat_events(delta)
 
     # Кнопка действия: работа → точка (банкомат, АЗС…) → машина
     _touch.mode = TouchControlsScript.Mode.CAR if _driving else TouchControlsScript.Mode.FOOT
@@ -467,6 +498,10 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
     if _player == null:
         return
+    if event is InputEventKey:
+        var ke := event as InputEventKey
+        if ke.pressed and not ke.echo and ke.keycode == KEY_Q and _driving == null:
+            _on_weapon_switch()
     if event.is_action_pressed("interact"):
         _on_interact()
     elif event.is_action_pressed("phone"):
@@ -797,7 +832,7 @@ func _on_job_paid(amount: int, text: String) -> void:
     bank += amount   # зарплата приходит на карту
     _bank_log(amount, "Зарплата: " + _job_name())
     Sfx.play("coin")
-    _hud.show_toast(text + " (на карту)")
+    _hud.show_toast(text + " (на карту)", "money")
     _add_xp(maxi(5, amount / 20))
     _save_game()
 
@@ -825,7 +860,7 @@ func _on_radio() -> void:
 
 
 func _on_step(run: bool) -> void:
-    Sfx.play("step", -8.0 if run else -12.0, randf_range(0.85, 1.15))
+    Sfx.play(["step", "step2", "step3"][randi() % 3], -17.0 if run else -21.0, randf_range(0.92, 1.08))
 
 
 # ---------------------------------------------------------------- машины
@@ -973,10 +1008,13 @@ func _spawn_life() -> void:
     _peds.knocked.connect(func(_p: Vector3) -> void: _add_wanted(1, "сбил пешехода"))
 
     for i in LAMP_LIGHTS:
-        var l := OmniLight3D.new()
-        l.omni_range = 9.0
-        l.omni_attenuation = 2.2   # свет быстро гаснет — стены рядом не «выбеливаются»
-        l.light_energy = 0.4
+        var l := SpotLight3D.new()   # конус вниз, как у настоящего фонаря
+        l.spot_range = 13.0
+        l.spot_angle = 62.0
+        l.spot_attenuation = 1.2
+        l.spot_angle_attenuation = 0.9
+        l.rotation_degrees = Vector3(-90, 0, 0)
+        l.light_energy = 2.2
         l.light_color = Color(1.0, 0.85, 0.6)
         l.shadow_enabled = false
         l.visible = false
@@ -1000,7 +1038,7 @@ func _update_lamp_lights(focus: Vector3) -> void:
         l.visible = i < lamps.size()
         if l.visible:
             l.global_position = lamps[i]
-            l.light_energy = 0.4 * _night_k
+            l.light_energy = 2.2 * _night_k
 
 
 var _sort_focus := Vector3.ZERO
@@ -1069,6 +1107,7 @@ func _spawn_player() -> void:
     _player.set_look(Clothes.colors(look), Clothes.textures(look))
     _player.stepped.connect(_on_step)
     _player.set_camera_yaw(float(_loaded.get("player_yaw", PI)))
+    _equip_weapon.call_deferred()
 
 
 ## Вернуть то, что было при выходе: сидел ли в машине, шла ли смена курьера.
@@ -1096,6 +1135,8 @@ func _save_game() -> void:
     cfg.set_value("player", "bank", bank)
     cfg.set_value("player", "passport", passport_name)
     cfg.set_value("player", "license", has_license)
+    cfg.set_value("player", "has_pistol", has_pistol)
+    cfg.set_value("player", "weapon", weapon_id)
     cfg.set_value("player", "level", level)
     cfg.set_value("player", "xp", xp)
     cfg.set_value("player", "total_xp", total_xp)
@@ -1166,6 +1207,8 @@ func _load_game() -> void:
     bank = int(cfg.get_value("player", "bank", 0))
     passport_name = String(cfg.get_value("player", "passport", ""))
     has_license = bool(cfg.get_value("player", "license", false))
+    has_pistol = bool(cfg.get_value("player", "has_pistol", false))
+    weapon_id = String(cfg.get_value("player", "weapon", "fist"))
     level = int(cfg.get_value("player", "level", 1))
     xp = int(cfg.get_value("player", "xp", 0))
     total_xp = int(cfg.get_value("player", "total_xp", 0))
@@ -1322,7 +1365,7 @@ func _update_daylight() -> void:
         # Ночью «солнце» становится слабой луной без теней.
         _sun.rotation_degrees = Vector3(-45.0, 30.0, 0.0)
         _sun.light_color = Color(0.55, 0.65, 0.95)
-        _sun.light_energy = 0.07
+        _sun.light_energy = 0.16   # лунный свет
         _sun.shadow_enabled = false
 
     var horizon := NIGHT_HORIZON.lerp(DAY_HORIZON, day_k).lerp(DUSK_HORIZON, dusk * 0.6)
@@ -1348,7 +1391,7 @@ func _update_daylight() -> void:
         _sky_sh.set_shader_parameter("sun_strength", clampf(elev * 3.0, 0.0, 1.0))
         _sky_sh.set_shader_parameter("drift", minutes / 1440.0 * 0.5)  # облака медленно плывут
     _env.ambient_light_color = NIGHT_AMBIENT.lerp(DAY_AMBIENT, day_k) * (0.85 if weather == "rain" else 1.0)
-    _env.tonemap_exposure = lerpf(0.62, 0.8, day_k)   # ночью картинка темнее
+    _env.tonemap_exposure = lerpf(0.75, 0.8, day_k)   # ночью чуть темнее, но всё видно
     _night_k = 1.0 - day_k
     if _city:
         if _city.lamp_mat:
@@ -1371,6 +1414,7 @@ func _build_ui() -> void:
     _touch.phone_pressed.connect(_toggle_phone)
     _touch.horn_pressed.connect(_on_horn)
     _touch.radio_pressed.connect(_on_radio)
+    _touch.weapon_pressed.connect(_on_weapon_switch)
     _touch.hudmenu_pressed.connect(func() -> void: _hud.profile.toggle_popup())
     layer.add_child(_touch)
 
@@ -2036,6 +2080,14 @@ func _on_win_right() -> void:
             _market_cloth(String(p["slot"]), int(p["i"]), int(p["price"]))
         "canister":
             _market_canister()
+        "pistol":
+            if has_pistol:
+                _hud.show_toast("Пистолет уже есть — кнопка оружия справа (на ПК клавиша Q)")
+            elif _pay(Weapons.PISTOL_PRICE, "Рынок: пистолет ПМ"):
+                has_pistol = true
+                Sfx.play("coin")
+                _hud.show_toast("Куплен ПМ. Смена оружия — кнопка справа (Q), огонь — красная кнопка (R)")
+                _save_game()
         "phone":
             if _pay(PHONE_PRICE, "Рынок: новый номер"):
                 phone_number = ""
@@ -2201,6 +2253,10 @@ func _fill_market_rows(rows: Array) -> void:
             rows.append({"icon": "fuel", "icon_col": Color(1.0, 0.35, 0.3), "name": "Канистра бензина 10 л",
                     "value": HudScript.format_money(CANISTER_PRICE), "value_col": gold})
             _win_payload.append({"type": "canister", "price": CANISTER_PRICE})
+            rows.append({"icon": "star", "icon_col": Color(0.7, 0.7, 0.72), "name": "Пистолет Макарова (ПМ)",
+                    "value": "Куплено" if has_pistol else HudScript.format_money(Weapons.PISTOL_PRICE),
+                    "value_col": green if has_pistol else gold})
+            _win_payload.append({"type": "pistol", "price": Weapons.PISTOL_PRICE})
             rows.append({"icon": "call", "name": "Новый номер телефона",
                     "value": HudScript.format_money(PHONE_PRICE), "value_col": gold})
             _win_payload.append({"type": "phone", "price": PHONE_PRICE})
@@ -2327,7 +2383,7 @@ func _faction_payday() -> void:
     var need := _need_exp()
     if need > 0 and faction_exp >= need:
         text += ". Можно повыситься — %s!" % ("у смотрящего" if FactionData.is_gang(faction) else "в отделе кадров")
-    _hud.show_toast(text)
+    _hud.show_toast(text, "money")
     _save_game()
 
 
@@ -2855,7 +2911,7 @@ func _add_wanted(n: int, reason: String) -> void:
     _wanted_t = 0.0
     if wanted > old:
         Sfx.play("error")
-        _hud.show_toast("Розыск ★%d: %s" % [wanted, reason])
+        _hud.show_toast("Розыск ★%d: %s" % [wanted, reason], "warn")
 
 
 func _update_law(delta: float, focus: Vector3) -> void:
@@ -2940,7 +2996,7 @@ func _on_duty_paid(amount: int, text: String) -> void:
     bank += amount
     _bank_log(amount, "Служба: " + _faction_name())
     Sfx.play("coin")
-    _hud.show_toast(text + " (на карту)")
+    _hud.show_toast(text + " (на карту)", "money")
     _add_xp(maxi(8, amount / 20))
     if _duty.calls_done % 2 == 0:
         faction_exp += 1
@@ -2960,6 +3016,7 @@ func _on_duty_message(text: String) -> void:
 
 func _sms_add(from: String, text: String) -> void:
     sms.append([from, text])
+    _hud.chat("СМС от %s: %s" % [from, text], "sms")
     if sms.size() > 20:
         sms.pop_front()
     sms_unread += 1
@@ -3566,7 +3623,8 @@ func _update_weather(delta: float, focus: Vector3) -> void:
             next = "cloudy"
         if next != weather:
             weather = next
-            _hud.show_toast("Погода: %s" % WEATHER_NAMES[weather])
+            _hud.show_toast("Погода: %s" % WEATHER_NAMES[weather], "weather")
+            _hud.chat("Сводка погоды: " + String(WEATHER_TIPS.get(weather, "")), "weather")
             _update_daylight()
     var raining := weather == "rain"
     var snowing := weather == "snow"
@@ -3668,3 +3726,130 @@ const ITEM_ICONS := {"Шаурма": "shawarma", "Шаурма двойная": 
 
 func _item_icon(item: String) -> String:
     return String(ITEM_ICONS.get(item, "bag"))
+
+
+
+# ---------------------------------------------------------------- оружие
+
+func _weapons_now() -> Array[String]:
+    return Weapons.available(faction, faction_rank, has_pistol)
+
+
+func _on_weapon_switch() -> void:
+    if _driving != null or _player == null:
+        return
+    var list := _weapons_now()
+    var i := list.find(weapon_id)
+    weapon_id = list[(i + 1) % list.size()]
+    _equip_weapon()
+    _hud.show_toast("В руках: %s" % String(Weapons.info(weapon_id)["name"]))
+    Sfx.play("click")
+
+
+func _equip_weapon() -> void:
+    var info := Weapons.info(weapon_id)
+    var muzzle: Vector3 = info.get("muzzle", Vector3.ZERO)
+    _player.set_weapon(Weapons.model_path(weapon_id), muzzle)
+
+
+func _update_weapons(delta: float) -> void:
+    _fire_cd -= delta
+    if _tracer:
+        _tracer_t -= delta
+        _tracer.visible = _tracer_t > 0.0
+    if _flash:
+        _flash.visible = _tracer_t > 0.02
+    if _driving != null or _interior != "":
+        _touch.weapon_text = ""
+        return
+    if not weapon_id in _weapons_now():    # уволили, понизили — оружие сдаём
+        weapon_id = "fist"
+        _equip_weapon()
+    _touch.weapon_text = String(Weapons.info(weapon_id)["short"])
+    var menus: bool = _hud.phone_open or _win.visible or _dialog.visible or _hud.profile.is_open() or _fmenu.visible
+    var want: bool = _touch.attack_held or (Input.is_key_pressed(KEY_R) and not menus)
+    if want and _fire_cd <= 0.0 and not menus:
+        _attack()
+
+
+func _attack() -> void:
+    var info := Weapons.info(weapon_id)
+    var melee := weapon_id == "fist"
+    _fire_cd = float(info["rate"])
+    _player.attack(melee)
+    var dir: Vector3 = _player.aim_direction()
+    var origin: Vector3 = _player.global_position + Vector3(0, 1.3, 0)
+    var hit_pos := _peds.hit(origin, dir, float(info["range"]), 35.0 if melee else 8.0)
+    var lawful: bool = (faction == "police" or faction == "kgb") and _duty.active
+    if melee:
+        if hit_pos != Vector3.INF:
+            Sfx.play("hit", -2.0)
+            if not lawful:
+                _add_wanted(1, "драка")
+        return
+    Sfx.play("shot", -1.0 if weapon_id != "obrez" else 1.0, 0.85 if weapon_id in ["ak", "obrez"] else 1.0)
+    var from: Vector3 = _player.muzzle_position()
+    var to := hit_pos if hit_pos != Vector3.INF else from + dir * float(info["range"])
+    _show_shot(from, to)
+    if hit_pos != Vector3.INF:
+        Sfx.play_at("hit", hit_pos)
+        if not lawful:
+            _add_wanted(2, "стрельба по людям")
+    elif not lawful and wanted == 0:
+        _add_wanted(1, "стрельба в городе")
+
+
+## Вспышка у дула и короткий трассер до цели.
+func _show_shot(from: Vector3, to: Vector3) -> void:
+    if _flash == null:
+        _flash = OmniLight3D.new()
+        _flash.light_color = Color(1.0, 0.8, 0.45)
+        _flash.light_energy = 3.0
+        _flash.omni_range = 5.0
+        add_child(_flash)
+        _tracer = MeshInstance3D.new()
+        var bm := BoxMesh.new()
+        bm.size = Vector3(0.02, 0.02, 1.0)
+        _tracer.mesh = bm
+        var tm := StandardMaterial3D.new()
+        tm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+        tm.albedo_color = Color(1.0, 0.85, 0.5)
+        _tracer.material_override = tm
+        _tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+        add_child(_tracer)
+    _flash.global_position = from
+    var d := from.distance_to(to)
+    if d > 0.1:
+        _tracer.global_transform = Transform3D(Basis.looking_at(to - from, Vector3.UP), (from + to) * 0.5)
+        _tracer.scale = Vector3(1, 1, d)
+    _tracer_t = 0.07
+
+
+
+# ---------------------------------------------------------------- чат: время суток, новости, зарплата
+
+var _news_t := 90.0
+var _was_night := false
+var _last_hour := -1
+
+
+func _update_chat_events(delta: float) -> void:
+    var hh := int(minutes) / 60
+    _hud.chat_time_text = "[%02d:%02d]" % [hh, int(minutes) % 60]
+    var night_now := _night_k > 0.5
+    if night_now != _was_night:
+        _was_night = night_now
+        if night_now:
+            _hud.chat("Наступает ночь — включились фонари. Будьте внимательны на дорогах.", "time")
+        else:
+            _hud.chat("Доброе утро! Город просыпается. День %d." % day, "time")
+    if hh != _last_hour:
+        if _last_hour >= 0 and faction != "":
+            var left := PAYDAY_MINUTES - _payday_acc
+            if left <= 60.0 and left > 0.0:
+                _hud.chat("До получки во фракции меньше часа.", "faction")
+        _last_hour = hh
+    _news_t -= delta
+    if _news_t <= 0.0:
+        _news_t = randf_range(120.0, 220.0)
+        _hud.chat(String(NEWS[randi() % NEWS.size()]), "news")

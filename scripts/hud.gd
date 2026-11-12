@@ -48,6 +48,21 @@ var _phone_job: Label
 var _app_btns := {}
 var _job_active := false
 
+# ---- чат-лента оповещений (как в RP-серверах): погода, зарплата, розыск, работа...
+const CHAT_LINES := 7          # сколько строк видно на экране
+const CHAT_LIFE := 14.0        # через сколько секунд строка гаснет
+const CHAT_COLORS := {
+    "info": Color(0.95, 0.95, 0.95), "money": Color(0.45, 0.95, 0.5), "weather": Color(0.55, 0.8, 1.0),
+    "warn": Color(1.0, 0.45, 0.35), "faction": Color(0.4, 0.65, 1.0), "job": Color(1.0, 0.85, 0.3),
+    "sms": Color(1.0, 0.6, 0.85), "news": Color(0.85, 0.75, 1.0), "time": Color(0.75, 0.75, 0.8),
+}
+var chat_time_text := ""       # «[12:30]» перед строкой — задаёт main.gd
+var _chat_box: VBoxContainer
+var _chat_rows: Array = []     # [Label, осталось секунд]
+var _chat_history: Array[String] = []
+var _chat_panel: Panel
+var _chat_text: RichTextLabel
+
 
 func _ready() -> void:
     set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -63,8 +78,8 @@ func _ready() -> void:
     _toast.anchor_right = 1.0
     _toast.offset_left = 0.0
     _toast.offset_right = 0.0
-    _toast.offset_top = 140.0
-    _toast.offset_bottom = 190.0
+    _toast.offset_top = 215.0
+    _toast.offset_bottom = 265.0
     _toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     _toast.modulate.a = 0.0
 
@@ -73,12 +88,17 @@ func _ready() -> void:
     minimap.position = Vector2(12, 10)
     minimap.size = Vector2(236, 236)
 
+    _build_chat()
     _build_phone()
     profile = ProfileScript.new()
     add_child(profile)
 
 
 func _process(delta: float) -> void:
+    for row: Array in _chat_rows:
+        row[1] = float(row[1]) - delta
+        var lbl: Label = row[0]
+        lbl.modulate.a = clampf(float(row[1]) / 1.5, 0.0, 1.0) if not _chat_panel.visible else 0.0
     if _toast_time > 0.0:
         _toast_time -= delta
         _toast.modulate.a = clampf(_toast_time / 0.6, 0.0, 1.0)
@@ -186,10 +206,89 @@ func set_job(text: String) -> void:
     _job.text = text
 
 
-func show_toast(text: String) -> void:
+func show_toast(text: String, kind := "info") -> void:
     _toast.text = text
     _toast_time = 3.5
     _toast.modulate.a = 1.0
+    chat(text, kind)
+
+
+## Строка в чат: kind задаёт цвет ("money", "weather", "warn", "faction", "job", "sms", "news", "time").
+func chat(text: String, kind := "info") -> void:
+    var line := ("%s " % chat_time_text if chat_time_text != "" else "") + text
+    var col: Color = CHAT_COLORS.get(kind, CHAT_COLORS["info"])
+    _chat_history.append("[color=#%s]%s[/color]" % [col.to_html(false), line.replace("[", "(").replace("]", ")")])
+    if _chat_history.size() > 60:
+        _chat_history.remove_at(0)
+    var lbl := _make_label(_chat_box, 19, col)
+    lbl.text = line
+    lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    lbl.custom_minimum_size = Vector2(_chat_box.size.x, 0)
+    _chat_rows.append([lbl, CHAT_LIFE])
+    while _chat_rows.size() > CHAT_LINES:
+        var old: Label = _chat_rows[0][0]
+        old.queue_free()
+        _chat_rows.remove_at(0)
+    if _chat_panel.visible:
+        _refresh_chat_history()
+
+
+func _build_chat() -> void:
+    _chat_box = VBoxContainer.new()
+    _chat_box.position = Vector2(330, 8)
+    _chat_box.size = Vector2(620, 200)
+    _chat_box.add_theme_constant_override("separation", 0)
+    _chat_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    add_child(_chat_box)
+    # касание по ленте открывает историю
+    var tap := Button.new()
+    tap.flat = true
+    tap.focus_mode = Control.FOCUS_NONE
+    tap.position = Vector2(330, 0)
+    tap.size = Vector2(620, 170)
+    tap.modulate.a = 0.0
+    tap.pressed.connect(_toggle_chat_history)
+    add_child(tap)
+    _chat_panel = Panel.new()
+    _chat_panel.position = Vector2(330, 8)
+    _chat_panel.size = Vector2(640, 330)
+    var sb := StyleBoxFlat.new()
+    sb.bg_color = Color(0.05, 0.05, 0.07, 0.82)
+    sb.set_corner_radius_all(14)
+    sb.border_color = Color(1, 1, 1, 0.25)
+    sb.set_border_width_all(2)
+    _chat_panel.add_theme_stylebox_override("panel", sb)
+    _chat_panel.visible = false
+    add_child(_chat_panel)
+    var title := _make_label(_chat_panel, 18, Color(1, 1, 1, 0.6))
+    title.text = "ЧАТ · коснись, чтобы закрыть"
+    title.position = Vector2(16, 6)
+    _chat_text = RichTextLabel.new()
+    _chat_text.bbcode_enabled = true
+    _chat_text.scroll_following = true
+    _chat_text.position = Vector2(14, 34)
+    _chat_text.size = Vector2(612, 286)
+    _chat_text.add_theme_font_size_override("normal_font_size", 19)
+    _chat_text.mouse_filter = Control.MOUSE_FILTER_PASS
+    _chat_panel.add_child(_chat_text)
+    var close := Button.new()
+    close.flat = true
+    close.focus_mode = Control.FOCUS_NONE
+    close.modulate.a = 0.0
+    close.position = Vector2(0, 0)
+    close.size = Vector2(640, 34)
+    close.pressed.connect(_toggle_chat_history)
+    _chat_panel.add_child(close)
+
+
+func _toggle_chat_history() -> void:
+    _chat_panel.visible = not _chat_panel.visible
+    if _chat_panel.visible:
+        _refresh_chat_history()
+
+
+func _refresh_chat_history() -> void:
+    _chat_text.text = "\n".join(PackedStringArray(_chat_history))
 
 
 static func format_money(value: int) -> String:
