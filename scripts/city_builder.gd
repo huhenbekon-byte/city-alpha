@@ -68,6 +68,13 @@ var log_pile := Vector3.ZERO          # лесоруб: куда носить б
 var faction_sites := {}
 ## Интерьеры: id -> {"spawn", "exit", "hr", "desk"} — комнаты стоят далеко за городом.
 var interiors := {}
+## Жильё: {"pos" — где стоять у двери, "kind" ("flat"/"house"), "price", "addr", "label" (Label3D)}.
+var homes: Array[Dictionary] = []
+## Интерьеры жилья: "flat"/"house" -> {"spawn", "exit", "fridge", "bed"}.
+var home_interiors := {}
+const STREETS := ["ул. Ленина", "ул. Гагарина", "ул. Мира", "ул. Советская", "ул. Пушкина",
+        "пр. Победы", "ул. Строителей", "ул. Садовая", "ул. Космонавтов"]
+var _street_nums := {}
 var _fb := Basis()                 # поворот квартала фракции (фасад смотрит к площади)
 var _ff := Vector3(0, 0, 1)
 
@@ -84,6 +91,8 @@ func _ready() -> void:
     _build_road_signs()
     _build_outskirts()
     _build_interiors()
+    _build_cottages()
+    _build_home_interiors()
     _flush_batches()
 
 
@@ -292,6 +301,9 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
             _put("roof_box", base + axis * u + Vector3(0, h + 1.4, 0), yaw)
         if rng.randf() < 0.6:
             _bench(p + entrance * 1.6 + axis * 2.4 + Vector3(0, SIDE_H, 0), entrance)
+        if e == 0:   # одна квартира на продажу в каждом доме — у первого подъезда
+            var price := 35000 if style == "brick" else (75000 if style == "tower" else (60000 if floors >= 12 else 50000))
+            _add_home(p + entrance * 1.7 + Vector3(0, SIDE_H, 0), p + entrance * 0.9 + Vector3(0, 3.3, 0), "flat", price)
 
 
 func _shop(center: Vector3, length: float, depth: float, front: Vector3, text: String) -> void:
@@ -771,10 +783,7 @@ func _facade_mat(col: Color, tex: Array) -> StandardMaterial3D:
     m.albedo_color = col
     m.metallic_specular = 0.2   # без белых бликов от фонарей
     m.albedo_texture = tex[0]
-    m.emission_enabled = true
-    m.emission = Color(1, 1, 1)
-    m.emission_texture = tex[1]
-    m.emission_energy_multiplier = 0.0   # днём окна не светятся
+    m.emission_enabled = false   # окна не светятся: ночью город освещают фонари
     m.uv1_triplanar = true
     m.uv1_world_triplanar = true
     m.uv1_scale = Vector3(1.0 / (CELL * 4.0), 1.0 / (FLOOR_H * 4.0), 1.0 / (CELL * 4.0))
@@ -784,9 +793,28 @@ func _facade_mat(col: Color, tex: Array) -> StandardMaterial3D:
 
 
 ## 0 — день, 1 — ночь: светятся окна.
+## Окна ночью не светятся (город освещают фонари), а стены темнеют.
+var _night_base := {}   # материал -> его дневной цвет
+var _night_k := -1.0
+
+
 func set_night(k: float) -> void:
-    for m: StandardMaterial3D in _panel_mats + _brick_mats + _tower_mats:
-        m.emission_energy_multiplier = k * 0.9
+    if absf(k - _night_k) < 0.02:
+        return
+    _night_k = k
+    if _night_base.is_empty():
+        var mats: Array = _panel_mats + _brick_mats + _tower_mats
+        for m in _m.values():
+            mats.append(m)
+        for m in _tinted_cache.values():
+            mats.append(m)
+        for m in mats:
+            if m is StandardMaterial3D and not _night_base.has(m) and m != lamp_mat:
+                _night_base[m] = m.albedo_color
+    var dim := lerpf(1.0, 0.5, k)
+    for m: StandardMaterial3D in _night_base:
+        var c: Color = _night_base[m]
+        m.albedo_color = Color(c.r * dim, c.g * dim, c.b * dim, c.a)
 
 
 ## Виды мелких объектов: меш, материал, дальность видимости (м), тень.
@@ -1799,3 +1827,147 @@ func _plane_mat(tex_name: String, rep: Vector2, fallback: Color) -> StandardMate
         m.albedo_texture = t
         m.uv1_scale = Vector3(rep.x, rep.y, 1.0)
     return m
+
+
+
+# ================================================================ жильё
+
+func _address(p: Vector3, flat: bool) -> String:
+    var bi := int(floor(p.x / PITCH + 0.5)) + 7
+    var bj := int(floor(p.z / PITCH + 0.5)) + 3
+    var street: String = STREETS[absi(bi * 3 + bj * 5) % STREETS.size()]
+    var num := int(_street_nums.get(street, 0)) + 1
+    _street_nums[street] = num
+    if flat:
+        return "%s, д. %d, кв. %d" % [street, num * 2 + 1, (homes.size() * 37) % 140 + 1]
+    return "%s, д. %d" % [street, num * 2]
+
+
+func _add_home(pos: Vector3, label_pos: Vector3, kind: String, price: int) -> void:
+    var l := Label3D.new()
+    l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+    l.font_size = 40
+    l.pixel_size = 0.006
+    l.outline_size = 10
+    l.position = label_pos
+    l.visibility_range_end = 35.0
+    add_child(l)
+    homes.append({"pos": pos, "kind": kind, "price": price, "addr": _address(pos, kind == "flat"), "label": l})
+
+
+## Частный сектор за восточной окраиной: дорога и 9 домов с участками.
+func _build_cottages() -> void:
+    var rx := 262.0
+    _flat(Vector3((222.0 + rx) * 0.5, 0, 0), Vector2(rx - 222.0 + 10.0, 10.0), _m["asphalt"], 0.006)
+    _flat(Vector3(rx, 0, 0), Vector2(10.0, 190.0), _m["asphalt"], 0.007)
+    for z: float in [-90.0, -50.0, -10.0, 30.0, 70.0]:
+        _lamp(Vector3(rx + 5.6, 0, z + 20.0), Vector3(-1, 0, 0))
+    var spots := []
+    for z: float in [-70.0, -35.0, 35.0, 70.0]:
+        spots.append([Vector3(rx - 17.0, 0, z), Vector3(1, 0, 0)])
+    for z: float in [-70.0, -35.0, 0.0, 35.0, 70.0]:
+        spots.append([Vector3(rx + 17.0, 0, z), Vector3(-1, 0, 0)])
+    var walls := [Color(0.85, 0.78, 0.62), Color(0.72, 0.80, 0.70), Color(0.88, 0.86, 0.80), Color(0.70, 0.55, 0.42),
+            Color(0.75, 0.82, 0.88)]
+    var roofs := [Color(0.55, 0.18, 0.12), Color(0.25, 0.32, 0.25), Color(0.30, 0.30, 0.34)]
+    for k in spots.size():
+        var c: Vector3 = spots[k][0]
+        var f: Vector3 = spots[k][1]
+        _cottage(c, f, walls[k % walls.size()], roofs[k % roofs.size()], 120000 + (k % 3) * 30000)
+
+
+func _cottage(c: Vector3, front: Vector3, wall_col: Color, roof_col: Color, price: int) -> void:
+    var yaw := atan2(front.x, front.z)
+    var b := Basis(Vector3.UP, yaw)
+    _flat(c, Vector2(24.0, 24.0) if absf(front.x) < 0.5 else Vector2(24.0, 24.0), _m["grass"], 0.01)
+    var hc := c + b * Vector3(0, 0, -3.0)
+    var wall := _tinted("plaster", wall_col, 3.0)
+    _solid(Vector3(10.0, 3.4, 8.0), hc + Vector3(0, 1.7, 0), wall, yaw)
+    _deco(Vector3(10.3, 0.5, 8.3), hc + Vector3(0, 0.25, 0), _m["plinth"], yaw)
+    # двускатная крыша: два наклонных ската
+    var roof := _tinted("roof_gravel", roof_col, 2.0)
+    for side: float in [-1.0, 1.0]:
+        var slab := _deco(Vector3(11.0, 0.2, 5.2), hc + b * Vector3(0, 0, 2.15 * side) + Vector3(0, 4.55, 0), roof, yaw)
+        slab.rotate_object_local(Vector3.RIGHT, 0.5 * side)
+    # фронтоны ступеньками (треугольник под скатами)
+    for gx: float in [-4.95, 4.95]:
+        for st: int in 3:
+            _deco(Vector3(0.2, 0.62, 7.2 - st * 2.6), hc + b * Vector3(gx, 0, 0) + Vector3(0, 3.7 + st * 0.62, 0), wall, yaw)
+    _deco(Vector3(0.7, 2.0, 0.7), hc + b * Vector3(3.0, 0, -1.5) + Vector3(0, 5.2, 0), _m["plinth"], yaw)
+    # дверь, окна, крыльцо
+    _deco(Vector3(1.2, 2.2, 0.08), hc + b * Vector3(0, 0, 4.02) + Vector3(0, 1.1, 0),
+            _fit_mat("door_old", Vector3(1.2, 2.2, 0.08), Color(0.35, 0.24, 0.15)), yaw)
+    for wx: float in [-3.2, 3.2]:
+        _deco(Vector3(1.4, 1.3, 0.08), hc + b * Vector3(wx, 0, 4.02) + Vector3(0, 1.8, 0), _m["vitrine"], yaw)
+    _deco(Vector3(3.0, 0.25, 1.6), hc + b * Vector3(0, 0, 4.8) + Vector3(0, 0.12, 0), _m["concrete"], yaw)
+    _flat(c + b * Vector3(0, 0, 8.0), Vector2(1.6, 7.0) if absf(front.x) < 0.5 else Vector2(7.0, 1.6), _m["path"], 0.012)
+    # забор по трём сторонам (спереди — калитка)
+    var fence: Material = _m["wood"]
+    _deco(Vector3(24.0, 1.2, 0.08), c + b * Vector3(0, 0, -12.0) + Vector3(0, 0.6, 0), fence, yaw)
+    for sx: float in [-12.0, 12.0]:
+        _deco(Vector3(0.08, 1.2, 24.0), c + b * Vector3(sx, 0, 0) + Vector3(0, 0.6, 0), fence, yaw)
+    for sx: float in [-7.0, 7.0]:
+        _deco(Vector3(10.0, 1.2, 0.08), c + b * Vector3(sx, 0, 12.0) + Vector3(0, 0.6, 0), fence, yaw)
+    _tree(c + b * Vector3(-8.0, 0, -9.0))
+    _tree(c + b * Vector3(8.5, 0, 7.0))
+    _occupy(c, 24.0, 24.0)
+    building_rects.append(Rect2(hc.x - (5.0 if absf(front.x) < 0.5 else 4.0), hc.z - (4.0 if absf(front.x) < 0.5 else 5.0),
+            10.0 if absf(front.x) < 0.5 else 8.0, 8.0 if absf(front.x) < 0.5 else 10.0))
+    _add_home(hc + b * Vector3(0, 0, 5.8), hc + b * Vector3(0, 0, 4.6) + Vector3(0, 3.0, 0), "house", price)
+
+
+## Квартира и частный дом внутри: диван, кровать, кухня с холодильником, телевизор, ковёр.
+func _build_home_interiors() -> void:
+    home_interiors["flat"] = _home_room(Vector3(2000.0, SIDE_H, 2700.0), 12.0, 9.0, Color(0.86, 0.80, 0.66))
+    home_interiors["house"] = _home_room(Vector3(2100.0, SIDE_H, 2700.0), 16.0, 11.0, Color(0.80, 0.86, 0.80))
+
+
+func _home_room(o: Vector3, w: float, d: float, wall_col: Color) -> Dictionary:
+    const H := 3.0
+    var wall := _tinted("plaster", wall_col, 2.0)
+    var floor_mat: Material = _tinted("org/parquet", Color(1, 1, 1), 1.6) if _org_tex("parquet") != null else _m["wood"]
+    _solid(Vector3(w + 1.0, 0.4, d + 1.0), o + Vector3(0, -0.2, 0), floor_mat)
+    _solid(Vector3(w + 1.0, 0.4, d + 1.0), o + Vector3(0, H + 0.2, 0), _m["white"])
+    _solid(Vector3(0.4, H, d), o + Vector3(-w * 0.5, H * 0.5, 0), wall)
+    _solid(Vector3(0.4, H, d), o + Vector3(w * 0.5, H * 0.5, 0), wall)
+    _solid(Vector3(w, H, 0.4), o + Vector3(0, H * 0.5, -d * 0.5), wall)
+    _solid(Vector3(w, H, 0.4), o + Vector3(0, H * 0.5, d * 0.5), wall)
+    var ol := OmniLight3D.new()
+    ol.position = o + Vector3(0, H - 0.5, 0)
+    ol.omni_range = maxf(w, d)
+    ol.omni_attenuation = 1.0
+    ol.light_energy = 1.2
+    ol.light_color = Color(1.0, 0.9, 0.75)
+    add_child(ol)
+    var lamp := _mat(Color(1, 0.95, 0.85), 0.3)
+    lamp.emission_enabled = true
+    lamp.emission = Color(1.0, 0.9, 0.7)
+    lamp.emission_energy_multiplier = 1.5
+    _deco(Vector3(0.7, 0.25, 0.7), o + Vector3(0, H - 0.15, 0), lamp)
+    # дверь
+    _deco(Vector3(1.1, 2.2, 0.06), o + Vector3(0, 1.1, d * 0.5 - 0.22), _fit_mat("door_old", Vector3(1.1, 2.2, 0.06), Color(0.35, 0.24, 0.15)))
+    _label("ВЫХОД", o + Vector3(0, 2.5, d * 0.5 - 0.25), Vector3(0, 0, -1), 48, Color(0.3, 0.9, 0.4))
+    # окно с «улицей» за ним
+    var sky := _mat(Color(0.6, 0.75, 0.9), 0.5)
+    sky.emission_enabled = true
+    sky.emission = Color(0.55, 0.7, 0.9)
+    sky.emission_energy_multiplier = 0.6
+    _deco(Vector3(2.4, 1.4, 0.05), o + Vector3(-1.5, 1.7, -d * 0.5 + 0.23), sky)
+    _deco(Vector3(2.6, 0.1, 0.25), o + Vector3(-1.5, 0.95, -d * 0.5 + 0.3), _m["white"])
+    # ковёр на стене, диван, столик, телевизор
+    _deco(Vector3(0.03, 1.6, 2.4), o + Vector3(-w * 0.5 + 0.23, 1.7, -0.5), _fit_mat("org/carpet_wall", Vector3(0.03, 1.6, 2.4), Color(0.55, 0.12, 0.1)))
+    var sofa := _fit_mat("org/sofa", Vector3(1.0, 1.0, 2.6), Color(0.35, 0.22, 0.14))
+    _solid(Vector3(0.9, 0.45, 2.6), o + Vector3(-w * 0.5 + 0.7, 0.225, -0.5), sofa)
+    _deco(Vector3(0.25, 0.55, 2.6), o + Vector3(-w * 0.5 + 0.35, 0.72, -0.5), sofa)
+    _solid(Vector3(0.8, 0.45, 1.2), o + Vector3(-w * 0.5 + 2.2, 0.225, -0.5), _m["wood"])
+    _solid(Vector3(0.5, 0.6, 1.6), o + Vector3(-1.0 + w * 0.5 - 4.0, 0.3, -0.5), _m["wood"])
+    _deco(Vector3(0.12, 0.8, 1.3), o + Vector3(-1.0 + w * 0.5 - 4.0, 1.0, -0.5), _mat(Color(0.05, 0.05, 0.06), 0.3))
+    # кровать
+    _solid(Vector3(1.6, 0.55, 2.1), o + Vector3(w * 0.5 - 1.1, 0.275, -d * 0.5 + 1.5),
+            _fit_mat("org/bed_sheet", Vector3(1.6, 0.55, 2.1), Color(0.95, 0.95, 0.95)))
+    # кухня: столешница и холодильник
+    _solid(Vector3(0.7, 0.9, 2.6), o + Vector3(w * 0.5 - 0.55, 0.45, d * 0.5 - 2.6), _fit_mat("org/desk_front", Vector3(0.7, 0.9, 1.3), Color(0.6, 0.5, 0.4)))
+    _solid(Vector3(0.8, 1.9, 0.8), o + Vector3(w * 0.5 - 0.6, 0.95, d * 0.5 - 0.8), _mat(Color(0.93, 0.93, 0.92), 0.3))
+    _label("ХОЛОДИЛЬНИК", o + Vector3(w * 0.5 - 1.02, 1.6, d * 0.5 - 0.8), Vector3(-1, 0, 0), 28, Color(0.2, 0.2, 0.25))
+    return {"spawn": o + Vector3(0, 0.3, d * 0.5 - 2.6), "exit": o + Vector3(0, 0, d * 0.5 - 1.0),
+            "fridge": o + Vector3(w * 0.5 - 1.6, 0, d * 0.5 - 1.2), "bed": o + Vector3(w * 0.5 - 2.3, 0, -d * 0.5 + 1.6)}

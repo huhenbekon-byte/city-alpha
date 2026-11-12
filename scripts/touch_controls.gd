@@ -12,6 +12,7 @@ signal interact_pressed
 signal phone_pressed
 signal horn_pressed
 signal hudmenu_pressed
+signal radio_pressed
 
 enum Mode { FOOT, CAR }
 
@@ -72,6 +73,7 @@ func _buttons() -> Array:
         list.append({"id": "gas", "pos": Vector2(w - 140, h - 175), "r": 72.0, "text": "ГАЗ"})
         list.append({"id": "brake", "pos": Vector2(w - 315, h - 120), "r": 58.0, "text": "ТОРМОЗ"})
         list.append({"id": "horn", "pos": Vector2(w - 305, h - 268), "r": 44.0, "text": "БИП"})
+        list.append({"id": "radio", "pos": Vector2(w - 450, h - 205), "r": 40.0, "text": "РАДИО"})
     if interact_text != "":
         list.append({"id": "interact", "pos": Vector2(w - 145, h - 355), "r": 54.0, "text": interact_text})
     list.append({"id": "phone", "pos": Vector2(w - 62, 62), "r": 38.0, "text": ""})
@@ -157,6 +159,9 @@ func _set_button(id: String, down: bool) -> void:
         "hudmenu":
             if down:
                 hudmenu_pressed.emit()
+        "radio":
+            if down:
+                radio_pressed.emit()
 
 
 func _release_all() -> void:

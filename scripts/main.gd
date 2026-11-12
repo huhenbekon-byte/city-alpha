@@ -20,7 +20,7 @@ const WorkScript := preload("res://scripts/work.gd")
 const FactionData := preload("res://scripts/faction_data.gd")
 const FactionMenuScript := preload("res://scripts/faction_menu.gd")
 
-const VERSION := "v0.14"
+const VERSION := "v0.15"
 const SAVE_PATH := "user://save.cfg"
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
@@ -38,6 +38,17 @@ const FUEL_PRICE := 50          # ₽ за литр
 const EXAM_PRICE := 2000
 const DPS_FINE := 1500
 const PAYDAY_MINUTES := 180.0   # получка во фракции — раз в 3 игровых часа
+const HUNGER_PER_MINUTE := 0.12  # сытость тратится: 100 -> 0 примерно за 14 игровых часов (14 мин)
+const TREAT_PRICE := 300         # лечение в больнице
+## Еда и лекарства в ларьках: [название, цена, +сытость, +здоровье].
+const FOOD := {
+    "ШАУРМА": [["Шаурма", 250, 45, 0], ["Шаурма двойная", 380, 70, 0], ["Чай", 50, 5, 2]],
+    "ПРОДУКТЫ": [["Хлеб", 60, 15, 0], ["Бутерброд", 120, 25, 0], ["Кефир", 90, 15, 2], ["Пельмени", 300, 55, 0]],
+    "КОФЕ": [["Кофе", 120, 10, 3], ["Пирожок", 80, 20, 0], ["Круассан", 150, 25, 0]],
+    "КВАС": [["Квас", 70, 8, 2], ["Пирожок", 80, 20, 0]],
+    "УНИВЕРСАМ": [["Батон", 50, 15, 0], ["Колбаса", 250, 40, 0], ["Комплексный обед", 450, 80, 5]],
+    "АПТЕКА": [["Аптечка", 400, 0, 40], ["Бинт", 150, 0, 15], ["Витамины", 200, 5, 10]],
+}
 const CANISTER_PRICE := 600
 const PHONE_PRICE := 1000
 const MARKET_CATS := [
@@ -98,6 +109,17 @@ var faction_exp := 0         # стаж: сколько получек полу�
 var _payday_acc := 0.0       # игровых минут с последней получки
 var _faction_car = null      # машина из автопарка (одна на игрока)
 var _interior := ""          # в каком здании игрок ("" — на улице)
+var health := 100.0          # здоровье 0..100
+var hunger := 100.0          # сытость 0..100 (0 — голодный, теряешь здоровье)
+var home := -1               # номер купленного жилья в _city.homes, -1 — нет
+var _home_inside := -1       # в каком жилье сейчас игрок
+var _fridge_at := -9999.0    # когда последний раз ели из холодильника (игровые минуты)
+var _starve_acc := 0.0
+var _regen_acc := 0.0
+var _last_kmh := 0.0
+var _last_vy := 0.0
+var _beat_t := 0.0
+var _home_map_point = null
 var faction_news: Array = []  # объявления организации: [текст, автор]
 var _fmenu: FactionMenuScript
 
@@ -193,6 +215,11 @@ func _process(delta: float) -> void:
     var speed := 0.0
     if _driving:
         speed = _driving.speed_kmh()
+    _update_vitals(delta, speed)
+    if _driving and not Music.is_radio():
+        Music.play_radio()
+    elif not _driving and Music.is_radio():
+        Music.stop()
     if faction != "":
         _payday_acc += delta * GAME_MINUTES_PER_SECOND
         if _payday_acc >= PAYDAY_MINUTES:
@@ -230,6 +257,7 @@ func _process(delta: float) -> void:
 
     # Интерфейс
     _hud.set_money(cash, bank)
+    _hud.set_vitals(health, hunger)
     _hud.set_nick(passport_name)
     if _hud.profile.is_open():
         _hud.profile.set_data(_profile_data())
@@ -257,6 +285,8 @@ func _process(delta: float) -> void:
     mini.focus = focus
     if _interior != "":   # в здании карта показывает, где стоит само здание
         mini.focus = _city.faction_sites[_interior]["door"]
+    elif _home_inside >= 0:
+        mini.focus = _city.homes[_home_inside]["pos"]
     mini.heading = _driving.global_transform.basis.z if _driving else _player.get_facing()
     if _work.active:
         mini.has_target = _work.has_target()
@@ -310,6 +340,8 @@ func _unhandled_input(event: InputEvent) -> void:
         _open_menu()
     elif event.is_action_pressed("horn"):
         _on_horn()
+    elif event.is_action_pressed("radio"):
+        _on_radio()
 
 
 func _notification(what: int) -> void:
@@ -336,6 +368,7 @@ func _open_menu() -> void:
     get_tree().paused = true
     _touch.visible = false
     _menu.show_menu(_started, VERSION)
+    Music.play_menu()
 
 
 func _on_play() -> void:
@@ -346,6 +379,7 @@ func _on_play() -> void:
     _menu.visible = false
     _touch.visible = true
     get_tree().paused = false
+    Music.stop()
 
 
 func _on_quit() -> void:
@@ -384,6 +418,10 @@ func _on_reset() -> void:
     _despawn_faction_car()
     _set_faction("", 0)
     _interior = ""
+    health = 100.0
+    hunger = 100.0
+    _set_home(-1)
+    _home_inside = -1
     _clear_gps()
     _player.set_look(Clothes.colors(look), Clothes.textures(look))
     _player.global_position = PLAYER_SPAWN
@@ -409,6 +447,7 @@ func _apply_settings() -> void:
     var vol := _menu.volume()
     AudioServer.set_bus_mute(0, vol <= 0.0)
     AudioServer.set_bus_volume_db(0, linear_to_db(maxf(vol, 0.001)))
+    Music.volume = _menu.music_volume()
     _update_daylight()
 
 
@@ -541,7 +580,7 @@ func _add_xp(amount: int) -> void:
     while xp >= _need_xp():
         xp -= _need_xp()
         level += 1
-        Sfx.play("notify")
+        Sfx.play("levelup")
         _hud.show_toast("Новый уровень: %d!" % level)
 
 
@@ -569,7 +608,7 @@ func _profile_data() -> Dictionary:
     return {"name": passport_name if passport_name != "" else "Без паспорта",
             "level": level, "xp": xp, "need": _need_xp(), "rating": total_xp,
             "cash": cash, "bank": bank, "job": _job_name(),
-            "phone": phone_number, "home": "Нет", "org": _org_text(),
+            "phone": phone_number, "home": _home_text(), "org": _org_text(),
             "card": card_number, "history": history}
 
 
@@ -608,7 +647,17 @@ func _on_job_message(text: String) -> void:
 
 func _on_horn() -> void:
     if _driving:
+        if _driving.has_lights:   # у служебных машин кнопка включает сирену
+            _driving.toggle_siren()
+            _hud.show_toast("Сирена включена" if _driving.siren_on else "Сирена выключена")
+            return
         Sfx.play("horn", -3.0)
+
+
+func _on_radio() -> void:
+    if _driving:
+        Sfx.play("click")
+        _hud.show_toast(Music.next_station())
 
 
 func _on_step(run: bool) -> void:
@@ -817,6 +866,12 @@ func _save_game() -> void:
         cfg.set_value("player", "pos", _driving.global_position + Vector3(3, 0.5, 0))
     if _interior != "":   # сохраняемся «у входа», а не в комнате
         cfg.set_value("player", "pos", _city.faction_sites[_interior]["out"])
+    if _home_inside >= 0:
+        cfg.set_value("player", "pos", _city.homes[_home_inside]["pos"] + Vector3(0, 0.3, 0))
+    cfg.set_value("player", "health", health)
+    cfg.set_value("player", "hunger", hunger)
+    cfg.set_value("player", "home", home)
+    cfg.set_value("player", "fridge", _fridge_at)
     cfg.set_value("faction", "id", faction)
     cfg.set_value("faction", "rank", faction_rank)
     cfg.set_value("faction", "exp", faction_exp)
@@ -864,6 +919,10 @@ func _load_game() -> void:
     _loaded["job"] = cfg.get_value("job", "active", false)
     _loaded["job_kind"] = cfg.get_value("job", "kind", "")
     _loaded["owned"] = cfg.get_value("world", "owned", [])
+    health = clampf(float(cfg.get_value("player", "health", 100.0)), 1.0, 100.0)
+    hunger = clampf(float(cfg.get_value("player", "hunger", 100.0)), 0.0, 100.0)
+    _loaded["home"] = int(cfg.get_value("player", "home", -1))
+    _fridge_at = float(cfg.get_value("player", "fridge", -9999.0))
     faction = String(cfg.get_value("faction", "id", ""))
     faction_rank = int(cfg.get_value("faction", "rank", 0))
     faction_exp = int(cfg.get_value("faction", "exp", 0))
@@ -892,6 +951,7 @@ func _setup_input() -> void:
     _add_keys("interact", [KEY_F, KEY_E])
     _add_keys("phone", [KEY_TAB, KEY_P])
     _add_keys("horn", [KEY_H])
+    _add_keys("radio", [KEY_R])
 
 
 func _add_keys(action: StringName, keys: Array) -> void:
@@ -1019,6 +1079,7 @@ func _build_ui() -> void:
     _touch.interact_pressed.connect(_on_interact)
     _touch.phone_pressed.connect(_toggle_phone)
     _touch.horn_pressed.connect(_on_horn)
+    _touch.radio_pressed.connect(_on_radio)
     _touch.hudmenu_pressed.connect(func() -> void: _hud.profile.toggle_popup())
     layer.add_child(_touch)
 
@@ -1114,6 +1175,22 @@ func _setup_points() -> void:
     _add_point(_city.driving_school, 3.5, "АВТОШКОЛА", _open_driving_school, false, Color(1.0, 0.6, 0.1))
     for p: Vector3 in _city.atms:
         _add_point(p, 2.2, "БАНКОМАТ", _open_atm, false, Color(0.2, 0.6, 1.0))
+    for pk: Dictionary in _city.pickups:
+        var kname := String(pk["name"])
+        if FOOD.has(kname):
+            _add_point(pk["pos"], 2.4, "АПТЕКА" if kname == "АПТЕКА" else "ЕДА", _open_food.bind(kname), false,
+                    Color(1.0, 0.5, 0.2), false)
+    if _city.interiors.has("hospital"):
+        _add_point(_city.interiors["hospital"]["desk"], 2.0, "ЛЕЧЕНИЕ", _open_treatment, false, Color.WHITE, false)
+    for i in _city.homes.size():
+        var hm: Dictionary = _city.homes[i]
+        _add_point(hm["pos"], 1.6, "ДОМ", _open_home.bind(i), false, Color.WHITE, false)
+    for kind: String in _city.home_interiors:
+        var hi: Dictionary = _city.home_interiors[kind]
+        _add_point(hi["exit"], 1.4, "ВЫЙТИ", _exit_home, false, Color.WHITE, false)
+        _add_point(hi["fridge"], 1.5, "ХОЛОДИЛЬНИК", _use_fridge, false, Color.WHITE, false)
+        _add_point(hi["bed"], 1.6, "ОТДОХНУТЬ", _use_bed, false, Color.WHITE, false)
+    _set_home(int(_loaded.get("home", -1)))
     for p: Vector3 in _city.fuel_pumps:
         _add_point(p, 5.5, "ЗАПРАВИТЬ", _open_fuel, true, Color(0.9, 0.2, 0.2))
     _add_point(_city.bus_depot, 3.0, "АВТОБУС", _start_work.bind("bus"))
@@ -1601,7 +1678,7 @@ func _fill_gps_rows(rows: Array) -> void:
         var cat := _win.category if q == "" else ""
         match cat:
             "home":
-                msg = "Дом пока не куплен — скоро"
+                msg = "Жильё не куплено"
         rows.append({"icon": "dots", "name": msg, "value": "", "enabled": false})
         _win_payload.append(null)
 
@@ -1620,6 +1697,17 @@ func _nav_places() -> Array:
         out.append({"cat": "work", "icon": "pin", "col": gold, "name": "Текущее задание", "pos": _work.target})
     elif _job.active and _job.has_target():
         out.append({"cat": "work", "icon": "pin", "col": gold, "name": "Текущее задание", "pos": _job.target})
+    if home >= 0:
+        out.append({"cat": "home", "icon": "house", "col": Color(0.45, 0.9, 0.5), "name": "Мой дом: %s" % c.homes[home]["addr"],
+                "pos": c.homes[home]["pos"]})
+    for i in c.homes.size():
+        if i != home:
+            var hm: Dictionary = c.homes[i]
+            out.append({"cat": "home", "icon": "house", "name": "Продаётся: %s — %s" % [hm["addr"], HudScript.format_money(int(hm["price"]))],
+                    "pos": hm["pos"]})
+    for pk: Dictionary in c.pickups:
+        if String(pk["name"]) == "АПТЕКА":
+            out.append({"cat": "hospital", "icon": "cross", "col": Color(1.0, 0.5, 0.5), "name": "Аптека", "pos": pk["pos"]})
     out.append({"cat": "work", "icon": "bus", "name": "Автобусный парк — водитель", "pos": c.bus_depot})
     out.append({"cat": "work", "icon": "box", "name": "Склад — грузчик", "pos": c.warehouse_drop})
     out.append({"cat": "work", "icon": "truck", "name": "Стоянка фур — дальнобойщик", "pos": c.truck_depot})
@@ -2112,3 +2200,265 @@ func _faction_gps(pos: Vector3, place: String) -> void:
     _dialog.close()
     _set_gps(pos, place, true)
     _hud.show_toast("Метка установлена: %s" % place)
+
+
+# ================================================================ здоровье и голод
+
+func _update_vitals(delta: float, speed: float) -> void:
+    var game_min := delta * GAME_MINUTES_PER_SECOND
+    hunger = maxf(0.0, hunger - HUNGER_PER_MINUTE * game_min * (1.6 if _driving == null and Input.is_action_pressed("sprint") else 1.0))
+    if hunger <= 0.0:
+        _starve_acc += delta
+        if _starve_acc >= 3.0:
+            _starve_acc = 0.0
+            _hurt(1.0, "")
+            if int(health) % 10 == 0:
+                _hud.show_toast("Ты голоден! Поешь в ларьке (ЕДА) или дома")
+    elif hunger > 60.0 and health < 100.0:
+        _regen_acc += delta
+        if _regen_acc >= 12.0:
+            _regen_acc = 0.0
+            health = minf(100.0, health + 1.0)
+    # авария: резкая потеря скорости
+    var kmh := absf(speed)
+    if _driving and _last_kmh - kmh > 35.0 and _last_kmh > 45.0:
+        var dmg := clampf((_last_kmh - kmh - 25.0) * 0.6, 5.0, 45.0)
+        Sfx.play("hit")
+        _hurt(dmg, "Авария! −%d здоровья" % int(dmg))
+    _last_kmh = kmh if _driving else 0.0
+    # падение с высоты
+    if not _driving:
+        var vy: float = _player.velocity.y
+        if _last_vy < -14.0 and vy > -2.0:
+            var fall := clampf((-_last_vy - 12.0) * 6.0, 5.0, 60.0)
+            Sfx.play("hit")
+            _hurt(fall, "Неудачное падение: −%d здоровья" % int(fall))
+        _last_vy = vy
+    # сердцебиение, когда здоровья мало
+    if health < 25.0:
+        _beat_t -= delta
+        if _beat_t <= 0.0:
+            _beat_t = 1.2
+            Sfx.play("heartbeat", -6.0)
+
+
+func _hurt(amount: float, text: String) -> void:
+    health = maxf(0.0, health - amount)
+    if text != "":
+        _hud.show_toast(text)
+    if health <= 0.0:
+        _faint()
+
+
+## Здоровье кончилось: игрок теряет сознание и приходит в себя у больницы.
+func _faint() -> void:
+    Sfx.play("faint")
+    if _driving:
+        var pos: Vector3 = _driving.get_exit_position()
+        _driving.set_driven(false)
+        _driving = null
+        _player.global_position = pos
+        _player.set_active(true)
+    _interior = ""
+    _home_inside = -1
+    var site: Dictionary = _city.faction_sites.get("hospital", {})
+    var spot: Vector3 = site.get("out", PLAYER_SPAWN)
+    _player.global_position = spot + Vector3(0, 0.3, 0)
+    _player.velocity = Vector3.ZERO
+    _player.set_camera_yaw(float(site.get("out_yaw", PI)))
+    var fee := mini(TREAT_PRICE, cash + bank)
+    if fee > 0:
+        var from_cash := mini(cash, fee)
+        cash -= from_cash
+        bank -= fee - from_cash
+        if fee - from_cash > 0:
+            _bank_log(-(fee - from_cash), "Больница: лечение")
+    health = 60.0
+    hunger = maxf(hunger, 40.0)
+    _last_kmh = 0.0
+    _last_vy = 0.0
+    _open_dialog("Больница", ("Ты потерял сознание, и тебя доставили в больницу.\n\nЛечение: %s.\n"
+            + "Следи за здоровьем и сытостью — полоски под деньгами.") % HudScript.format_money(fee), [["Понятно", _dialog.close]])
+    _save_game()
+
+
+func _open_food(kname: String) -> void:
+    var items: Array = FOOD[kname]
+    var buttons := []
+    for it: Array in items:
+        var gain := ""
+        if int(it[2]) > 0:
+            gain += " +%d сытости" % int(it[2])
+        if int(it[3]) > 0:
+            gain += " +%d здоровья" % int(it[3])
+        buttons.append(["%s — %s (%s)" % [it[0], HudScript.format_money(int(it[1])), gain.strip_edges()], _buy_food.bind(kname, it)])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog(kname.capitalize(), "Здоровье: %d / 100\nСытость: %d / 100" % [int(health), int(hunger)], buttons)
+
+
+func _buy_food(kname: String, it: Array) -> void:
+    if int(it[2]) > 0 and hunger >= 99.0 and int(it[3]) == 0:
+        _hud.show_toast("Ты не голоден")
+        return
+    if int(it[3]) > 0 and int(it[2]) == 0 and health >= 100.0:
+        _hud.show_toast("Ты здоров")
+        return
+    if not _pay(int(it[1]), String(it[0])):
+        return
+    hunger = minf(100.0, hunger + float(it[2]))
+    health = minf(100.0, health + float(it[3]))
+    Sfx.play("heal" if int(it[3]) > int(it[2]) else "eat")
+    _hud.show_toast("%s: приятного аппетита!" % it[0] if int(it[2]) > 0 else "%s: здоровье %d" % [it[0], int(health)])
+    _open_food(kname)
+
+
+func _open_treatment() -> void:
+    var free := faction == "hospital"
+    var price := 0 if free else TREAT_PRICE
+    if health >= 100.0:
+        _open_dialog("Регистратура", "Здоровье: 100 / 100. Лечение не нужно.", [["Закрыть", _dialog.close]])
+        return
+    _open_dialog("Регистратура", "Здоровье: %d / 100\n\nПолное лечение: %s%s" % [int(health),
+            "бесплатно" if free else HudScript.format_money(price), " (ты сотрудник больницы)" if free else ""],
+            [["Лечиться", _treat.bind(price)], ["Закрыть", _dialog.close]])
+
+
+func _treat(price: int) -> void:
+    if price > 0 and not _pay(price, "Больница: лечение"):
+        return
+    health = 100.0
+    Sfx.play("heal")
+    _dialog.close()
+    _hud.show_toast("Ты полностью здоров")
+
+
+# ================================================================ жильё
+
+func _home_text() -> String:
+    if home < 0:
+        return "Нет"
+    return String(_city.homes[home]["addr"])
+
+
+func _set_home(i: int) -> void:
+    if i >= _city.homes.size():
+        i = -1
+    home = i
+    if _home_map_point != null:
+        _hud.minimap.points.erase(_home_map_point)
+        _home_map_point = null
+    if home >= 0:
+        _home_map_point = [_city.homes[home]["pos"], Color(0.35, 0.95, 0.45)]
+        _hud.minimap.points.append(_home_map_point)
+    for k in _city.homes.size():
+        var hm: Dictionary = _city.homes[k]
+        var l: Label3D = hm["label"]
+        if k == home:
+            l.text = "ВАШ ДОМ"
+            l.modulate = Color(0.45, 1.0, 0.5)
+        else:
+            l.text = "ПРОДАЁТСЯ\n%s" % HudScript.format_money(int(hm["price"]))
+            l.modulate = Color(1.0, 0.85, 0.35)
+
+
+func _home_kind_name(i: int) -> String:
+    return "Квартира" if String(_city.homes[i]["kind"]) == "flat" else "Частный дом"
+
+
+func _open_home(i: int) -> void:
+    var hm: Dictionary = _city.homes[i]
+    var title := "%s — %s" % [_home_kind_name(i), hm["addr"]]
+    if home == i:
+        _open_dialog(title, "Это твой дом.\nДома можно поесть из холодильника и отдохнуть (восстановить здоровье).",
+                [["Войти", _enter_home.bind(i)], ["Продать государству за %s" % HudScript.format_money(int(hm["price"]) / 2), _confirm_sell_home],
+                ["Закрыть", _dialog.close]])
+        return
+    var text := "Продаётся: %s\nЦена: %s\n\nПокупка — у государства, без посредников." % [_home_kind_name(i).to_lower(),
+            HudScript.format_money(int(hm["price"]))]
+    var buttons := []
+    if home >= 0:
+        text += "\n\nУ тебя уже есть жильё (%s). Сначала продай его." % _home_text()
+    else:
+        buttons.append(["Купить за %s" % HudScript.format_money(int(hm["price"])), _buy_home.bind(i)])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog(title, text, buttons)
+
+
+func _buy_home(i: int) -> void:
+    if not _check_docs(false):
+        return
+    var hm: Dictionary = _city.homes[i]
+    if not _pay(int(hm["price"]), "Покупка жилья"):
+        return
+    _set_home(i)
+    _add_xp(40)
+    Sfx.play("cash")
+    _dialog.close()
+    _hud.show_toast("Поздравляем с новосельем! %s" % hm["addr"])
+    _save_game()
+
+
+func _confirm_sell_home() -> void:
+    var hm: Dictionary = _city.homes[home]
+    _open_dialog("Продажа жилья", "Продать %s за %s? Деньги придут на карту." % [hm["addr"], HudScript.format_money(int(hm["price"]) / 2)],
+            [["Продать", _sell_home], ["Отмена", _dialog.close]])
+
+
+func _sell_home() -> void:
+    if home < 0:
+        return
+    var pay := int(_city.homes[home]["price"]) / 2
+    bank += pay
+    _bank_log(pay, "Продажа жилья")
+    _set_home(-1)
+    Sfx.play("cash")
+    _dialog.close()
+    _hud.show_toast("Жильё продано: +%s на карту" % HudScript.format_money(pay))
+    _save_game()
+
+
+func _enter_home(i: int) -> void:
+    _dialog.close()
+    var hi: Dictionary = _city.home_interiors[String(_city.homes[i]["kind"])]
+    _home_inside = i
+    _player.global_position = hi["spawn"]
+    _player.velocity = Vector3.ZERO
+    _player.set_camera_yaw(0.0)
+    Sfx.play("door")
+
+
+func _exit_home() -> void:
+    var i := _home_inside if _home_inside >= 0 else home
+    _home_inside = -1
+    var p: Vector3 = _city.homes[i]["pos"] if i >= 0 else PLAYER_SPAWN
+    _player.global_position = p + Vector3(0, 0.3, 0)
+    _player.velocity = Vector3.ZERO
+    Sfx.play("door")
+
+
+func _use_fridge() -> void:
+    var now := day * 1440.0 + minutes
+    if now - _fridge_at < 120.0:
+        _hud.show_toast("Холодильник пуст — продукты будут через %d мин" % int(120.0 - (now - _fridge_at)))
+        return
+    _fridge_at = now
+    hunger = minf(100.0, hunger + 50.0)
+    Sfx.play("eat")
+    _hud.show_toast("Поел дома: +50 сытости")
+
+
+func _use_bed() -> void:
+    _open_dialog("Отдых", "Поспать 2 часа? Здоровье восстановится полностью.", [["Поспать", _sleep], ["Закрыть", _dialog.close]])
+
+
+func _sleep() -> void:
+    _dialog.close()
+    minutes += 120.0
+    if minutes >= 1440.0:
+        minutes -= 1440.0
+        day += 1
+    health = 100.0
+    hunger = maxf(0.0, hunger - 10.0)
+    _update_daylight()
+    Sfx.play("heal")
+    _hud.show_toast("Ты выспался: здоровье 100")

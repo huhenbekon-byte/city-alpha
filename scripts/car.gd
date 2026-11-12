@@ -49,6 +49,8 @@ var _spawn := Transform3D()
 var _lamp_a: StandardMaterial3D = null
 var _lamp_b: StandardMaterial3D = null
 var _flash_t := 0.0
+var siren_on := false            # сирена (у машин с мигалками, кнопка «БИП» включает/выключает)
+var _siren: AudioStreamPlayer = null
 
 # Звук мотора синтезируется прямо в коде (без аудиофайлов).
 const MIX_RATE := 22050.0
@@ -469,7 +471,24 @@ func _lamp_mat(col: Color) -> StandardMaterial3D:
 
 
 ## Мигалки работают, пока в машине водитель.
+func toggle_siren() -> void:
+    siren_on = not siren_on
+    if _siren == null:
+        _siren = AudioStreamPlayer.new()
+        _siren.stream = Sfx.get_sound("siren")
+        _siren.volume_db = -12.0
+        add_child(_siren)
+    if not siren_on:
+        _siren.stop()
+
+
 func _update_flashers(delta: float) -> void:
+    if _siren != null:
+        if siren_on and driven and _siren.stream != null:
+            if not _siren.playing:
+                _siren.play()
+        elif _siren.playing:
+            _siren.stop()
     if not driven:
         if _flash_t != 0.0:
             _flash_t = 0.0

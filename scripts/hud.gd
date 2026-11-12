@@ -18,6 +18,8 @@ var minimap: MinimapScript
 var profile: ProfileScript
 var _cash := 0
 var _nick := ""
+var _health := 100
+var _hunger := 100
 var phone_open := false
 
 var _clock: Label
@@ -37,9 +39,9 @@ func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_IGNORE
 
     _clock = _make_label(self, 18, Color(1, 1, 1, 0.9))
-    _clock.position = Vector2(24, ROW_Y + 30)
+    _clock.position = Vector2(24, ROW_Y + 56)
     _job = _make_label(self, 19, Color(1.0, 0.85, 0.3))
-    _job.position = Vector2(24, ROW_Y + 56)
+    _job.position = Vector2(24, ROW_Y + 82)
 
     _toast = _make_label(self, 32, Color(1, 1, 1))
     _toast.anchor_left = 0.0
@@ -74,6 +76,30 @@ func set_money(cash: int, bank: int) -> void:
     _phone_money.text = "Наличные: %s\nНа карте: %s" % [format_money(cash), format_money(bank)]
 
 
+## Полоски здоровья и сытости под деньгами.
+func set_vitals(health: float, hunger: float) -> void:
+    var h := int(ceil(health))
+    var f := int(ceil(hunger))
+    if h != _health or f != _hunger or h < 25:
+        _health = h
+        _hunger = f
+        queue_redraw()
+
+
+func _vital_bar(pos: Vector2, k: float, col: Color, icon: String) -> void:
+    var blink := icon == "heart" and k < 0.25 and fmod(Time.get_ticks_msec() / 1000.0, 0.8) < 0.4
+    Icons.panel(self, Rect2(pos + Vector2(28, -8), Vector2(124, 16)), Color(0.05, 0.05, 0.06, 0.85), 8, 2, Color(0, 0, 0, 0.9))
+    Icons.panel(self, Rect2(pos + Vector2(30, -6), Vector2(120 * clampf(k, 0.0, 1.0), 12)), col.lightened(0.3) if blink else col, 6)
+    if icon == "heart":
+        Icons.draw(self, "heart", pos + Vector2(10, 0), 26, Color(1.0, 0.35, 0.35), Color.BLACK)
+    else:
+        # куриная ножка
+        draw_circle(pos + Vector2(13, -3), 8.0, Color.BLACK)
+        draw_line(pos + Vector2(10, 1), pos + Vector2(3, 9), Color.BLACK, 6.0, true)
+        draw_circle(pos + Vector2(13, -3), 6.0, Color(1.0, 0.65, 0.25))
+        draw_line(pos + Vector2(10, 1), pos + Vector2(3, 9), Color(0.95, 0.92, 0.85), 3.0, true)
+
+
 func set_nick(nick: String) -> void:
     if nick != _nick:
         _nick = nick
@@ -94,6 +120,8 @@ func _draw() -> void:
     Icons.panel(self, Rect2(bx, y - 23, nw + 78, 46), Color(0.07, 0.07, 0.08, 0.92), 14, 2, Color(0.25, 0.25, 0.27))
     Icons.draw(self, "crown", Vector2(bx + 30, y + 1), 30, Icons.GOLD)
     draw_string(font, Vector2(bx + 56, y + 9), nick, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE)
+    _vital_bar(Vector2(24, y + 36), _health / 100.0, Color(0.85, 0.15, 0.15), "heart")
+    _vital_bar(Vector2(184, y + 36), _hunger / 100.0, Color(0.95, 0.6, 0.1), "food")
 
 
 static func _fmt(v: int) -> String:

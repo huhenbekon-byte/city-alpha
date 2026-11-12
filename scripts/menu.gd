@@ -12,7 +12,7 @@ const QUALITY_NAMES := ["Низкое", "Среднее", "Высокое"]
 const VIEW_NAMES := ["Близко", "Средне", "Далеко"]
 const VOLUME_STEPS := [0.0, 0.25, 0.5, 0.75, 1.0]
 
-var settings := {"quality": 1, "shadows": true, "view": 1, "fps": true, "volume": 3}
+var settings := {"quality": 1, "shadows": true, "view": 1, "fps": true, "volume": 3, "music": 2}
 var started := false
 
 var _bg_image: TextureRect
@@ -27,6 +27,7 @@ var _shadows_btn: Button
 var _view_btn: Button
 var _fps_btn: Button
 var _volume_btn: Button
+var _music_btn: Button
 
 
 func _ready() -> void:
@@ -78,6 +79,7 @@ func _ready() -> void:
     _view_btn = _button(_settings_box, "", _cycle.bind("view"))
     _fps_btn = _button(_settings_box, "", _cycle.bind("fps"))
     _volume_btn = _button(_settings_box, "", _cycle.bind("volume"))
+    _music_btn = _button(_settings_box, "", _cycle.bind("music"))
     _button(_settings_box, "Назад", _show_main)
     _refresh()
 
@@ -136,8 +138,8 @@ func _cycle(key: String) -> void:
             settings["quality"] = (int(settings["quality"]) + 1) % 3
         "view":
             settings["view"] = (int(settings["view"]) + 1) % 3
-        "volume":
-            settings["volume"] = (int(settings["volume"]) + 1) % VOLUME_STEPS.size()
+        "volume", "music":
+            settings[key] = (int(settings[key]) + 1) % VOLUME_STEPS.size()
         "shadows", "fps":
             settings[key] = not bool(settings[key])
     _refresh()
@@ -152,6 +154,11 @@ func _refresh() -> void:
     _fps_btn.text = "Показывать FPS: %s" % ("да" if settings["fps"] else "нет")
     var vol: float = VOLUME_STEPS[int(settings["volume"])]
     _volume_btn.text = "Звук: %d%%" % int(vol * 100.0)
+    _music_btn.text = "Музыка и радио: %d%%" % int(music_volume() * 100.0)
+
+
+func music_volume() -> float:
+    return VOLUME_STEPS[clampi(int(settings.get("music", 2)), 0, VOLUME_STEPS.size() - 1)]
 
 
 func volume() -> float:

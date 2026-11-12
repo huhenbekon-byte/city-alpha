@@ -29,6 +29,11 @@ func _ready() -> void:
     _sounds["error"] = _make_tone([300.0, 220.0], 0.1, 0.4)
     _sounds["bird"] = _make_bird()
     _sounds["hit"] = _make_hit()
+    # Звуки из файлов (sounds/*.wav): еда, дверь, лечение, новый уровень, касса, сирена...
+    for n: String in ["eat", "door", "heal", "levelup", "cash", "siren", "heartbeat", "faint"]:
+        var path := "res://sounds/%s.wav" % n
+        if ResourceLoader.exists(path):
+            _sounds[n] = load(path)
     for i in 6:
         var p := AudioStreamPlayer.new()
         add_child(p)
@@ -73,7 +78,14 @@ func _process(delta: float) -> void:
             play("bird", _rng.randf_range(-20.0, -12.0), _rng.randf_range(0.85, 1.25))
 
 
+## Звук по имени (для своих плееров, например сирены в машине). null — нет такого.
+func get_sound(sound: String) -> AudioStream:
+    return _sounds.get(sound, null)
+
+
 func play(sound: String, volume_db := 0.0, pitch := 1.0) -> void:
+    if not _sounds.has(sound):
+        return
     var p := _players[_next]
     _next = (_next + 1) % _players.size()
     p.stream = _sounds[sound]
@@ -83,6 +95,8 @@ func play(sound: String, volume_db := 0.0, pitch := 1.0) -> void:
 
 
 func play_at(sound: String, pos: Vector3, volume_db := 0.0, pitch := 1.0) -> void:
+    if not _sounds.has(sound):
+        return
     var p := _players3d[_next3d]
     _next3d = (_next3d + 1) % _players3d.size()
     p.stream = _sounds[sound]
