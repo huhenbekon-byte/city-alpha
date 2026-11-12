@@ -26,6 +26,7 @@ var city = null
 var kind := ""
 var carrying := ""     # "" / "box" / "log" — что игрок несёт в руках
 var target := Vector3.ZERO
+var exam_vehicle := "school"   # на чём сдаём: "school" (B), "school_moto" (A), "school_truck" (C)
 
 var active: bool:
     get:
@@ -72,7 +73,7 @@ func start(job_kind: String) -> void:
             _route = EXAM_ROUTE.duplicate()
             _time_left = 240.0
             _penalties = 0
-            vehicle_needed.emit("school", Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(-18, 0.7, 30)))
+            vehicle_needed.emit(exam_vehicle, Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(-18, 0.7, 30)))
             message.emit("Экзамен! Проедь по меткам, не быстрее %d км/ч" % int(EXAM_SPEED_LIMIT))
             _show_route_point()
 

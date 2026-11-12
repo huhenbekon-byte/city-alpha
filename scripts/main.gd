@@ -19,8 +19,10 @@ const DialogScript := preload("res://scripts/dialog.gd")
 const WorkScript := preload("res://scripts/work.gd")
 const FactionData := preload("res://scripts/faction_data.gd")
 const FactionMenuScript := preload("res://scripts/faction_menu.gd")
+const DutyScript := preload("res://scripts/duty.gd")
+const CarScript := preload("res://scripts/car.gd")
 
-const VERSION := "v0.15"
+const VERSION := "v0.19"
 const SAVE_PATH := "user://save.cfg"
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
@@ -30,7 +32,31 @@ const CAR_MODELS := [
     {"name": "Комфорт", "price": 15000, "color": Color(0.15, 0.22, 0.45), "speed": 125.0, "force": 5000.0},
     {"name": "Спорт", "price": 28000, "color": Color(0.45, 0.06, 0.10), "speed": 155.0, "force": 6500.0},
     {"name": "Люкс", "price": 45000, "color": Color(0.10, 0.10, 0.11), "speed": 175.0, "force": 7400.0},
+    {"name": "Мотоцикл", "price": 12000, "color": Color(0.75, 0.10, 0.10), "speed": 150.0, "force": 1500.0, "kind": "moto"},
 ]
+## Тюнинг на СТО
+const PAINTS := [["Белый", Color(0.92, 0.92, 0.90)], ["Чёрный", Color(0.06, 0.06, 0.07)], ["Красный", Color(0.65, 0.06, 0.08)],
+        ["Синий", Color(0.10, 0.20, 0.55)], ["Зелёный", Color(0.10, 0.40, 0.20)], ["Серебро", Color(0.65, 0.66, 0.68)],
+        ["Жёлтый", Color(0.95, 0.70, 0.10)], ["Вишня", Color(0.35, 0.03, 0.08)]]
+const RIMS := [["Хром", Color(0.85, 0.85, 0.88)], ["Чёрные", Color(0.05, 0.05, 0.06)], ["Золото", Color(0.85, 0.65, 0.2)],
+        ["Красные", Color(0.75, 0.08, 0.08)]]
+const PAINT_PRICE := 1500
+const RIM_PRICE := 2000
+const TINT_PRICE := 3000
+const PLATE_PRICE := 2500
+const PLATE_LETTERS := "АВЕКМНОРСТУХ"
+## Задания новичка: [id, что сделать, награда].
+const QUESTS := [
+    ["passport", "Получи паспорт в мэрии (паспортный стол)", 1000],
+    ["eat", "Купи еду в ларьке и съешь её из сумки", 300],
+    ["earn", "Заработай первые 2 000 ₽ (телефон → Работа)", 1000],
+    ["license", "Сдай на права категории B в автошколе", 2000],
+    ["car", "Купи машину или мотоцикл на Общем рынке", 3000],
+    ["faction", "Вступи во фракцию или ОПГ", 2000],
+    ["home", "Купи жильё (Навигатор → Дом)", 5000],
+    ["biz", "Получи лицензию на бизнес в мэрии", 3000],
+]
+const WEATHER_NAMES := {"clear": "Ясно", "cloudy": "Пасмурно", "rain": "Дождь", "snow": "Снег"}
 const ENTER_DISTANCE := 3.2
 const LAMP_LIGHTS := 6   # сколько фонарей рядом с игроком дают настоящий свет ночью
 const PLAYER_SPAWN := Vector3(0, 0.4, 14)
@@ -40,6 +66,10 @@ const DPS_FINE := 1500
 const PAYDAY_MINUTES := 180.0   # получка во фракции — раз в 3 игровых часа
 const HUNGER_PER_MINUTE := 0.12  # сытость тратится: 100 -> 0 примерно за 14 игровых часов (14 мин)
 const TREAT_PRICE := 300         # лечение в больнице
+const BAG_SIZE := 20             # сколько вещей влезает в сумку
+const LICENSE_PRICE := 5000      # лицензия на бизнес (мэрия)
+const MAX_BIZ := 3
+const TAXI_BASE := 100
 ## Еда и лекарства в ларьках: [название, цена, +сытость, +здоровье].
 const FOOD := {
     "ШАУРМА": [["Шаурма", 250, 45, 0], ["Шаурма двойная", 380, 70, 0], ["Чай", 50, 5, 2]],
@@ -48,6 +78,7 @@ const FOOD := {
     "КВАС": [["Квас", 70, 8, 2], ["Пирожок", 80, 20, 0]],
     "УНИВЕРСАМ": [["Батон", 50, 15, 0], ["Колбаса", 250, 40, 0], ["Комплексный обед", 450, 80, 5]],
     "АПТЕКА": [["Аптечка", 400, 0, 40], ["Бинт", 150, 0, 15], ["Витамины", 200, 5, 10]],
+    "АЗС": [["Хот-дог", 150, 30, 0], ["Энергетик", 120, 5, 5], ["Канистра 10 л", 600, 0, 0]],
 }
 const CANISTER_PRICE := 600
 const PHONE_PRICE := 1000
@@ -120,6 +151,37 @@ var _last_kmh := 0.0
 var _last_vy := 0.0
 var _beat_t := 0.0
 var _home_map_point = null
+var wanted := 0              # розыск 0..5 звёзд
+var jail_left := 0.0         # сколько секунд ещё сидеть в КПЗ
+var inventory := {}          # сумка: название -> количество
+var sms: Array = []          # [от кого, текст]
+var sms_unread := 0
+var has_biz_license := false
+var biz_owned := {}          # номер бизнеса (строкой) -> выручка в кассе
+var turf := {}               # территории ОПГ: "i,j" -> id банды ("" — ничья)
+var _duty: DutyScript
+var _biz: Array = []         # все бизнесы города: {title, name, pos, price, income}
+var _biz_acc := 0.0
+var _wanted_t := 0.0
+var _arrest_cd := 30.0
+var _capt := {}              # идёт захват: {"key", "left", "warned"}
+var _capt_cd := 0.0
+var _ai_turf_t := 0.0
+var _turf_labels := {}
+var licenses := {"A": false, "C": false}   # права кроме B (B — has_license)
+var quest_i := 0             # номер текущего задания новичка
+var earned_total := 0        # сколько всего заработано (для задания)
+var _ate_once := false
+var _quest_t := 0.0
+var _exam_cat := "B"
+var weather := "clear"
+var _weather_t := 240.0
+var _wet := 0.0
+var _snow := 0.0
+var _rain_fx: CPUParticles3D
+var _snow_fx: CPUParticles3D
+var _rain_snd: AudioStreamPlayer
+var _thunder_t := 30.0
 var faction_news: Array = []  # объявления организации: [текст, автор]
 var _fmenu: FactionMenuScript
 
@@ -168,7 +230,42 @@ var _light_timer := 0.0
 var _save_timer := 0.0
 
 
+## Сначала показываем экран загрузки, потом строим город (это занимает пару секунд).
 func _ready() -> void:
+    set_process(false)
+    var load_layer := CanvasLayer.new()
+    load_layer.layer = 30
+    add_child(load_layer)
+    var bg := ColorRect.new()
+    bg.color = Color(0.02, 0.02, 0.03)
+    load_layer.add_child(bg)
+    bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    if ResourceLoader.exists("res://textures/loading.jpg"):
+        var pic := TextureRect.new()
+        pic.texture = load("res://textures/loading.jpg")
+        pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+        load_layer.add_child(pic)
+        pic.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    var lbl := Label.new()
+    lbl.text = "Загрузка города..."
+    var ls := LabelSettings.new()
+    ls.font_size = 34
+    ls.outline_size = 10
+    ls.outline_color = Color(0, 0, 0, 0.8)
+    lbl.label_settings = ls
+    load_layer.add_child(lbl)
+    lbl.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+    lbl.position.y -= 90.0
+    lbl.position.x -= 150.0
+    await get_tree().process_frame
+    await get_tree().process_frame
+    _setup()
+    load_layer.queue_free()
+    set_process(true)
+
+
+func _setup() -> void:
     _load_game()
     _setup_input()
     _build_environment()
@@ -186,6 +283,12 @@ func _ready() -> void:
     _work.message.connect(_on_job_message)
     _work.vehicle_needed.connect(_on_work_vehicle_needed)
     _work.vehicle_done.connect(_on_work_vehicle_done)
+    _duty = DutyScript.new()
+    _duty.city = _city
+    _duty.paid.connect(_on_duty_paid)
+    _duty.message.connect(_on_duty_message)
+    _duty.crime.connect(func(n: int) -> void: _add_wanted(n, "засветился с грузом"))
+    add_child(_duty)
     _work.exam_finished.connect(_on_exam_finished)
     add_child(_work)
     _build_ui()
@@ -225,6 +328,15 @@ func _process(delta: float) -> void:
         if _payday_acc >= PAYDAY_MINUTES:
             _payday_acc = 0.0
             _faction_payday()
+    _duty.update(focus, _driving != null, delta)
+    _update_law(delta, focus)
+    _update_turf(delta, focus)
+    _update_business(delta)
+    _update_weather(delta, focus)
+    _quest_t -= delta
+    if _quest_t <= 0.0:
+        _quest_t = 1.0
+        _check_quest()
     _job.update(focus, _driving != null, speed, delta)
     var in_work_vehicle: bool = _driving != null and _driving == _work_vehicle
     _work.update(focus, in_work_vehicle, speed, delta)
@@ -243,7 +355,9 @@ func _process(delta: float) -> void:
     _touch.mode = TouchControlsScript.Mode.CAR if _driving else TouchControlsScript.Mode.FOOT
     _point = _find_point(focus, absf(speed))
     var work_action := _work.action_text(focus, _driving != null)
-    var near = null if _driving else _nearest_car()
+    if work_action == "":
+        work_action = _duty.action_text(focus, _driving != null)
+    var near = null if _driving or jail_left > 0.0 else _nearest_car()
     if work_action != "":
         _touch.interact_text = work_action
     elif _point != null:
@@ -258,6 +372,9 @@ func _process(delta: float) -> void:
     # Интерфейс
     _hud.set_money(cash, bank)
     _hud.set_vitals(health, hunger)
+    _hud.set_wanted(wanted)
+    _hud.set_weather(String({"clear": "sun", "cloudy": "cloud", "rain": "rain", "snow": "snow"}.get(weather, "sun")))
+    _hud.set_sms_badge(sms_unread)
     _hud.set_nick(passport_name)
     if _hud.profile.is_open():
         _hud.profile.set_data(_profile_data())
@@ -265,7 +382,7 @@ func _process(delta: float) -> void:
         _fmenu.set_data(_fmenu_data())
     var hh := int(minutes) / 60
     var mm := int(minutes) % 60
-    var clock := "%02d:%02d   День %d" % [hh, mm, day]
+    var clock := "%02d:%02d   День %d   %s" % [hh, mm, day, WEATHER_NAMES.get(weather, "")]
     if _gps_target != null:
         var gd := Vector2(focus.x - _gps_target.x, focus.z - _gps_target.z).length()
         clock += "   ·   GPS: %s — %s" % [_gps_name, _dist_text(gd)]
@@ -277,6 +394,14 @@ func _process(delta: float) -> void:
     _hud.set_clock(clock)
     var job_text: String = _work.status_text(focus, in_work_vehicle) if _work.active \
             else _job.status_text(focus, _driving != null)
+    if _duty.active and not _work.active and not _job.active:
+        job_text = _duty.status_text(focus)
+    if not _capt.is_empty():
+        job_text = "ЗАХВАТ КВАРТАЛА: %d с — не уходи с территории" % int(_capt["left"])
+    if jail_left > 0.0:
+        job_text = "КПЗ: осталось %d с" % int(ceil(jail_left))
+    if job_text == "" and quest_i < QUESTS.size():
+        job_text = "Задание: %s · награда %s" % [QUESTS[quest_i][1], HudScript.format_money(int(QUESTS[quest_i][2]))]
     _hud.set_job(job_text)
     if _hud.phone_open:
         _hud.update_phone(_job.active or _work.active, _phone_text(job_text))
@@ -292,6 +417,10 @@ func _process(delta: float) -> void:
         mini.has_target = _work.has_target()
         mini.target = _work.target
         mini.target_color = _work.target_color()
+    elif _duty.active and not _job.active:
+        mini.has_target = _duty.has_target()
+        mini.target = _duty.target
+        mini.target_color = _duty.target_color()
     else:
         mini.has_target = _job.has_target()
         mini.target = _job.target
@@ -332,6 +461,8 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+    if _player == null:
+        return
     if event.is_action_pressed("interact"):
         _on_interact()
     elif event.is_action_pressed("phone"):
@@ -345,6 +476,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _notification(what: int) -> void:
+    if _hud == null:
+        return
     if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
         _save_game()
     elif what == NOTIFICATION_WM_GO_BACK_REQUEST:  # кнопка «Назад» на Android
@@ -420,6 +553,27 @@ func _on_reset() -> void:
     _interior = ""
     health = 100.0
     hunger = 100.0
+    _duty.stop()
+    wanted = 0
+    jail_left = 0.0
+    inventory = {}
+    sms = []
+    sms_unread = 0
+    has_biz_license = false
+    biz_owned = {}
+    turf = {}
+    licenses = {"A": false, "C": false}
+    quest_i = 0
+    earned_total = 0
+    _ate_once = false
+    for car in _cars:
+        car.tint = false
+        car.rim_color = Color(0, 0, 0, 0)
+        car.plate_text = ""
+        car.repair()
+        car.apply_tuning()
+    _capt = {}
+    _init_turf()
     _set_home(-1)
     _home_inside = -1
     _clear_gps()
@@ -494,7 +648,7 @@ func _on_job_stopped() -> void:
 
 func _phone_text(job_text: String) -> String:
     var docs := "Паспорт: %s\nПрава: %s" % [passport_name if passport_name != "" else "нет (паспортный стол в мэрии)",
-            "есть" if has_license else "нет (автошкола на площади)"]
+            _licenses_text() if has_license or bool(licenses.get("A", false)) else "нет (автошкола на площади)"]
     if job_text != "":
         return job_text + "\n\n" + docs
     return docs + "\n\nКурьер и таксист — здесь. Автобус, грузчик, дальнобойщик, лесоруб — на месте (жёлтые точки на карте)."
@@ -516,6 +670,11 @@ func _on_summon_car() -> void:
             best = car
     if best == null:
         _hud.show_toast("У тебя нет машины — купи на Общем рынке на площади")
+        return
+    if best.condition <= 0.0:
+        _hud.close_phone()
+        _open_dialog("Эвакуатор", "%s сломана. Эвакуатор отвезёт её на ближайшую СТО за 1 000 ₽." % best.car_name,
+                [["Вызвать эвакуатор", _tow_to_sto.bind(best)], ["Закрыть", _dialog.close]])
         return
     var spot = _free_spot_near(_player.global_position, _player.get_camera_yaw())
     if spot == null:
@@ -630,6 +789,7 @@ func _on_profile_closed() -> void:
 
 
 func _on_job_paid(amount: int, text: String) -> void:
+    earned_total += amount
     bank += amount   # зарплата приходит на карту
     _bank_log(amount, "Зарплата: " + _job_name())
     Sfx.play("coin")
@@ -673,6 +833,10 @@ func _on_interact() -> void:
     if _work.action_text(_focus(), _driving != null) != "":
         _work.do_action()
         return
+    if _duty.action_text(_focus(), _driving != null) != "":
+        var truck: bool = _driving != null and _driving == _faction_car and faction == "fire" and _driving.kind == "truck"
+        _duty.do_action(truck)
+        return
     if _point != null:
         var cb: Callable = _point["cb"]
         cb.call()
@@ -694,6 +858,8 @@ func _toggle_vehicle() -> void:
         if car == null:
             return
         _player.set_active(false)
+        if car.kind == "moto":
+            car.set_rider_color(Clothes.colors(look)["jacket"])
         car.set_driven(true)
         _driving = car
 
@@ -724,7 +890,64 @@ func _on_look(relative: Vector2) -> void:
 
 
 ## Город оживает: машины-боты на дорогах и прохожие на тротуарах.
+func _spawn_weather_fx() -> void:
+    var q := QuadMesh.new()
+    q.size = Vector2(0.08, 0.9)
+    var rm := StandardMaterial3D.new()
+    rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    rm.albedo_color = Color(0.8, 0.86, 1.0, 0.6)
+    if ResourceLoader.exists("res://textures/fx/raindrop.png"):
+        rm.albedo_texture = load("res://textures/fx/raindrop.png")
+    rm.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
+    rm.billboard_keep_scale = true
+    q.material = rm
+    _rain_fx = CPUParticles3D.new()
+    _rain_fx.amount = 500
+    _rain_fx.lifetime = 1.0
+    _rain_fx.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+    _rain_fx.emission_box_extents = Vector3(28, 1, 28)
+    _rain_fx.direction = Vector3.DOWN
+    _rain_fx.spread = 4.0
+    _rain_fx.initial_velocity_min = 20.0
+    _rain_fx.initial_velocity_max = 24.0
+    _rain_fx.gravity = Vector3(0, -10, 0)
+    _rain_fx.mesh = q
+    _rain_fx.local_coords = false
+    _rain_fx.emitting = false
+    add_child(_rain_fx)
+    var sq := QuadMesh.new()
+    sq.size = Vector2(0.14, 0.14)
+    var sm := StandardMaterial3D.new()
+    sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    sm.albedo_color = Color(1, 1, 1, 0.95)
+    if ResourceLoader.exists("res://textures/fx/snowflake.png"):
+        sm.albedo_texture = load("res://textures/fx/snowflake.png")
+    sm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+    sq.material = sm
+    _snow_fx = CPUParticles3D.new()
+    _snow_fx.amount = 450
+    _snow_fx.lifetime = 7.0
+    _snow_fx.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+    _snow_fx.emission_box_extents = Vector3(28, 1, 28)
+    _snow_fx.direction = Vector3.DOWN
+    _snow_fx.spread = 30.0
+    _snow_fx.initial_velocity_min = 1.2
+    _snow_fx.initial_velocity_max = 2.0
+    _snow_fx.gravity = Vector3(0.3, -0.6, 0.2)
+    _snow_fx.mesh = sq
+    _snow_fx.local_coords = false
+    _snow_fx.emitting = false
+    add_child(_snow_fx)
+    _rain_snd = AudioStreamPlayer.new()
+    _rain_snd.stream = Sfx.get_sound("rain")
+    _rain_snd.volume_db = -80.0
+    add_child(_rain_snd)
+
+
 func _spawn_life() -> void:
+    _spawn_weather_fx()
     _traffic = TrafficScript.new()
     _traffic.city = _city
     add_child(_traffic)
@@ -737,6 +960,7 @@ func _spawn_life() -> void:
     _peds.player = _player
     _peds.cars = _cars.duplicate()  # копия: туда добавляются и рабочие машины
     _peds.setup()
+    _peds.knocked.connect(func(_p: Vector3) -> void: _add_wanted(1, "сбил пешехода"))
 
     for i in LAMP_LIGHTS:
         var l := OmniLight3D.new()
@@ -778,7 +1002,7 @@ func _closer_to_focus(a: Vector3, b: Vector3) -> bool:
 
 ## Стоянка у рынка: сюда доставляют купленные машины.
 func _car_spawn(i: int) -> Transform3D:
-    var xs := [-16.0, -10.0, 10.0, 16.0]
+    var xs := [-16.0, -10.0, 10.0, 16.0, -4.0]
     return Transform3D(Basis(), Vector3(xs[i % xs.size()], 0.6, 20.0))
 
 
@@ -789,6 +1013,7 @@ func _spawn_cars() -> void:
         var m: Dictionary = CAR_MODELS[i]
         var car = CarScene.instantiate()
         car.paint = m["color"]
+        car.kind = String(m.get("kind", "car"))
         car.car_name = m["name"]
         car.price = m["price"]
         car.max_speed_kmh = m["speed"]
@@ -798,6 +1023,14 @@ func _spawn_cars() -> void:
         if i < fuels.size():
             car.fuel = float(fuels[i])
         car.transform = _car_spawn(i)
+        var tun: Array = _loaded.get("tuning", [])
+        if i < tun.size() and tun[i] is Array and (tun[i] as Array).size() >= 5:
+            var t: Array = tun[i]
+            car.paint = Color.html(String(t[0]))
+            car.tint = bool(t[1])
+            car.rim_color = Color.html(String(t[2])) if String(t[2]) != "" else Color(0, 0, 0, 0)
+            car.plate_text = String(t[3])
+            car.condition = float(t[4])
         if i < saved.size():
             var e: Array = saved[i]
             var pos: Vector3 = e[0]
@@ -829,6 +1062,9 @@ func _spawn_player() -> void:
 
 ## Вернуть то, что было при выходе: сидел ли в машине, шла ли смена курьера.
 func _restore_state() -> void:
+    if jail_left > 0.0 and _city.kpz_cell != Vector3.ZERO:   # досиживаем срок
+        _interior = "police"
+        _player.global_position = _city.kpz_cell
     var di := int(_loaded.get("driving", -1))
     if di >= 0 and di < _cars.size():
         _player.set_active(false)
@@ -872,6 +1108,22 @@ func _save_game() -> void:
     cfg.set_value("player", "hunger", hunger)
     cfg.set_value("player", "home", home)
     cfg.set_value("player", "fridge", _fridge_at)
+    cfg.set_value("player", "wanted", wanted)
+    cfg.set_value("player", "jail", jail_left)
+    cfg.set_value("player", "inventory", inventory)
+    cfg.set_value("player", "sms", sms)
+    cfg.set_value("player", "biz_license", has_biz_license)
+    cfg.set_value("world", "biz", biz_owned)
+    cfg.set_value("world", "turf", turf)
+    var tun := []
+    for car in _cars:
+        tun.append([car.paint.to_html(), car.tint, car.rim_color.to_html() if car.rim_color.a > 0.0 else "", car.plate_text, car.condition])
+    cfg.set_value("world", "tuning", tun)
+    cfg.set_value("player", "licenses", licenses)
+    cfg.set_value("player", "quest", quest_i)
+    cfg.set_value("player", "earned", earned_total)
+    cfg.set_value("player", "ate", _ate_once)
+    cfg.set_value("world", "weather", weather)
     cfg.set_value("faction", "id", faction)
     cfg.set_value("faction", "rank", faction_rank)
     cfg.set_value("faction", "exp", faction_exp)
@@ -923,6 +1175,29 @@ func _load_game() -> void:
     hunger = clampf(float(cfg.get_value("player", "hunger", 100.0)), 0.0, 100.0)
     _loaded["home"] = int(cfg.get_value("player", "home", -1))
     _fridge_at = float(cfg.get_value("player", "fridge", -9999.0))
+    wanted = clampi(int(cfg.get_value("player", "wanted", 0)), 0, 5)
+    jail_left = float(cfg.get_value("player", "jail", 0.0))
+    var inv = cfg.get_value("player", "inventory", {})
+    if inv is Dictionary:
+        inventory = inv
+    var saved_sms = cfg.get_value("player", "sms", [])
+    if saved_sms is Array:
+        sms = saved_sms
+    has_biz_license = bool(cfg.get_value("player", "biz_license", false))
+    var bo = cfg.get_value("world", "biz", {})
+    if bo is Dictionary:
+        biz_owned = bo
+    _loaded["tuning"] = cfg.get_value("world", "tuning", [])
+    var lic = cfg.get_value("player", "licenses", {})
+    if lic is Dictionary:
+        licenses.merge(lic, true)
+    quest_i = int(cfg.get_value("player", "quest", 0))
+    earned_total = int(cfg.get_value("player", "earned", 0))
+    _ate_once = bool(cfg.get_value("player", "ate", false))
+    weather = String(cfg.get_value("world", "weather", "clear"))
+    var tf = cfg.get_value("world", "turf", {})
+    if tf is Dictionary:
+        turf = tf
     faction = String(cfg.get_value("faction", "id", ""))
     faction_rank = int(cfg.get_value("faction", "rank", 0))
     faction_exp = int(cfg.get_value("faction", "exp", 0))
@@ -1030,7 +1305,7 @@ func _update_daylight() -> void:
     if elev > 0.0:
         _sun.rotation_degrees = Vector3(-(6.0 + 56.0 * elev), -35.0 + (h - 12.0) * 10.0, 0.0)
         _sun.light_color = Color(1.0, 0.70, 0.50).lerp(Color(1.0, 0.95, 0.86), clampf(elev * 2.5, 0.0, 1.0))
-        _sun.light_energy = lerpf(0.2, 0.95, clampf(elev * 2.0, 0.0, 1.0))
+        _sun.light_energy = lerpf(0.2, 0.95, clampf(elev * 2.0, 0.0, 1.0)) * _weather_light()
         _sun.shadow_enabled = _shadows_on
     else:
         # Ночью «солнце» становится слабой луной без теней.
@@ -1051,12 +1326,17 @@ func _update_daylight() -> void:
         _sky_sh.set_shader_parameter("cloud_light", cl)
         _sky_sh.set_shader_parameter("cloud_dark", cl.darkened(0.35))
         _sky_sh.set_shader_parameter("cloud_alpha", lerpf(0.55, 1.0, day_k))
+        if weather != "clear":   # пасмурно: облака серые и плотные
+            var gray := Color(0.62, 0.64, 0.68).lerp(Color(0.2, 0.22, 0.28), 1.0 - day_k)
+            _sky_sh.set_shader_parameter("cloud_light", cl.lerp(gray, 0.8))
+            _sky_sh.set_shader_parameter("cloud_dark", gray.darkened(0.3))
+            _sky_sh.set_shader_parameter("sun_strength", clampf(elev * 3.0, 0.0, 1.0) * 0.2)
         _sky_sh.set_shader_parameter("stars", clampf((1.0 - day_k) * 1.3 - 0.3, 0.0, 1.0))
         _sky_sh.set_shader_parameter("sun_dir", _sun.global_transform.basis.z)
         _sky_sh.set_shader_parameter("sun_color", _sun.light_color)
         _sky_sh.set_shader_parameter("sun_strength", clampf(elev * 3.0, 0.0, 1.0))
         _sky_sh.set_shader_parameter("drift", minutes / 1440.0 * 0.5)  # облака медленно плывут
-    _env.ambient_light_color = NIGHT_AMBIENT.lerp(DAY_AMBIENT, day_k)
+    _env.ambient_light_color = NIGHT_AMBIENT.lerp(DAY_AMBIENT, day_k) * (0.85 if weather == "rain" else 1.0)
     _env.tonemap_exposure = lerpf(0.62, 0.8, day_k)   # ночью картинка темнее
     _night_k = 1.0 - day_k
     if _city:
@@ -1089,6 +1369,8 @@ func _build_ui() -> void:
     _hud.job_selected.connect(_on_job_selected)
     _hud.job_stopped.connect(_on_job_stopped)
     _hud.summon_car.connect(_on_summon_car)
+    _hud.app_pressed.connect(_on_app)
+    _hud.profile.inventory_requested.connect(_open_inventory)
     _hud.phone_closed.connect(_on_phone_closed)
     _hud.menu_requested.connect(_open_menu)
     _hud.profile.opened.connect(_on_profile_opened)
@@ -1112,6 +1394,7 @@ func _build_ui() -> void:
     _fmenu.leave_requested.connect(_confirm_leave)
     _fmenu.spawn_requested.connect(_on_fmenu_spawn)
     _fmenu.announce_posted.connect(_on_fmenu_news)
+    _fmenu.duty_toggled.connect(_toggle_duty)
 
     _dialog = DialogScript.new()
     layer.add_child(_dialog)
@@ -1175,11 +1458,19 @@ func _setup_points() -> void:
     _add_point(_city.driving_school, 3.5, "АВТОШКОЛА", _open_driving_school, false, Color(1.0, 0.6, 0.1))
     for p: Vector3 in _city.atms:
         _add_point(p, 2.2, "БАНКОМАТ", _open_atm, false, Color(0.2, 0.6, 1.0))
-    for pk: Dictionary in _city.pickups:
-        var kname := String(pk["name"])
-        if FOOD.has(kname):
-            _add_point(pk["pos"], 2.4, "АПТЕКА" if kname == "АПТЕКА" else "ЕДА", _open_food.bind(kname), false,
-                    Color(1.0, 0.5, 0.2), false)
+    _build_business()
+    for i in _biz.size():
+        var bz: Dictionary = _biz[i]
+        var kname := String(bz["name"])
+        var label := "КИОСК"
+        if kname == "АПТЕКА":
+            label = "АПТЕКА"
+        elif kname == "АЗС":
+            label = "МАГАЗИН"
+        elif FOOD.has(kname):
+            label = "ЕДА"
+        _add_point(bz["pos"], 2.4, label, _open_kiosk.bind(i), false, Color(1.0, 0.5, 0.2), false)
+    _init_turf()
     if _city.interiors.has("hospital"):
         _add_point(_city.interiors["hospital"]["desk"], 2.0, "ЛЕЧЕНИЕ", _open_treatment, false, Color.WHITE, false)
     for i in _city.homes.size():
@@ -1191,6 +1482,8 @@ func _setup_points() -> void:
         _add_point(hi["fridge"], 1.5, "ХОЛОДИЛЬНИК", _use_fridge, false, Color.WHITE, false)
         _add_point(hi["bed"], 1.6, "ОТДОХНУТЬ", _use_bed, false, Color.WHITE, false)
     _set_home(int(_loaded.get("home", -1)))
+    for p: Vector3 in _city.service_stations:
+        _add_point(p, 7.0, "СТО", _open_sto, true, Color(0.3, 0.5, 1.0))
     for p: Vector3 in _city.fuel_pumps:
         _add_point(p, 5.5, "ЗАПРАВИТЬ", _open_fuel, true, Color(0.9, 0.2, 0.2))
     _add_point(_city.bus_depot, 3.0, "АВТОБУС", _start_work.bind("bus"))
@@ -1201,7 +1494,7 @@ func _setup_points() -> void:
 
 ## Ближайшая доступная точка: пешком — «пешие», в своей машине на месте — «машинные».
 func _find_point(focus: Vector3, speed: float):
-    if _dialog.visible or _win.visible or _fmenu.visible:
+    if _dialog.visible or _win.visible or _fmenu.visible or jail_left > 0.0:
         return null
     var best = null
     var best_d := INF
@@ -1211,6 +1504,8 @@ func _find_point(focus: Vector3, speed: float):
             if _driving == null or not _driving.uses_fuel or speed > 3.0:
                 continue
         elif _driving != null:
+            continue
+        if pt.get("gang_only", false) and not FactionData.is_gang(faction):
             continue
         var pp: Vector3 = pt["pos"]
         var d := Vector2(focus.x - pp.x, focus.z - pp.z).length()
@@ -1246,8 +1541,12 @@ func _check_docs(need_license: bool) -> bool:
 
 func _open_city_hall() -> void:
     if passport_name != "":
-        _open_dialog("Мэрия", "Паспорт уже выдан.\n\nГражданин: %s" % passport_name,
-                [["Закрыть", _dialog.close]])
+        var buttons := []
+        if not has_biz_license:
+            buttons.append(["Лицензия на бизнес — %s" % HudScript.format_money(LICENSE_PRICE), _buy_license])
+        buttons.append(["Закрыть", _dialog.close])
+        _open_dialog("Мэрия", "Паспорт уже выдан.\nГражданин: %s\n\nЛицензия на бизнес: %s" % [passport_name,
+                "есть" if has_biz_license else "нет (нужна, чтобы купить ларёк, магазин или АЗС)"], buttons)
         return
     _open_dialog("Мэрия — паспорт",
             "Впиши имя и фамилию через подчёркивание, с больших букв.\nНапример: Иван_Петров",
@@ -1274,16 +1573,46 @@ func _issue_passport() -> void:
 # ---------------------------------------------------------------- автошкола
 
 func _open_driving_school() -> void:
-    if has_license:
-        _open_dialog("Автошкола", "Права уже есть. Удачи на дорогах!", [["Закрыть", _dialog.close]])
-        return
     if passport_name == "":
         _open_dialog("Автошкола", "Для записи нужен паспорт. Получи его в мэрии (синяя точка на карте).",
                 [["Закрыть", _dialog.close]])
         return
-    _open_dialog("Автошкола", ("Экзамен на права категории B:\n1) теория — 5 вопросов, нужно 4 верных;\n"
-            + "2) вождение — проехать по меткам вокруг площади не быстрее 70 км/ч.\n\nСтоимость: %d ₽") % EXAM_PRICE,
-            [["Оплатить и начать", _start_quiz], ["Закрыть", _dialog.close]])
+    var buttons := []
+    if not has_license:
+        buttons.append(["Категория B (легковые) — %s" % HudScript.format_money(EXAM_PRICE), _start_quiz])
+    if not bool(licenses.get("A", false)):
+        buttons.append(["Категория A (мотоциклы) — 1 500 ₽", _start_exam_cat.bind("A", 1500)])
+    if not bool(licenses.get("C", false)):
+        buttons.append(["Категория C (грузовики, автобусы) — 3 000 ₽", _start_exam_cat.bind("C", 3000)])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Автошкола", ("Твои права: %s\n\nB — теория (5 вопросов) и вождение.\nA и C — только вождение по меткам "
+            + "вокруг площади, не быстрее 70 км/ч. Для C нужны права B.") % _licenses_text(), buttons)
+
+
+func _licenses_text() -> String:
+    var l := []
+    if has_license:
+        l.append("B")
+    if bool(licenses.get("A", false)):
+        l.append("A")
+    if bool(licenses.get("C", false)):
+        l.append("C")
+    return ", ".join(l) if not l.is_empty() else "нет"
+
+
+func _start_exam_cat(cat: String, price: int) -> void:
+    if cat == "C" and not has_license:
+        Sfx.play("error")
+        _hud.show_toast("Сначала получи права категории B")
+        return
+    if not _pay(price, "Автошкола: категория " + cat):
+        return
+    _exam_cat = cat
+    _dialog.close()
+    _job.stop()
+    _work.stop()
+    _work.exam_vehicle = "school_moto" if cat == "A" else "school_truck"
+    _work.start("exam")
 
 
 func _start_quiz() -> void:
@@ -1326,12 +1655,22 @@ func _start_exam_drive() -> void:
     _dialog.close()
     _job.stop()
     _work.stop()
+    _exam_cat = "B"
+    _work.exam_vehicle = "school"
     _work.start("exam")
 
 
 func _on_exam_finished(passed: bool, text: String) -> void:
     if passed:
-        has_license = true
+        match _exam_cat:
+            "A":
+                licenses["A"] = true
+                text = "Экзамен сдан! Права категории A получены"
+            "C":
+                licenses["C"] = true
+                text = "Экзамен сдан! Права категории C получены"
+            _:
+                has_license = true
         _add_xp(50)
         Sfx.play("coin")
         _save_game()
@@ -1407,7 +1746,9 @@ func _refuel(liters: int) -> void:
 
 ## Ездишь без прав в своей машине — патруль может остановить и оштрафовать.
 func _check_dps(delta: float, speed: float) -> void:
-    if _driving == null or has_license or _driving == _work_vehicle or absf(speed) < 30.0:
+    if _driving == null or _driving == _work_vehicle or _driving == _faction_car or absf(speed) < 30.0:
+        return
+    if (_driving.kind == "moto" and bool(licenses.get("A", false))) or (_driving.kind != "moto" and has_license):
         return
     _dps_timer -= delta
     if _dps_timer > 0.0:
@@ -1432,6 +1773,10 @@ func _start_work(kind: String) -> void:
                 [["Закончить смену", _stop_work_from_dialog], ["Продолжить", _dialog.close]])
         return
     if not _check_docs(kind == "bus" or kind == "truck"):
+        return
+    if (kind == "bus" or kind == "truck") and not bool(licenses.get("C", false)):
+        Sfx.play("error")
+        _hud.show_toast("Нужны права категории C — экзамен в автошколе")
         return
     _job.stop()
     _work.stop()
@@ -1468,6 +1813,20 @@ func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
             v.kind = "truck"
             v.car_name = "Фура"
             v.paint = Color(0.15, 0.30, 0.65)
+            v.max_engine_force = 22000.0
+            v.max_speed_kmh = 90.0
+            v.brake_force = 180.0
+            v.max_steer = 0.5
+        "school_moto":
+            v.kind = "moto"
+            v.car_name = "Учебный мотоцикл"
+            v.paint = Color(0.95, 0.55, 0.1)
+            v.max_engine_force = 1500.0
+            v.max_speed_kmh = 110.0
+        "school_truck":
+            v.kind = "truck"
+            v.car_name = "Учебный грузовик"
+            v.paint = Color(0.95, 0.55, 0.1)
             v.max_engine_force = 22000.0
             v.max_speed_kmh = 90.0
             v.brake_force = 180.0
@@ -1550,8 +1909,10 @@ func _on_win_row(i: int) -> void:
 func _refresh_win(keep_selection: bool) -> void:
     var rows := []
     _win_payload = []
-    if _win_mode == "gps":
+    if _win_mode == "gps" or _win_mode == "taxi":
         _fill_gps_rows(rows)
+    elif _win_mode == "inv":
+        _fill_inv_rows(rows)
     elif _win_mode == "garage":
         _fill_garage_rows(rows)
     else:
@@ -1569,6 +1930,15 @@ func _selected_payload():
 
 func _update_win_buttons() -> void:
     var p = _selected_payload()
+    if _win_mode == "taxi":
+        if p == null:
+            _win.set_buttons("Закрыть", "Выбери, куда ехать", true, false)
+        else:
+            _win.set_buttons("Закрыть", "Поехать — %s" % HudScript.format_money(_taxi_price(p["pos"])), true, true)
+        return
+    if _win_mode == "inv":
+        _win.set_buttons("Выбросить" if p != null else "Закрыть", "Использовать", true, p != null)
+        return
     if _win_mode == "gps":
         if p == null and _gps_target != null:
             _win.set_buttons("Убрать метку", "Установить метку", true, false)
@@ -1608,7 +1978,12 @@ func _update_win_buttons() -> void:
 
 
 func _on_win_left() -> void:
-    if _win_mode == "market" or _win_mode == "garage":
+    if _win_mode == "inv" and _selected_payload() != null:
+        _take_item(String(_selected_payload()))
+        _hud.show_toast("Выброшено")
+        _refresh_win(false)
+        return
+    if _win_mode == "market" or _win_mode == "garage" or _win_mode == "taxi" or _win_mode == "inv":
         _win.close_window()
         return
     var p = _selected_payload()
@@ -1634,6 +2009,13 @@ func _on_win_right() -> void:
     if _win_mode == "garage":
         _win.close_window()
         _spawn_faction_car(p)
+        return
+    if _win_mode == "taxi":
+        _ride_taxi(p["pos"], String(p["name"]))
+        return
+    if _win_mode == "inv":
+        _use_item(String(p))
+        _refresh_win(false)
         return
     match String(p["type"]):
         "car":
@@ -1739,6 +2121,8 @@ func _nav_places() -> Array:
             out.append({"cat": "work", "icon": "people", "col": gold, "name": "Моя фракция: %s" % site["name"], "pos": site["door"]})
             out.append({"cat": "work", "icon": "car", "col": gold, "name": "Автопарк: %s" % site["name"], "pos": site["marker"]})
     out.append({"cat": "service", "icon": "wheel", "name": "Автошкола — права", "pos": c.driving_school})
+    for p: Vector3 in c.service_stations:
+        out.append({"cat": "service", "icon": "wrench", "name": "СТО — ремонт и тюнинг", "pos": p})
     out.append({"cat": "fun", "icon": "star", "name": "Центральная площадь", "pos": Vector3(0, 0, 0)})
     out.append({"cat": "fun", "icon": "star", "name": "Лес за городом", "pos": Vector3(-270, 0, -270)})
     for p: Vector3 in c.bus_stops:
@@ -1889,6 +2273,7 @@ func _set_faction(fid: String, rank: int) -> void:
     faction_exp = 0
     _payday_acc = 0.0
     faction_news = []
+    _refresh_turf()
     _hud.profile.set_faction_visible(fid != "")
 
 
@@ -1904,7 +2289,10 @@ func _org_text() -> String:
 
 
 func _salary() -> int:
-    return FactionData.salary(faction, faction_rank)
+    var base := FactionData.salary(faction, faction_rank)
+    if FactionData.is_gang(faction):
+        base += 150 * _turf_count(faction)   # каждый район приносит в общак
+    return base
 
 
 ## Сколько получек нужно до следующего ранга (0 — повышает только лидер).
@@ -1923,6 +2311,7 @@ func _faction_payday() -> void:
     Sfx.play("coin")
     var text := ("Доля из общака (%s): %s на карту" if FactionData.is_gang(faction) else "Получка во фракции «%s»: %s на карту") \
             % [_faction_name(), HudScript.format_money(pay)]
+    _sms_add(_faction_name(), text)
     var need := _need_exp()
     if need > 0 and faction_exp >= need:
         text += ". Можно повыситься — %s!" % ("у смотрящего" if FactionData.is_gang(faction) else "в отделе кадров")
@@ -2023,6 +2412,8 @@ func _confirm_leave() -> void:
 
 func _leave_faction() -> void:
     var old := _faction_name()
+    _duty.stop()
+    _hud.minimap.turf = []
     _fmenu.close_menu()
     _despawn_faction_car()
     _set_faction("", 0)
@@ -2065,6 +2456,10 @@ func _spawn_faction_car(v: Dictionary) -> void:
     if faction == "" or not _city.faction_sites.has(faction):
         return
     if faction_rank < int(v["rank"]):
+        return
+    if String(v["kind"]) != "car" and not bool(licenses.get("C", false)):
+        Sfx.play("error")
+        _hud.show_toast("Для автобуса и грузовика нужны права категории C (автошкола)")
         return
     _despawn_faction_car()
     var site: Dictionary = _city.faction_sites[faction]
@@ -2155,7 +2550,8 @@ func _fmenu_data() -> Dictionary:
             "pay_word": "Доля из общака" if gang else "Зарплата",
             "payday_left": int(ceil(PAYDAY_MINUTES - _payday_acc)), "online": 1, "members": 1,
             "ranks": ranks, "vehicles": f.get("vehicles", []), "at_garage": at_garage,
-            "nick": passport_name if passport_name != "" else "Без_Имени", "news": faction_news}
+            "nick": passport_name if passport_name != "" else "Без_Имени", "news": faction_news,
+            "on_duty": _duty.active}
 
 
 func _on_fmenu_closed() -> void:
@@ -2224,7 +2620,9 @@ func _update_vitals(delta: float, speed: float) -> void:
     if _driving and _last_kmh - kmh > 35.0 and _last_kmh > 45.0:
         var dmg := clampf((_last_kmh - kmh - 25.0) * 0.6, 5.0, 45.0)
         Sfx.play("hit")
-        _hurt(dmg, "Авария! −%d здоровья" % int(dmg))
+        if _driving.damage(dmg * 1.5):
+            _hud.show_toast("Машина сломалась! Нужна СТО")
+        _hurt(dmg, "Авария! −%d здоровья, машина %d%%" % [int(dmg), int(_driving.condition) if _driving else 0])
     _last_kmh = kmh if _driving else 0.0
     # падение с высоты
     if not _driving:
@@ -2282,44 +2680,14 @@ func _faint() -> void:
     _save_game()
 
 
-func _open_food(kname: String) -> void:
-    var items: Array = FOOD[kname]
-    var buttons := []
-    for it: Array in items:
-        var gain := ""
-        if int(it[2]) > 0:
-            gain += " +%d сытости" % int(it[2])
-        if int(it[3]) > 0:
-            gain += " +%d здоровья" % int(it[3])
-        buttons.append(["%s — %s (%s)" % [it[0], HudScript.format_money(int(it[1])), gain.strip_edges()], _buy_food.bind(kname, it)])
-    buttons.append(["Закрыть", _dialog.close])
-    _open_dialog(kname.capitalize(), "Здоровье: %d / 100\nСытость: %d / 100" % [int(health), int(hunger)], buttons)
-
-
-func _buy_food(kname: String, it: Array) -> void:
-    if int(it[2]) > 0 and hunger >= 99.0 and int(it[3]) == 0:
-        _hud.show_toast("Ты не голоден")
-        return
-    if int(it[3]) > 0 and int(it[2]) == 0 and health >= 100.0:
-        _hud.show_toast("Ты здоров")
-        return
-    if not _pay(int(it[1]), String(it[0])):
-        return
-    hunger = minf(100.0, hunger + float(it[2]))
-    health = minf(100.0, health + float(it[3]))
-    Sfx.play("heal" if int(it[3]) > int(it[2]) else "eat")
-    _hud.show_toast("%s: приятного аппетита!" % it[0] if int(it[2]) > 0 else "%s: здоровье %d" % [it[0], int(health)])
-    _open_food(kname)
-
-
 func _open_treatment() -> void:
-    var free := faction == "hospital"
-    var price := 0 if free else TREAT_PRICE
+    var no_charge := faction == "hospital"
+    var price := 0 if no_charge else TREAT_PRICE
     if health >= 100.0:
         _open_dialog("Регистратура", "Здоровье: 100 / 100. Лечение не нужно.", [["Закрыть", _dialog.close]])
         return
     _open_dialog("Регистратура", "Здоровье: %d / 100\n\nПолное лечение: %s%s" % [int(health),
-            "бесплатно" if free else HudScript.format_money(price), " (ты сотрудник больницы)" if free else ""],
+            "бесплатно" if no_charge else HudScript.format_money(price), " (ты сотрудник больницы)" if no_charge else ""],
             [["Лечиться", _treat.bind(price)], ["Закрыть", _dialog.close]])
 
 
@@ -2462,3 +2830,828 @@ func _sleep() -> void:
     _update_daylight()
     Sfx.play("heal")
     _hud.show_toast("Ты выспался: здоровье 100")
+
+
+# ================================================================ закон: розыск и КПЗ
+
+func _add_wanted(n: int, reason: String) -> void:
+    if jail_left > 0.0:
+        return
+    var old := wanted
+    wanted = mini(5, wanted + n)
+    _wanted_t = 0.0
+    if wanted > old:
+        Sfx.play("error")
+        _hud.show_toast("Розыск ★%d: %s" % [wanted, reason])
+
+
+func _update_law(delta: float, focus: Vector3) -> void:
+    if jail_left > 0.0:
+        jail_left -= delta
+        if jail_left <= 0.0:
+            jail_left = 0.0
+            _interior = ""
+            var site: Dictionary = _city.faction_sites["police"]
+            _player.global_position = site["out"] + Vector3(0, 0.3, 0)
+            _player.velocity = Vector3.ZERO
+            _player.set_camera_yaw(float(site["out_yaw"]))
+            Sfx.play("door")
+            _hud.show_toast("Ты вышел на свободу. Больше не нарушай!")
+            _save_game()
+        return
+    if wanted <= 0:
+        return
+    _wanted_t += delta
+    if _wanted_t >= 180.0:
+        _wanted_t = 0.0
+        wanted -= 1
+        _hud.show_toast("Розыск снижен: ★%d" % wanted if wanted > 0 else "Розыск снят")
+        return
+    _arrest_cd -= delta
+    if _arrest_cd > 0.0 or _interior != "" or _home_inside >= 0 or faction == "police" or faction == "kgb":
+        return
+    _arrest_cd = 25.0
+    var near_station: bool = focus.distance_to(_city.faction_sites["police"]["door"]) < 150.0
+    var chance := 0.06 * wanted * (2.0 if near_station else 1.0)
+    if randf() < chance:
+        _arrest()
+
+
+func _arrest() -> void:
+    if _driving:
+        var pos: Vector3 = _driving.get_exit_position()
+        _driving.set_driven(false)
+        _driving = null
+        _player.global_position = pos
+        _player.set_active(true)
+    _job.stop()
+    _work.stop()
+    _duty.stop()
+    _capt = {}
+    var fine := mini(500 * wanted, cash + bank)
+    var from_cash := mini(cash, fine)
+    cash -= from_cash
+    bank -= fine - from_cash
+    if fine - from_cash > 0:
+        _bank_log(-(fine - from_cash), "Штраф милиции")
+    jail_left = 30.0 * wanted
+    _open_dialog("Задержание", "Тебя задержал наряд милиции.\nРозыск: ★%d\nШтраф: %s\n\nКПЗ: %d секунд." % [wanted,
+            HudScript.format_money(fine), int(jail_left)], [["Понятно", _dialog.close]])
+    wanted = 0
+    _interior = "police"
+    _player.global_position = _city.kpz_cell
+    _player.velocity = Vector3.ZERO
+    _player.set_camera_yaw(PI * 0.5)
+    _sms_add("Милиция", "Вы задержаны и помещены в КПЗ. Штраф: %s" % HudScript.format_money(fine))
+    _save_game()
+
+
+# ================================================================ служба во фракции
+
+func _toggle_duty() -> void:
+    _dialog.close()
+    if _duty.active:
+        _duty.stop()
+        _hud.show_toast("Смена закончена")
+    else:
+        if faction == "":
+            return
+        _job.stop()
+        _work.stop()
+        _duty.start(faction)
+    _fmenu.close_menu()
+
+
+func _on_duty_paid(amount: int, text: String) -> void:
+    earned_total += amount
+    bank += amount
+    _bank_log(amount, "Служба: " + _faction_name())
+    Sfx.play("coin")
+    _hud.show_toast(text + " (на карту)")
+    _add_xp(maxi(8, amount / 20))
+    if _duty.calls_done % 2 == 0:
+        faction_exp += 1
+        var need := _need_exp()
+        if need > 0 and faction_exp >= need:
+            _hud.show_toast("Стаж набран — можно повыситься!")
+    _save_game()
+
+
+func _on_duty_message(text: String) -> void:
+    Sfx.play("notify", -4.0)
+    _hud.show_toast(text)
+    _sms_add(_faction_name(), text)
+
+
+# ================================================================ СМС и телефон
+
+func _sms_add(from: String, text: String) -> void:
+    sms.append([from, text])
+    if sms.size() > 20:
+        sms.pop_front()
+    sms_unread += 1
+
+
+func _on_app(id: String) -> void:
+    match id:
+        "work":
+            _hud.close_phone()
+            if _job.active or _work.active or _duty.active:
+                _open_dialog("Работа", "Сейчас идёт смена. Закончить?", [["Закончить смену", _stop_all_work], ["Закрыть", _dialog.close]])
+            else:
+                var buttons := [["Курьер", _job_from_dialog.bind("courier")], ["Таксист (нужна своя машина)", _job_from_dialog.bind("taxi")]]
+                if faction != "":
+                    buttons.append(["Смена во фракции", _toggle_duty])
+                buttons.append(["Закрыть", _dialog.close])
+                _open_dialog("Работа", "Курьер и таксист — прямо отсюда. Автобус, грузчик, дальнобойщик, лесоруб — на месте (жёлтые точки на карте).", buttons)
+        "bank":
+            _hud.close_phone()
+            _touch.blocked = true
+            _hud.profile.open_bank()
+        "gps":
+            _hud.close_phone()
+            _open_gps()
+        "bag":
+            _hud.close_phone()
+            _open_inventory()
+        "sms":
+            _hud.close_phone()
+            sms_unread = 0
+            var text := ""
+            for k in mini(6, sms.size()):
+                var m: Array = sms[sms.size() - 1 - k]
+                text += "%s: %s\n\n" % [m[0], m[1]]
+            _open_dialog("СМС", text if text != "" else "Сообщений нет.", [["Закрыть", _dialog.close]])
+        "taxi":
+            _hud.close_phone()
+            _open_taxi()
+        "car":
+            _on_summon_car()
+        "biz":
+            _hud.close_phone()
+            _open_biz_app()
+
+
+func _job_from_dialog(kind: String) -> void:
+    _dialog.close()
+    _on_job_selected(kind)
+
+
+func _stop_all_work() -> void:
+    _dialog.close()
+    _job.stop()
+    _work.stop()
+    _duty.stop()
+    _hud.show_toast("Смена закончена")
+
+
+# ---------------------------------------------------------------- такси
+
+func _open_taxi() -> void:
+    if _driving:
+        _hud.show_toast("Ты за рулём — такси не нужно")
+        return
+    if jail_left > 0.0 or _interior != "" or _home_inside >= 0:
+        _hud.show_toast("Выйди на улицу, чтобы вызвать такси")
+        return
+    _touch.blocked = true
+    _win_mode = "taxi"
+    _win.open_window("ТАКСИ", "car", NAV_CATS, true, "Куда едем?")
+
+
+func _taxi_price(to: Vector3) -> int:
+    var d := Vector2(_focus().x - to.x, _focus().z - to.z).length()
+    return int(round((TAXI_BASE + d * 0.8) / 10.0)) * 10
+
+
+func _ride_taxi(to: Vector3, place: String) -> void:
+    var price := _taxi_price(to)
+    if not _pay(price, "Такси"):
+        return
+    _win.close_window()
+    var spot = _free_spot_near(to, 0.0)
+    var p: Vector3 = to + Vector3(1.5, 0.3, 1.5)
+    if spot != null:
+        var st: Transform3D = spot
+        p = st.origin
+    _player.global_position = p
+    _player.velocity = Vector3.ZERO
+    Sfx.play("door")
+    _hud.show_toast("Такси довезло: %s (%s)" % [place, HudScript.format_money(price)])
+
+
+# ================================================================ сумка
+
+func _bag_count() -> int:
+    var n := 0
+    for k in inventory:
+        n += int(inventory[k])
+    return n
+
+
+func _give_item(item: String) -> bool:
+    if _bag_count() >= BAG_SIZE:
+        Sfx.play("error")
+        _hud.show_toast("Сумка полная (%d/%d)" % [BAG_SIZE, BAG_SIZE])
+        return false
+    inventory[item] = int(inventory.get(item, 0)) + 1
+    return true
+
+
+func _take_item(item: String) -> void:
+    var n := int(inventory.get(item, 0)) - 1
+    if n <= 0:
+        inventory.erase(item)
+    else:
+        inventory[item] = n
+
+
+## [+сытость, +здоровье] вещи (из меню ларьков).
+func _item_info(item: String) -> Array:
+    for list: Array in FOOD.values():
+        for it: Array in list:
+            if String(it[0]) == item:
+                return [int(it[2]), int(it[3])]
+    return [0, 0]
+
+
+func _open_inventory() -> void:
+    _touch.blocked = true
+    _win_mode = "inv"
+    _win.open_window("СУМКА  %d/%d" % [_bag_count(), BAG_SIZE], "bag", [{"id": "all", "name": "Вещи", "icon": "bag"}], false)
+
+
+func _fill_inv_rows(rows: Array) -> void:
+    for item: String in inventory:
+        var info := _item_info(item)
+        var icon := _item_icon(item)
+        var what := ""
+        if int(info[0]) > 0:
+            what += "+%d сытости " % int(info[0])
+        if int(info[1]) > 0:
+            what += "+%d здоровья" % int(info[1])
+        if item.begins_with("Канистра"):
+            what = "+10 л в бак"
+        rows.append({"icon": icon, "name": "%s · %s" % [item, what.strip_edges()], "value": "×%d" % int(inventory[item])})
+        _win_payload.append(item)
+    if rows.is_empty():
+        rows.append({"icon": "bag", "name": "Сумка пуста — купи еду в ларьках", "value": "", "enabled": false})
+        _win_payload.append(null)
+
+
+func _use_item(item: String) -> void:
+    if not inventory.has(item):
+        return
+    if item.begins_with("Канистра"):
+        var car = _driving if _driving and _driving.uses_fuel else null
+        if car == null:
+            for c in _cars:
+                if c.owned and c.visible and c.global_position.distance_to(_focus()) < 8.0:
+                    car = c
+        if car == null:
+            _hud.show_toast("Подойди к своей машине, чтобы залить бензин")
+            return
+        car.fuel = minf(car.tank, car.fuel + 10.0)
+        _take_item(item)
+        Sfx.play("click")
+        _hud.show_toast("+10 л в бак: %s" % car.car_name)
+        return
+    var info := _item_info(item)
+    if int(info[1]) > 0 and int(info[0]) == 0 and health >= 100.0:
+        _hud.show_toast("Ты здоров")
+        return
+    if int(info[0]) > 0 and int(info[1]) == 0 and hunger >= 99.0:
+        _hud.show_toast("Ты не голоден")
+        return
+    hunger = minf(100.0, hunger + float(info[0]))
+    health = minf(100.0, health + float(info[1]))
+    if int(info[0]) > 0:
+        _ate_once = true
+    _take_item(item)
+    Sfx.play("heal" if int(info[1]) > int(info[0]) else "eat")
+    _hud.show_toast("%s: здоровье %d, сытость %d" % [item, int(health), int(hunger)])
+
+
+# ================================================================ бизнес
+
+func _build_business() -> void:
+    _biz = []
+    for pk: Dictionary in _city.pickups:
+        var n := String(pk["name"])
+        var price := 60000
+        var income := 140
+        if n == "УНИВЕРСАМ":
+            price = 150000
+            income = 320
+        elif n == "АПТЕКА":
+            price = 80000
+            income = 180
+        var title := ("Магазин «%s»" if n == "УНИВЕРСАМ" else "Ларёк «%s»") % n.capitalize()
+        _biz.append({"title": title, "name": n, "pos": pk["pos"], "price": price, "income": income})
+    for g: Vector3 in _city.gas_shops:
+        _biz.append({"title": "АЗС", "name": "АЗС", "pos": g, "price": 220000, "income": 450})
+
+
+func _biz_mine(i: int) -> bool:
+    return biz_owned.has(str(i))
+
+
+func _open_kiosk(i: int) -> void:
+    var bz: Dictionary = _biz[i]
+    var kname := String(bz["name"])
+    var buttons := []
+    if FOOD.has(kname):
+        for it: Array in FOOD[kname]:
+            var gain := ""
+            if int(it[2]) > 0:
+                gain += " +%d сытости" % int(it[2])
+            if int(it[3]) > 0:
+                gain += " +%d здоровья" % int(it[3])
+            if String(it[0]).begins_with("Канистра"):
+                gain = "в бак"
+            buttons.append(["%s — %s (%s)" % [it[0], HudScript.format_money(int(it[1])), gain.strip_edges()], _buy_food.bind(i, it)])
+    var text := "Здоровье: %d · Сытость: %d · Сумка: %d/%d" % [int(health), int(hunger), _bag_count(), BAG_SIZE]
+    if _biz_mine(i):
+        var till := int(biz_owned[str(i)])
+        text += "\n\nТвой бизнес. Доход: %s в час, в кассе: %s" % [HudScript.format_money(int(bz["income"])), HudScript.format_money(till)]
+        buttons.append(["Забрать выручку (%s)" % HudScript.format_money(till), _biz_collect.bind(i)])
+        buttons.append(["Продать за %s" % HudScript.format_money(int(bz["price"]) / 2), _biz_sell.bind(i)])
+    else:
+        text += "\n\nБизнес продаётся: %s, доход ~%s в час" % [HudScript.format_money(int(bz["price"])), HudScript.format_money(int(bz["income"]))]
+        buttons.append(["Купить бизнес — %s" % HudScript.format_money(int(bz["price"])), _biz_buy.bind(i)])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog(String(bz["title"]), text, buttons)
+
+
+func _buy_food(i: int, it: Array) -> void:
+    if _bag_count() >= BAG_SIZE:
+        Sfx.play("error")
+        _hud.show_toast("Сумка полная")
+        return
+    if not _pay(int(it[1]), String(it[0])):
+        return
+    _give_item(String(it[0]))
+    Sfx.play("coin")
+    _hud.show_toast("%s в сумке (меню → Инвентарь или телефон → Сумка)" % it[0])
+    _open_kiosk(i)
+
+
+func _buy_license() -> void:
+    if not _pay(LICENSE_PRICE, "Мэрия: лицензия на бизнес"):
+        return
+    has_biz_license = true
+    Sfx.play("cash")
+    _dialog.close()
+    _hud.show_toast("Лицензия на бизнес получена")
+    _save_game()
+
+
+func _biz_buy(i: int) -> void:
+    if not _check_docs(false):
+        return
+    if not has_biz_license:
+        Sfx.play("error")
+        _hud.show_toast("Нужна лицензия на бизнес — в мэрии, у паспортного стола")
+        return
+    if biz_owned.size() >= MAX_BIZ:
+        Sfx.play("error")
+        _hud.show_toast("Можно владеть не больше чем %d бизнесами" % MAX_BIZ)
+        return
+    var bz: Dictionary = _biz[i]
+    if not _pay(int(bz["price"]), "Покупка бизнеса"):
+        return
+    biz_owned[str(i)] = 0
+    Sfx.play("cash")
+    _add_xp(50)
+    _hud.show_toast("Теперь это твой бизнес: %s. Выручка копится в кассе" % bz["title"])
+    _sms_add("Налоговая", "Бизнес «%s» оформлен на вас. Налог 10%% удерживается автоматически." % bz["title"])
+    _save_game()
+    _open_kiosk(i)
+
+
+func _biz_collect(i: int) -> void:
+    var till := int(biz_owned.get(str(i), 0))
+    if till <= 0:
+        _hud.show_toast("Касса пуста")
+        return
+    biz_owned[str(i)] = 0
+    bank += till
+    _bank_log(till, "Выручка: %s" % _biz[i]["title"])
+    Sfx.play("cash")
+    _hud.show_toast("Выручка +%s на карту" % HudScript.format_money(till))
+    _save_game()
+    _open_kiosk(i)
+
+
+func _biz_sell(i: int) -> void:
+    var bz: Dictionary = _biz[i]
+    var pay := int(bz["price"]) / 2 + int(biz_owned.get(str(i), 0))
+    biz_owned.erase(str(i))
+    bank += pay
+    _bank_log(pay, "Продажа бизнеса")
+    Sfx.play("cash")
+    _dialog.close()
+    _hud.show_toast("Бизнес продан: +%s" % HudScript.format_money(pay))
+    _save_game()
+
+
+## Выручка капает каждый игровой час (минус 10% налога), касса вмещает 24 часа.
+func _update_business(delta: float) -> void:
+    if biz_owned.is_empty():
+        return
+    _biz_acc += delta * GAME_MINUTES_PER_SECOND
+    if _biz_acc < 60.0:
+        return
+    _biz_acc -= 60.0
+    for key: String in biz_owned.keys():
+        var i := int(key)
+        if i < 0 or i >= _biz.size():
+            continue
+        var income := int(_biz[i]["income"])
+        var cap := income * 24
+        var before := int(biz_owned[key])
+        biz_owned[key] = mini(cap, before + int(income * 0.9))
+        if before < cap and int(biz_owned[key]) >= cap:
+            _sms_add("Бизнес", "Касса «%s» полная — забери выручку" % _biz[i]["title"])
+
+
+func _open_biz_app() -> void:
+    if biz_owned.is_empty():
+        _open_dialog("Бизнес", ("У тебя нет бизнеса.\n\n1) Купи лицензию в мэрии (%s).\n2) Подойди к любому ларьку, магазину или АЗС "
+                + "и нажми «Купить бизнес». Доход капает каждый час в кассу.") % HudScript.format_money(LICENSE_PRICE),
+                [["Закрыть", _dialog.close]])
+        return
+    var text := ""
+    var buttons := []
+    for key: String in biz_owned:
+        var i := int(key)
+        var bz: Dictionary = _biz[i]
+        text += "%s — в кассе %s (доход %s/ч)\n" % [bz["title"], HudScript.format_money(int(biz_owned[key])),
+                HudScript.format_money(int(bz["income"]))]
+        buttons.append(["Метка: %s" % bz["title"], _faction_gps.bind(bz["pos"], String(bz["title"]))])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Мой бизнес", text + "\nВыручку забирай на месте.", buttons)
+
+
+# ================================================================ территории ОПГ
+
+func _turf_key(i: int, j: int) -> String:
+    return "%d,%d" % [i, j]
+
+
+func _turf_rect(key: String) -> Rect2:
+    var i := int(key.get_slice(",", 0))
+    var j := int(key.get_slice(",", 1))
+    var half := CityBuilder.BLOCK * 0.5
+    return Rect2(i * CityBuilder.PITCH - half, j * CityBuilder.PITCH - half, CityBuilder.BLOCK, CityBuilder.BLOCK)
+
+
+func _gang_ids() -> Array:
+    var out := []
+    for f: Dictionary in FactionData.LIST:
+        if String(f.get("type", "")) == "gang":
+            out.append(f["id"])
+    return out
+
+
+## Раздел районов: дома банд и соседние кварталы. Квартал с площадью и госфракциями не делят.
+func _init_turf() -> void:
+    var g := CityBuilder.GRID
+    if turf.is_empty():
+        for i in range(-g, g + 1):
+            for j in range(-g, g + 1):
+                var v := Vector2i(i, j)
+                if v == Vector2i.ZERO or CityBuilder.FACTION_BLOCKS.has(v):
+                    continue
+                turf[_turf_key(i, j)] = String(CityBuilder.GANG_BLOCKS.get(v, ""))
+        for key: String in turf.keys():
+            if turf[key] == "" and randf() < 0.5:
+                var ids := _gang_ids()
+                turf[key] = ids[randi() % ids.size()]
+    if _turf_labels.is_empty():
+        for key: String in turf:
+            var r := _turf_rect(key)
+            var spot := Vector3(r.position.x + 2.0, CityBuilder.SIDE_H, r.position.y + 2.0)
+            var l := Label3D.new()
+            l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+            l.font_size = 40
+            l.pixel_size = 0.006
+            l.outline_size = 10
+            l.position = spot + Vector3(0, 2.6, 0)
+            l.visibility_range_end = 45.0
+            add_child(l)
+            _turf_labels[key] = l
+            _points.append({"pos": spot, "r": 2.5, "text": "ЗАХВАТ", "cb": _start_capture.bind(key), "car": false, "gang_only": true})
+    _refresh_turf()
+
+
+func _refresh_turf() -> void:
+    var turf_on := FactionData.is_gang(faction)
+    var list := []
+    for key: String in turf:
+        var gid := String(turf[key])
+        var f := FactionData.get_faction(gid)
+        var col: Color = f.get("color", Color(0.6, 0.6, 0.6))
+        if _turf_labels.has(key):
+            var l: Label3D = _turf_labels[key]
+            l.visible = turf_on
+            l.text = "Район: %s" % (f.get("name", "ничей") if gid != "" else "ничей")
+            l.modulate = col if gid != "" else Color(0.85, 0.85, 0.85)
+        if turf_on and gid != "":
+            list.append([_turf_rect(key), col])
+    _hud.minimap.turf = list
+
+
+func _start_capture(key: String) -> void:
+    if not FactionData.is_gang(faction):
+        return
+    if String(turf.get(key, "")) == faction:
+        _hud.show_toast("Это уже ваш район")
+        return
+    if not _capt.is_empty():
+        return
+    if _capt_cd > 0.0:
+        _hud.show_toast("Братва ещё не готова: следующий захват через %d с" % int(_capt_cd))
+        return
+    _capt = {"key": key, "left": 60.0, "warned": false}
+    Sfx.play("notify")
+    _hud.show_toast("ЗАХВАТ! Продержись в квартале 60 секунд")
+    _add_wanted(1, "захват территории")
+
+
+func _update_turf(delta: float, focus: Vector3) -> void:
+    _capt_cd = maxf(0.0, _capt_cd - delta)
+    if not _capt.is_empty():
+        var key := String(_capt["key"])
+        if not _turf_rect(key).grow(10.0).has_point(Vector2(focus.x, focus.z)):
+            _capt = {}
+            _capt_cd = 60.0
+            Sfx.play("error")
+            _hud.show_toast("Захват сорван: ты ушёл с территории")
+        else:
+            _capt["left"] = float(_capt["left"]) - delta
+            if float(_capt["left"]) < 30.0 and not bool(_capt["warned"]):
+                _capt["warned"] = true
+                var holder := String(turf.get(key, ""))
+                if holder != "":
+                    _capt["left"] = float(_capt["left"]) + 15.0
+                    _hud.show_toast("%s подтягивают своих! Держись ещё" % FactionData.get_faction(holder).get("name", ""))
+            if float(_capt["left"]) <= 0.0:
+                turf[key] = faction
+                _capt = {}
+                _capt_cd = 300.0
+                bank += 1500
+                _bank_log(1500, "Захват района")
+                faction_exp += 1
+                Sfx.play("levelup")
+                _hud.show_toast("Район наш! +1 500 ₽ из общака, +1 стаж")
+                _sms_add(_faction_name(), "Район взят под контроль. Каждая получка — больше на 150 ₽ за район.")
+                _refresh_turf()
+                _save_game()
+    # другие банды тоже не спят: раз в 5 минут кто-то что-то отжимает
+    _ai_turf_t += delta
+    if _ai_turf_t >= 300.0:
+        _ai_turf_t = 0.0
+        var keys := turf.keys()
+        var ids := _gang_ids()
+        var key: String = keys[randi() % keys.size()]
+        var gid: String = ids[randi() % ids.size()]
+        var old := String(turf[key])
+        if old != gid and (_capt.is_empty() or String(_capt["key"]) != key):
+            turf[key] = gid
+            if FactionData.is_gang(faction) and old == faction:
+                _sms_add(_faction_name(), "%s отжали наш район. Верните его!" % FactionData.get_faction(gid).get("name", ""))
+                _hud.show_toast("Наш район захватили: %s" % FactionData.get_faction(gid).get("name", ""))
+            _refresh_turf()
+
+
+func _turf_count(gid: String) -> int:
+    var n := 0
+    for key: String in turf:
+        if turf[key] == gid:
+            n += 1
+    return n
+
+
+# ================================================================ СТО: ремонт и тюнинг
+
+func _open_sto() -> void:
+    var car = _driving
+    if car == null or not car.owned or car == _work_vehicle or car == _faction_car:
+        return
+    var repair := int(ceil((100.0 - car.condition) * 15.0))
+    var buttons := []
+    if repair > 0:
+        buttons.append(["Ремонт — %s" % HudScript.format_money(repair), _sto_repair.bind(repair)])
+    buttons.append(["Покраска — %s" % HudScript.format_money(PAINT_PRICE), _sto_paint_menu])
+    if car.kind == "car":
+        buttons.append(["Диски — %s" % HudScript.format_money(RIM_PRICE), _sto_rim_menu])
+        buttons.append(["%s — %s" % ["Снять тонировку" if car.tint else "Тонировка", HudScript.format_money(TINT_PRICE)], _sto_tint])
+        buttons.append(["Красивые номера — %s" % HudScript.format_money(PLATE_PRICE), _sto_plate])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("СТО — %s" % car.car_name, "Состояние: %d%%\nНомер: %s" % [int(car.condition),
+            car.plate_text if car.plate_text != "" else "—"], buttons)
+
+
+func _sto_repair(price: int) -> void:
+    if _driving == null or not _pay(price, "СТО: ремонт"):
+        return
+    _driving.repair()
+    Sfx.play("cash")
+    _hud.show_toast("Машина как новая")
+    _save_game()
+    _open_sto()
+
+
+func _sto_paint_menu() -> void:
+    var buttons := []
+    for pc: Array in PAINTS:
+        buttons.append([String(pc[0]), _sto_paint.bind(pc[1])])
+    buttons.append(["Назад", _open_sto])
+    _open_dialog("Покраска — %s" % HudScript.format_money(PAINT_PRICE), "Выбери цвет", buttons)
+
+
+func _sto_paint(col: Color) -> void:
+    if _driving == null or not _pay(PAINT_PRICE, "СТО: покраска"):
+        return
+    _driving.repaint(col)
+    Sfx.play("cash")
+    _save_game()
+    _open_sto()
+
+
+func _sto_rim_menu() -> void:
+    var buttons := []
+    for rc: Array in RIMS:
+        buttons.append([String(rc[0]), _sto_rim.bind(rc[1])])
+    buttons.append(["Стандартные (бесплатно)", _sto_rim.bind(Color(0, 0, 0, 0))])
+    buttons.append(["Назад", _open_sto])
+    _open_dialog("Диски — %s" % HudScript.format_money(RIM_PRICE), "Выбери цвет дисков", buttons)
+
+
+func _sto_rim(col: Color) -> void:
+    if _driving == null:
+        return
+    if col.a > 0.0 and not _pay(RIM_PRICE, "СТО: диски"):
+        return
+    _driving.rim_color = col
+    _driving.apply_tuning()
+    Sfx.play("cash")
+    _save_game()
+    _open_sto()
+
+
+func _sto_tint() -> void:
+    if _driving == null or not _pay(TINT_PRICE, "СТО: тонировка"):
+        return
+    _driving.tint = not _driving.tint
+    _driving.apply_tuning()
+    Sfx.play("cash")
+    _save_game()
+    _open_sto()
+
+
+## Красивый номер: одинаковые цифры и буквы, например «А777АА 99».
+func _sto_plate() -> void:
+    if _driving == null or not _pay(PLATE_PRICE, "СТО: номера"):
+        return
+    var ch := PLATE_LETTERS[randi() % PLATE_LETTERS.length()]
+    var d := randi() % 9 + 1
+    var regions := [77, 99, 177, 197]
+    _driving.plate_text = "%s%d%d%d%s%s %d" % [ch, d, d, d, ch, ch, regions[randi() % regions.size()]]
+    _driving.apply_tuning()
+    Sfx.play("cash")
+    _hud.show_toast("Новый номер: %s" % _driving.plate_text)
+    _save_game()
+    _open_sto()
+
+
+# ================================================================ погода
+
+func _weather_light() -> float:
+    match weather:
+        "rain":
+            return 0.45
+        "snow":
+            return 0.6
+        "cloudy":
+            return 0.7
+    return 1.0
+
+
+func _update_weather(delta: float, focus: Vector3) -> void:
+    _weather_t -= delta
+    if _weather_t <= 0.0:
+        _weather_t = randf_range(300.0, 540.0)
+        var r := randf()
+        var next := "clear"
+        if r < 0.22:
+            next = "rain"
+        elif r < 0.30:
+            next = "snow"
+        elif r < 0.50:
+            next = "cloudy"
+        if next != weather:
+            weather = next
+            _hud.show_toast("Погода: %s" % WEATHER_NAMES[weather])
+            _update_daylight()
+    var raining := weather == "rain"
+    var snowing := weather == "snow"
+    _wet = move_toward(_wet, 1.0 if raining else 0.0, delta / (20.0 if raining else 90.0))
+    _snow = move_toward(_snow, 1.0 if snowing else 0.0, delta / (60.0 if snowing else 120.0))
+    _city.set_weather(_wet, _snow)
+    CarScript.grip = lerpf(1.0, 0.72, _wet) * lerpf(1.0, 0.6, _snow)
+    var inside := _interior != "" or _home_inside >= 0
+    var top := focus + Vector3(0, 16, 0)
+    _rain_fx.emitting = raining and not inside
+    _snow_fx.emitting = snowing and not inside
+    if raining:
+        _rain_fx.global_position = top
+    if snowing:
+        _snow_fx.global_position = top
+    _env.fog_density = _base_fog() * (2.2 if raining or snowing else (1.3 if weather == "cloudy" else 1.0))
+    if _rain_snd.stream != null:
+        var want := -14.0 if raining else -80.0
+        if inside and raining:
+            want = -24.0
+        _rain_snd.volume_db = move_toward(_rain_snd.volume_db, want, delta * 20.0)
+        if _rain_snd.volume_db > -70.0 and not _rain_snd.playing:
+            _rain_snd.play()
+        elif _rain_snd.volume_db <= -70.0 and _rain_snd.playing:
+            _rain_snd.stop()
+    if raining:
+        _thunder_t -= delta
+        if _thunder_t <= 0.0:
+            _thunder_t = randf_range(25.0, 60.0)
+            Sfx.play("thunder", -4.0 if not inside else -12.0, randf_range(0.85, 1.1))
+
+
+func _base_fog() -> float:
+    var fogs := [0.007, 0.0035, 0.0015]
+    return fogs[clampi(int(_menu.settings["view"]), 0, 2)]
+
+
+# ================================================================ задания новичка
+
+func _check_quest() -> void:
+    if quest_i >= QUESTS.size():
+        return
+    var q: Array = QUESTS[quest_i]
+    var done := false
+    match String(q[0]):
+        "passport":
+            done = passport_name != ""
+        "eat":
+            done = _ate_once
+        "earn":
+            done = earned_total >= 2000
+        "license":
+            done = has_license
+        "car":
+            done = _has_owned_car()
+        "faction":
+            done = faction != ""
+        "home":
+            done = home >= 0
+        "biz":
+            done = has_biz_license
+    if not done:
+        return
+    var reward := int(q[2])
+    bank += reward
+    _bank_log(reward, "Задание новичка")
+    quest_i += 1
+    Sfx.play("levelup")
+    _add_xp(25)
+    var text := "Задание выполнено! +%s на карту" % HudScript.format_money(reward)
+    if quest_i >= QUESTS.size():
+        text += ". Все задания новичка пройдены!"
+        _sms_add("Помощник", "Ты прошёл все задания новичка. Добро пожаловать в город!")
+    else:
+        _sms_add("Помощник", "Следующее задание: %s" % QUESTS[quest_i][1])
+    _hud.show_toast(text)
+    _save_game()
+
+
+func _tow_to_sto(car) -> void:
+    if not _pay(1000, "Эвакуатор"):
+        return
+    _dialog.close()
+    var best: Vector3 = _city.service_stations[0]
+    for p: Vector3 in _city.service_stations:
+        if p.distance_to(_focus()) < best.distance_to(_focus()):
+            best = p
+    car.reset_to(Transform3D(Basis(), best + Vector3(0, 0.6, 3.0)))
+    _set_gps(best, "СТО", true)
+    _hud.show_toast("Машина на СТО. Сядь в неё там и нажми «СТО» — ремонт")
+
+
+const ITEM_ICONS := {"Шаурма": "shawarma", "Шаурма двойная": "shawarma", "Хлеб": "bread", "Батон": "bread",
+        "Бутерброд": "sandwich", "Пирожок": "sandwich", "Круассан": "sandwich", "Кофе": "coffee", "Чай": "coffee",
+        "Квас": "bottle", "Кефир": "bottle", "Энергетик": "bottle", "Пельмени": "dumplings", "Колбаса": "dumplings",
+        "Комплексный обед": "dumplings", "Хот-дог": "hotdog", "Аптечка": "firstaid", "Бинт": "bandage",
+        "Витамины": "vitamins", "Канистра 10 л": "canister"}
+
+
+func _item_icon(item: String) -> String:
+    return String(ITEM_ICONS.get(item, "bag"))

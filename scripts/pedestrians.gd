@@ -4,6 +4,7 @@ extends Node3D
 ## несколько секунд «уходят» в другой квартал. Далёкие не рисуются.
 
 const CityBuilder := preload("res://scripts/city_builder.gd")
+const BodyMesh := preload("res://scripts/body_mesh.gd")
 
 const COUNT := 36
 const WALK := 34.0          # середина тротуара от центра квартала
@@ -14,6 +15,8 @@ const SHIRTS := [
     Color(0.15, 0.15, 0.17), Color(0.85, 0.45, 0.20),
 ]
 const PANTS := [Color(0.18, 0.22, 0.32), Color(0.12, 0.12, 0.13), Color(0.40, 0.35, 0.30)]
+
+signal knocked(pos: Vector3)   # сбили машиной (для розыска)
 
 var player: Node3D = null    # пешеход останавливается перед ним
 var cars: Array = []         # машины игрока — ими можно сбить
@@ -57,6 +60,7 @@ func _process(delta: float) -> void:
                 root.rotation.x = -PI * 0.5
                 root.position = pos + Vector3(0, 0.25, 0)
                 Sfx.play_at("hit", pos)
+                knocked.emit(pos)
                 break
         if p["down"]:
             continue
@@ -113,15 +117,16 @@ func _place_random(p: Dictionary) -> void:
 func _make_ped() -> Dictionary:
     var si := _rng.randi() % SHIRTS.size()
     var pi_ := _rng.randi() % PANTS.size()
-    if not _body_meshes.has(si):
-        _body_meshes[si] = _build_body_mesh(SHIRTS[si])
+    var bk := si * 10 + pi_
+    if not _body_meshes.has(bk):
+        _body_meshes[bk] = _build_body_mesh(SHIRTS[si], si, pi_)
     if not _leg_meshes.has(pi_):
-        _leg_meshes[pi_] = _build_leg_mesh(PANTS[pi_])
+        _leg_meshes[pi_] = _build_leg_mesh(PANTS[pi_], pi_)
 
     var root := Node3D.new()
     add_child(root)
     var body := MeshInstance3D.new()
-    body.mesh = _body_meshes[si]
+    body.mesh = _body_meshes[bk]
     root.add_child(body)
     var legs := []
     for side: float in [-0.1, 0.1]:
@@ -136,41 +141,96 @@ func _make_ped() -> Dictionary:
             "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0}
 
 
-## Туловище, руки и голова — один меш с двумя материалами.
-func _build_body_mesh(shirt: Color) -> ArrayMesh:
-    var shirt_mat := StandardMaterial3D.new()
-    shirt_mat.albedo_color = shirt
+## Туловище, руки и голова — один меш (рубашка, брюки, кожа, волосы).
+## Детали смотрят в -Z, а прохожий идёт в +Z — поэтому всё повёрнуто на 180°.
+func _build_body_mesh(shirt: Color, si := 0, pi_ := 0) -> ArrayMesh:
+    var flip := Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
+    var shirt_mat := _cloth_mat(shirt, ["cloth_sweater", "cloth_leather2", "cloth_knit", "cloth_nylon"][si % 4])
+    var pants_mat := _cloth_mat(PANTS[pi_], "cloth_jeans" if pi_ % 2 == 0 else "cloth_denim")
+    var hair_mat := StandardMaterial3D.new()
+    hair_mat.albedo_color = [Color(0.12, 0.08, 0.05), Color(0.35, 0.25, 0.15), Color(0.6, 0.5, 0.3), Color(0.2, 0.2, 0.2)][si % 4]
     var st_shirt := SurfaceTool.new()
     st_shirt.begin(Mesh.PRIMITIVE_TRIANGLES)
     st_shirt.set_material(shirt_mat)
-    st_shirt.append_from(_capsule(0.2, 0.62), 0, Transform3D(Basis(), Vector3(0, 1.22, 0)))
-    st_shirt.append_from(_capsule(0.07, 0.6), 0, Transform3D(Basis(), Vector3(0.27, 1.14, 0)))
-    st_shirt.append_from(_capsule(0.07, 0.6), 0, Transform3D(Basis(), Vector3(-0.27, 1.14, 0)))
+    st_shirt.append_from(BodyMesh.part("torso"), 0, flip * Transform3D(Basis(), Vector3(0, 1.0, 0)))
+    for side: float in [-1.0, 1.0]:
+        var sh := Vector3(0.26 * side, 1.45, 0)
+        var tilt := Basis(Vector3.BACK, 0.08 * side)
+        st_shirt.append_from(_sphere(0.085), 0, flip * Transform3D(Basis(), sh))
+        st_shirt.append_from(BodyMesh.part("upper_arm"), 0, flip * Transform3D(tilt, sh))
+        var el := sh + tilt * Vector3(0, -0.29, 0)
+        st_shirt.append_from(BodyMesh.part("forearm"), 0, flip * Transform3D(tilt, el))
+    var st_pants := SurfaceTool.new()
+    st_pants.begin(Mesh.PRIMITIVE_TRIANGLES)
+    st_pants.set_material(pants_mat)
+    st_pants.append_from(BodyMesh.part("pelvis"), 0, flip * Transform3D(Basis(), Vector3(0, 0.97, 0)))
     var st_skin := SurfaceTool.new()
     st_skin.begin(Mesh.PRIMITIVE_TRIANGLES)
     st_skin.set_material(_skin)
-    var head := SphereMesh.new()
-    head.radius = 0.12
-    head.height = 0.24
-    head.radial_segments = 12
-    head.rings = 6
-    st_skin.append_from(head, 0, Transform3D(Basis(), Vector3(0, 1.68, 0)))
+    st_skin.append_from(_sphere(0.12), 0, flip * Transform3D(Basis(), Vector3(0, 1.68, 0)))
+    var neck := CylinderMesh.new()
+    neck.top_radius = 0.055
+    neck.bottom_radius = 0.06
+    neck.height = 0.12
+    neck.radial_segments = 10
+    st_skin.append_from(neck, 0, flip * Transform3D(Basis(), Vector3(0, 1.58, 0)))
+    for side: float in [-1.0, 1.0]:
+        var tilt := Basis(Vector3.BACK, 0.08 * side)
+        var el := Vector3(0.26 * side, 1.45, 0) + tilt * Vector3(0, -0.29, 0)
+        st_skin.append_from(BodyMesh.part("hand"), 0, flip * Transform3D(tilt, el))
+    var st_hair := SurfaceTool.new()
+    st_hair.begin(Mesh.PRIMITIVE_TRIANGLES)
+    st_hair.set_material(hair_mat)
+    st_hair.append_from(BodyMesh.part("hair"), 0, flip * Transform3D(Basis(), Vector3(0, 1.705, 0.02)))
     var mesh := ArrayMesh.new()
     st_shirt.commit(mesh)
+    st_pants.commit(mesh)
     st_skin.commit(mesh)
+    st_hair.commit(mesh)
     return mesh
 
 
-func _build_leg_mesh(col: Color) -> ArrayMesh:
-    var mat := StandardMaterial3D.new()
-    mat.albedo_color = col
+## Нога от бедра вниз: бедро, колено, голень, ботинок.
+func _build_leg_mesh(col: Color, pi_ := 0) -> ArrayMesh:
+    var flip := Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
+    var mat := _cloth_mat(col, "cloth_jeans" if pi_ % 2 == 0 else "cloth_denim")
+    var shoe := StandardMaterial3D.new()
+    shoe.albedo_color = Color(0.12, 0.11, 0.1)
     var st := SurfaceTool.new()
     st.begin(Mesh.PRIMITIVE_TRIANGLES)
     st.set_material(mat)
-    st.append_from(_capsule(0.08, 0.92), 0, Transform3D(Basis(), Vector3(0, -0.46, 0)))
+    st.append_from(BodyMesh.part("thigh"), 0, flip)
+    st.append_from(_sphere(0.068), 0, flip * Transform3D(Basis(), Vector3(0, -0.45, 0)))
+    st.append_from(BodyMesh.part("calf"), 0, flip * Transform3D(Basis(), Vector3(0, -0.45, 0)))
+    var st2 := SurfaceTool.new()
+    st2.begin(Mesh.PRIMITIVE_TRIANGLES)
+    st2.set_material(shoe)
+    st2.append_from(BodyMesh.part("shoe"), 0, flip * Transform3D(Basis(Vector3.RIGHT, -PI * 0.5), Vector3(0, -0.86, 0.07)))
     var mesh := ArrayMesh.new()
     st.commit(mesh)
+    st2.commit(mesh)
     return mesh
+
+
+func _cloth_mat(col: Color, tex_name: String) -> StandardMaterial3D:
+    var m := StandardMaterial3D.new()
+    m.albedo_color = col
+    m.roughness = 0.85
+    var path := "res://textures/%s.png" % tex_name
+    if ResourceLoader.exists(path):
+        m.albedo_texture = load(path)
+        m.uv1_triplanar = true
+        m.uv1_scale = Vector3.ONE * 3.5
+    return m
+
+
+func _sphere(r: float) -> SphereMesh:
+    var m := SphereMesh.new()
+    m.radius = r
+    m.height = r * 2.0
+    m.radial_segments = 12
+    m.rings = 6
+    return m
 
 
 func _capsule(r: float, h: float) -> CapsuleMesh:

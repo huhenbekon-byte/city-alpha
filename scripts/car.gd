@@ -11,7 +11,7 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var brake_force := 30.0
 @export var max_steer := 0.55
 @export var look_sensitivity := 0.006
-@export var kind := "car"   # "car", "bus", "truck"
+@export var kind := "car"   # "car", "bus", "truck", "moto"
 @export var car_name := "Классика"
 @export var price := 8000
 ## Фракционная раскраска: надпись и полоса по бортам, мигалки на крыше.
@@ -21,8 +21,24 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var light_a := Color(1.0, 0.12, 0.10)
 @export var light_b := Color(0.15, 0.35, 1.0)
 
+## Сцепление с дорогой у всех машин (дождь, снег — меньше). Задаёт main.gd.
+static var grip := 1.0
+
 ## Куплена ли машина. Чужую (с рынка, не купленную) водить нельзя.
 var owned := false
+## Состояние 0..100: аварии портят машину, ремонт — на СТО.
+var condition := 100.0
+## Тюнинг: тонировка, цвет дисков (пусто — обычные), номер.
+var tint := false
+var rim_color := Color(0, 0, 0, 0)
+var plate_text := ""
+var rider_color := Color(0.09, 0.42, 0.52)
+var _body_mi: MeshInstance3D
+var _wheel_mis: Array[MeshInstance3D] = []
+var _all_wheels: Array[VehicleWheel3D] = []
+var _plates: Array[Label3D] = []
+var _smoke: CPUParticles3D = null
+var _rider: Node3D = null
 
 ## Бензин. uses_fuel = false у рабочих машин (автобус, фура, учебная).
 var tank := 40.0
@@ -64,6 +80,11 @@ var _rpm := 0.0
 func _ready() -> void:
     center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
     match kind:
+        "moto":
+            mass = 260.0
+            center_of_mass = Vector3(0, 0.15, 0)
+            tank = 15.0
+            fuel = minf(fuel, tank)
         "bus":
             mass = 6000.0
             center_of_mass = Vector3(0, 0.9, 0)
@@ -78,14 +99,29 @@ func _ready() -> void:
 
     CarModel.add_collision(self, kind)
     _tail_mat = CarModel.make_tail_material()
-    var body_mi := MeshInstance3D.new()
-    body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
-    add_child(body_mi)
+    _body_mi = MeshInstance3D.new()
+    _body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
+    add_child(_body_mi)
 
     for spot: Array in CarModel.wheel_spots(kind):
         _add_wheel(spot[0], spot[1])
 
     _build_livery()
+    if kind == "car":
+        for sz: float in [1.0, -1.0]:
+            var l := Label3D.new()
+            l.font_size = 30
+            l.pixel_size = 0.0032
+            l.modulate = Color(0.05, 0.05, 0.08)
+            l.outline_size = 0
+            l.double_sided = false
+            l.position = Vector3(0, 0.455, 2.1 * sz + 0.004 * sz)
+            l.rotation.y = 0.0 if sz > 0.0 else PI
+            add_child(l)
+            _plates.append(l)
+    if kind == "moto":
+        _build_rider()
+    apply_tuning()
     _setup_camera()
     _setup_audio()
 
@@ -142,12 +178,14 @@ func _add_wheel(pos: Vector3, front: bool) -> void:
     w.damping_compression = 1.8
     w.damping_relaxation = 2.6
     w.wheel_friction_slip = 3.0 if front else 2.7
-    w.wheel_roll_influence = 0.05
+    w.wheel_roll_influence = 0.0 if kind == "moto" else 0.05
     add_child(w)
+    _all_wheels.append(w)
     var mi := MeshInstance3D.new()
     mi.mesh = CarModel.wheel_mesh()
     mi.scale = Vector3.ONE * (r / CarModel.WHEEL_RADIUS)
     w.add_child(mi)
+    _wheel_mis.append(mi)
     if not front:
         _rear.append(w)
 
@@ -156,12 +194,14 @@ func _add_wheel(pos: Vector3, front: bool) -> void:
 
 func set_driven(on: bool) -> void:
     driven = on
+    if _rider:
+        _rider.visible = on
     if on:
         sleeping = false
         _cam_yaw.rotation.y = _heading_yaw() + PI
         _cam_pitch.rotation.x = -0.22
         _look_timer = 0.0
-        _cam_yaw.global_position = global_position + Vector3(0, 1.5 if kind == "car" else 3.0, 0)
+        _cam_yaw.global_position = global_position + Vector3(0, _cam_h(), 0)
         _camera.make_current()
         _audio.play()
         _playback = _audio.get_stream_playback()
@@ -243,7 +283,7 @@ func _physics_process(delta: float) -> void:
     elif throttle > 0.05:
         if fwd_speed < -1.0:
             brk = brake_force * throttle
-        elif kmh < max_speed_kmh:
+        elif kmh < max_speed_kmh * (0.55 if condition < 30.0 else 1.0):
             eng = max_engine_force * throttle
     elif throttle < -0.05:
         if fwd_speed > 1.0:
@@ -260,13 +300,24 @@ func _physics_process(delta: float) -> void:
         fuel = maxf(0.0, fuel - moved * tank / _range_m)
     if uses_fuel and fuel <= 0.0:
         eng = 0.0
+    if condition <= 0.0:
+        eng = 0.0
 
     engine_force = eng
     brake = brk
+    for w in _all_wheels:
+        if w.use_as_steering:
+            w.wheel_friction_slip = 3.0 * grip
     for w in _rear:
-        w.wheel_friction_slip = 1.3 if hand else 2.7
+        w.wheel_friction_slip = (1.3 if hand else 2.7) * grip
         if hand:
             w.brake = brake_force
+    if kind == "moto":
+        # мотоцикл держится вертикально: «гироскоп» гасит крен
+        var up := basis_now.y
+        var fwd := basis_now.z
+        var roll := up.cross(Vector3.UP).dot(fwd)
+        apply_torque(fwd * roll * mass * 40.0 - fwd * angular_velocity.dot(fwd) * mass * 6.0)
 
     # На скорости руль поворачивается меньше — машина устойчивее.
     var steer_limit := lerpf(max_steer, 0.16, clampf(kmh / 110.0, 0.0, 1.0))
@@ -312,7 +363,7 @@ func _setup_camera() -> void:
     _cam_yaw.add_child(_cam_pitch)
 
     var spring := SpringArm3D.new()
-    spring.spring_length = 6.5 if kind == "car" else 11.0
+    spring.spring_length = 6.5 if kind == "car" else (5.0 if kind == "moto" else 11.0)
     spring.margin = 0.3
     var probe := SphereShape3D.new()
     probe.radius = 0.3
@@ -334,7 +385,7 @@ func _process(delta: float) -> void:
         return
     if _playback:
         _fill_engine_sound()
-    _cam_yaw.global_position = global_position + Vector3(0, 1.5 if kind == "car" else 3.0, 0)
+    _cam_yaw.global_position = global_position + Vector3(0, _cam_h(), 0)
     _look_timer -= delta
     # Если игрок не крутит камеру — она плавно встаёт за машину.
     if _look_timer <= 0.0 and linear_velocity.length() > 1.0:
@@ -500,3 +551,127 @@ func _update_flashers(delta: float) -> void:
     var first := fmod(_flash_t, 0.8) < 0.4              # половина времени — один цвет
     _lamp_a.emission_energy_multiplier = 5.0 if first and strobe else 0.2
     _lamp_b.emission_energy_multiplier = 5.0 if not first and strobe else 0.2
+
+
+
+func _cam_h() -> float:
+    return 1.5 if kind == "car" or kind == "moto" else 3.0
+
+
+# ---------------------------------------------------------------- тюнинг и поломки
+
+## Перекрасить (меш кузова собирается заново).
+func repaint(col: Color) -> void:
+    paint = col
+    _body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
+    apply_tuning()
+
+
+## Тонировка, цвет дисков, номер — после покупки, загрузки или тюнинга на СТО.
+func apply_tuning() -> void:
+    var glass := CarModel.glass_material()
+    var tinted := StandardMaterial3D.new()
+    tinted.albedo_color = Color(0.02, 0.02, 0.03)
+    tinted.roughness = 0.05
+    tinted.metallic = 0.7
+    var mesh := _body_mi.mesh
+    for i in mesh.get_surface_count():
+        if mesh.surface_get_material(i) == glass:
+            _body_mi.set_surface_override_material(i, tinted if tint else null)
+    var rim := CarModel.rim_material()
+    var custom: StandardMaterial3D = null
+    if rim_color.a > 0.0:
+        custom = StandardMaterial3D.new()
+        custom.albedo_color = rim_color
+        custom.metallic = 0.85
+        custom.roughness = 0.25
+    for mi in _wheel_mis:
+        for i in mi.mesh.get_surface_count():
+            if mi.mesh.surface_get_material(i) == rim:
+                mi.set_surface_override_material(i, custom)
+    for l in _plates:
+        l.text = plate_text
+
+
+## Удар: машина портится. Возвращает true, если сломалась совсем.
+func damage(amount: float) -> bool:
+    condition = maxf(0.0, condition - amount)
+    _update_smoke()
+    return condition <= 0.0
+
+
+func repair() -> void:
+    condition = 100.0
+    _update_smoke()
+
+
+func _update_smoke() -> void:
+    if condition >= 30.0:
+        if _smoke:
+            _smoke.emitting = false
+        return
+    if _smoke == null:
+        _smoke = CPUParticles3D.new()
+        _smoke.amount = 16
+        _smoke.lifetime = 1.6
+        _smoke.direction = Vector3.UP
+        _smoke.spread = 25.0
+        _smoke.gravity = Vector3(0, 1.0, 0)
+        _smoke.initial_velocity_min = 0.8
+        _smoke.initial_velocity_max = 1.6
+        _smoke.scale_amount_min = 0.6
+        _smoke.scale_amount_max = 1.4
+        var q := QuadMesh.new()
+        q.size = Vector2(0.9, 0.9)
+        var m := StandardMaterial3D.new()
+        m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+        m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+        m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+        m.vertex_color_use_as_albedo = true
+        if ResourceLoader.exists("res://textures/fx/smoke_light.png"):
+            m.albedo_texture = load("res://textures/fx/smoke_light.png")
+        q.material = m
+        _smoke.mesh = q
+        var g := Gradient.new()
+        g.set_color(0, Color(0.7, 0.7, 0.7, 0.7))
+        g.set_color(1, Color(0.8, 0.8, 0.8, 0.0))
+        _smoke.color_ramp = g
+        _smoke.position = Vector3(0, 1.0, 1.5) if kind == "car" else Vector3(0, 1.0, 0.5)
+        add_child(_smoke)
+    _smoke.emitting = true
+    _smoke.color_ramp.set_color(0, Color(0.15, 0.15, 0.15, 0.8) if condition <= 0.0 else Color(0.7, 0.7, 0.7, 0.7))
+
+
+## Мотоциклист: виден, только пока игрок за рулём.
+func _build_rider() -> void:
+    _rider = Node3D.new()
+    add_child(_rider)
+    var m := StandardMaterial3D.new()
+    m.albedo_color = rider_color
+    var body := MeshInstance3D.new()
+    var cap := CapsuleMesh.new()
+    cap.radius = 0.2
+    cap.height = 0.8
+    body.mesh = cap
+    body.material_override = m
+    body.position = Vector3(0, 1.2, -0.15)
+    body.rotation.x = 0.35
+    _rider.add_child(body)
+    var head := MeshInstance3D.new()
+    var sph := SphereMesh.new()
+    sph.radius = 0.15
+    sph.height = 0.3
+    head.mesh = sph
+    var hm := StandardMaterial3D.new()
+    hm.albedo_color = Color(0.1, 0.1, 0.12)   # шлем
+    head.material_override = hm
+    head.position = Vector3(0, 1.68, 0.02)
+    _rider.add_child(head)
+    _rider.visible = false
+
+
+func set_rider_color(col: Color) -> void:
+    rider_color = col
+    if _rider:
+        var body: MeshInstance3D = _rider.get_child(0)
+        (body.material_override as StandardMaterial3D).albedo_color = col

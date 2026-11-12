@@ -3,6 +3,7 @@ extends RefCounted
 ## важно для телефона). Общая для ездящих и припаркованных машин.
 ## Перед машины смотрит в +Z — так устроен VehicleBody3D в Godot.
 
+const BodyMesh := preload("res://scripts/body_mesh.gd")
 const WHEEL_RADIUS := 0.31
 const WHEEL_X := 0.72
 const WHEEL_Z := 1.28
@@ -13,6 +14,8 @@ static var _shared := {}
 ## Коллизия кузова. kind: "car", "bus", "truck".
 static func add_collision(body: CollisionObject3D, kind := "car") -> void:
     match kind:
+        "moto":
+            _shape(body, Vector3(0.6, 0.8, 2.0), Vector3(0, 0.75, 0))
         "bus":
             _shape(body, Vector3(2.5, 2.7, 10.0), Vector3(0, 1.85, 0))
         "truck":
@@ -26,6 +29,8 @@ static func add_collision(body: CollisionObject3D, kind := "car") -> void:
 ## Кузов без колёс (для ездящей машины). tail — материал стоп-сигналов.
 static func body_mesh(paint: Color, tail: Material, kind := "car") -> ArrayMesh:
     match kind:
+        "moto":
+            return _merge(_moto_parts(paint, tail))
         "bus":
             return _merge(_bus_parts(paint, tail))
         "truck":
@@ -34,6 +39,8 @@ static func body_mesh(paint: Color, tail: Material, kind := "car") -> ArrayMesh:
 
 
 static func wheel_radius(kind: String) -> float:
+    if kind == "moto":
+        return 0.33
     return WHEEL_RADIUS if kind == "car" else 0.5
 
 
@@ -41,6 +48,10 @@ static func wheel_radius(kind: String) -> float:
 static func wheel_spots(kind: String) -> Array:
     var out := []
     match kind:
+        "moto":   # физически 4 колеса рядом (так мотоцикл не падает), выглядят как 2 широких
+            for x: float in [0.09, -0.09]:
+                out.append([Vector3(x, 0.4, 0.72), true])
+                out.append([Vector3(x, 0.4, -0.72), false])
         "bus":
             for x: float in [1.05, -1.05]:
                 out.append([Vector3(x, 0.62, 3.6), true])
@@ -124,14 +135,26 @@ static func _body_parts(paint: Color, tail: Material) -> Array:
         side.albedo_color = Color(0, 0, 0, 0.85)
 
     var p := []
-    _bx(p, Vector3(1.62, 0.6, 4.0), Vector3(0, 0.68, 0), body)       # низ кузова
+    # Кузов из профиля сбоку: капот, лобовое, крыша, заднее стекло, багажник.
+    if not _shared.has("car_shell"):
+        _shared["car_shell"] = BodyMesh.extrude(PackedVector2Array([
+                Vector2(2.0, 0.40), Vector2(2.0, 0.88), Vector2(1.88, 0.94), Vector2(0.95, 0.99),
+                Vector2(-1.25, 0.99), Vector2(-1.9, 0.96), Vector2(-2.0, 0.90), Vector2(-2.0, 0.40)]),
+                0.81, 0.77, 0.86, 0.99)
+        _shared["car_cabin"] = BodyMesh.extrude(PackedVector2Array([
+                Vector2(0.97, 0.96), Vector2(0.30, 1.40), Vector2(-0.75, 1.43), Vector2(-1.30, 0.96)]),
+                0.76, 0.64, 0.96, 1.43)
+        _shared["car_roof"] = BodyMesh.extrude(PackedVector2Array([
+                Vector2(0.34, 1.375), Vector2(0.26, 1.455), Vector2(-0.78, 1.48), Vector2(-0.82, 1.40)]),
+                0.665, 0.65, 1.37, 1.48)
+    p.append([_shared["car_shell"], Transform3D(), body])
+    p.append([_shared["car_cabin"], Transform3D(), glass])
+    p.append([_shared["car_roof"], Transform3D(), body])
     _bx(p, Vector3(1.64, 0.07, 4.02), Vector3(0, 0.6, 0), dark)      # молдинг
-    _bx(p, Vector3(1.44, 0.42, 1.7), Vector3(0, 1.19, -0.15), glass) # стёкла
-    _bx(p, Vector3(1.48, 0.07, 1.8), Vector3(0, 1.435, -0.15), body) # крыша
     for sx: float in [-1.0, 1.0]:
-        _bx(p, Vector3(0.06, 0.42, 0.10), Vector3(0.71 * sx, 1.19, 0.68), body)   # стойка A
-        _bx(p, Vector3(0.06, 0.42, 0.12), Vector3(0.71 * sx, 1.19, -0.10), body)  # стойка B
-        _bx(p, Vector3(0.06, 0.42, 0.12), Vector3(0.71 * sx, 1.19, -0.98), body)  # стойка C
+        _slant(p, Vector2(0.97, 0.96), Vector2(0.30, 1.40), 0.70 * sx, body)    # стойка A вдоль лобового
+        _bx(p, Vector3(0.05, 0.44, 0.1), Vector3(0.70 * sx, 1.18, -0.15), body)  # стойка B
+        _slant(p, Vector2(-0.75, 1.43), Vector2(-1.30, 0.96), 0.70 * sx, body)  # стойка C вдоль заднего
         _bx(p, Vector3(0.12, 0.10, 0.07), Vector3(0.84 * sx, 1.05, 0.62), dark)   # зеркала
     if detailed:   # плоские «наклейки» с картинками
         _qd(p, Vector2(0.86, 0.22), Vector3(0, 0.82, 2.004), 0.0, grille)
@@ -153,6 +176,35 @@ static func _body_parts(paint: Color, tail: Material) -> Array:
     return p
 
 
+static func _moto_parts(paint: Color, tail: Material) -> Array:
+    var body := _mat("paint_" + paint.to_html(), paint, 0.3, 0.4)
+    var dark := _mat("dark", Color(0.07, 0.07, 0.08), 0.7)
+    var chrome := _mat("chrome", Color(0.72, 0.72, 0.75), 0.25, 0.9)
+    var head := _mat("head", Color(1.0, 0.96, 0.85), 0.2, 0.0, 0.6)
+    var p := []
+    _bx(p, Vector3(0.14, 0.14, 1.3), Vector3(0, 0.55, 0.0), dark)       # рама
+    _bx(p, Vector3(0.32, 0.26, 0.55), Vector3(0, 0.88, 0.22), body)     # бак
+    _bx(p, Vector3(0.28, 0.12, 0.7), Vector3(0, 0.86, -0.3), dark)      # сиденье
+    _bx(p, Vector3(0.24, 0.2, 0.4), Vector3(0, 0.72, -0.68), body)      # хвост
+    _bx(p, Vector3(0.36, 0.3, 0.4), Vector3(0, 0.5, -0.05), chrome)     # мотор
+    for sx: float in [-1.0, 1.0]:
+        _bx(p, Vector3(0.04, 0.6, 0.04), Vector3(0.1 * sx, 0.68, 0.66), chrome)   # вилка
+    _bx(p, Vector3(0.7, 0.04, 0.04), Vector3(0, 1.05, 0.58), dark)      # руль
+    _bx(p, Vector3(0.18, 0.16, 0.08), Vector3(0, 0.92, 0.78), head)     # фара
+    _bx(p, Vector3(0.14, 0.08, 0.04), Vector3(0, 0.78, -0.89), tail)    # фонарь
+    _bx(p, Vector3(0.08, 0.08, 0.5), Vector3(0.18, 0.42, -0.5), chrome) # выхлоп
+    return p
+
+
+## Общий материал стёкол (чтобы машина могла заменить его на тонировку).
+static func glass_material() -> StandardMaterial3D:
+    return _mat("glass", Color(0.09, 0.12, 0.16), 0.05, 0.6)
+
+
+static func rim_material() -> StandardMaterial3D:
+    return _mat("rim", Color(0.70, 0.70, 0.72), 0.3, 0.8)
+
+
 static func _bus_parts(paint: Color, tail: Material) -> Array:
     var body := _mat("paint_" + paint.to_html(), paint, 0.4, 0.2)
     var dark := _mat("dark", Color(0.07, 0.07, 0.08), 0.7)
@@ -169,6 +221,24 @@ static func _bus_parts(paint: Color, tail: Material) -> Array:
         _bx(p, Vector3(0.35, 0.2, 0.03), Vector3(0.85 * sx, 0.9, 5.01), head)
         _bx(p, Vector3(0.3, 0.3, 0.03), Vector3(0.95 * sx, 1.0, -5.01), tail)
     _bx(p, Vector3(2.0, 0.4, 0.05), Vector3(0, 3.0, 5.01), dark)        # табло маршрута
+    # Рабочий жёлтый автобус — с картинками: борта с окнами, двери, перед
+    var yellow := paint.r > 0.8 and paint.g > 0.6 and paint.b < 0.4
+    if yellow and _tex("bus_side") != null:
+        var side := _mat("bus_side", Color.WHITE, 0.6)
+        if side.albedo_texture == null:
+            _textured(side, "bus_side")
+            side.uv1_scale = Vector3(3, 1, 1)
+        var door := _mat("bus_door", Color.WHITE, 0.4)
+        if door.albedo_texture == null:
+            _textured(door, "bus_door")
+        var front := _mat("bus_front", Color.WHITE, 0.5)
+        if front.albedo_texture == null:
+            _textured(front, "bus_front")
+        for sx: float in [-1.0, 1.0]:
+            _qd(p, Vector2(9.6, 2.5), Vector3(1.275 * sx, 1.85, 0), PI * 0.5 * sx, side)
+        for dz: float in [3.8, -0.5]:
+            _qd(p, Vector2(1.2, 2.3), Vector3(-1.285, 1.55, dz), -PI * 0.5, door)
+        _qd(p, Vector2(2.5, 2.7), Vector3(0, 1.85, 5.03), 0.0, front)
     return p
 
 
@@ -187,6 +257,22 @@ static func _truck_parts(paint: Color, tail: Material) -> Array:
     for sx: float in [-1.0, 1.0]:
         _bx(p, Vector3(0.35, 0.2, 0.03), Vector3(0.8 * sx, 1.0, 4.81), head)
         _bx(p, Vector3(0.3, 0.25, 0.03), Vector3(0.95 * sx, 0.9, -4.31), tail)
+    # Картинки: кабина спереди (в цвет машины), борта и двери фургона
+    if _tex("truck_front") != null:
+        var cab := _mat("truck_front_" + paint.to_html(), paint.lightened(0.45), 0.5)
+        if cab.albedo_texture == null:
+            _textured(cab, "truck_front")
+        var side := _mat("cargo_side", Color.WHITE, 0.6)
+        if side.albedo_texture == null:
+            _textured(side, "cargo_side")
+            side.uv1_scale = Vector3(2, 1, 1)
+        var rear := _mat("cargo_rear", Color.WHITE, 0.6)
+        if rear.albedo_texture == null:
+            _textured(rear, "cargo_rear")
+        _qd(p, Vector2(2.4, 2.4), Vector3(0, 1.75, 4.83), 0.0, cab)
+        for sx: float in [-1.0, 1.0]:
+            _qd(p, Vector2(6.4, 2.8), Vector3(1.258 * sx, 2.1, -1.1), PI * 0.5 * sx, side)
+        _qd(p, Vector2(2.5, 2.8), Vector3(0, 2.1, -4.32), PI, rear)
     return p
 
 
@@ -259,6 +345,18 @@ static func _textured(m: StandardMaterial3D, tex_name: String, triplanar := 0.0)
         m.uv1_triplanar = true
         m.uv1_scale = Vector3.ONE * triplanar
     return true
+
+
+## Тонкая стойка между двумя точками профиля (z, y) на боковой стороне x.
+static func _slant(parts: Array, a: Vector2, b: Vector2, x: float, mat: Material) -> void:
+    var d := b - a
+    var L := d.length()
+    var m := BoxMesh.new()
+    m.size = Vector3(0.05, 0.06, L)
+    # локальная ось Z детали — вдоль отрезка: (0, -sin t, cos t) = (0, dy, dz) / L
+    var t := atan2(-d.y / L, d.x / L)
+    var mid := (a + b) * 0.5
+    parts.append([m, Transform3D(Basis(Vector3.RIGHT, t), Vector3(x, mid.y, mid.x)), mat])
 
 
 static func _bx(parts: Array, size: Vector3, pos: Vector3, mat: Material) -> void:

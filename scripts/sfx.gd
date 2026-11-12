@@ -30,7 +30,7 @@ func _ready() -> void:
     _sounds["bird"] = _make_bird()
     _sounds["hit"] = _make_hit()
     # Звуки из файлов (sounds/*.wav): еда, дверь, лечение, новый уровень, касса, сирена...
-    for n: String in ["eat", "door", "heal", "levelup", "cash", "siren", "heartbeat", "faint"]:
+    for n: String in ["eat", "door", "heal", "levelup", "cash", "siren", "heartbeat", "faint", "rain", "thunder"]:
         var path := "res://sounds/%s.wav" % n
         if ResourceLoader.exists(path):
             _sounds[n] = load(path)

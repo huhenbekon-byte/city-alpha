@@ -16,6 +16,7 @@ var cars: Array = []
 var has_gps := false
 var gps_target := Vector3.ZERO
 var points: Array = []   # [[Vector3, Color], ...] — банкоматы, АЗС, работы
+var turf: Array = []     # [[Rect2, Color], ...] — территории ОПГ (видны членам ОПГ)
 
 var _circle := PackedVector2Array()
 var _clip := Rect2()
@@ -41,6 +42,9 @@ func _draw() -> void:
         _wrect(Rect2(-ext, -ext, ext * 2.0, ext * 2.0), Color(0.80, 0.80, 0.82), c, s)  # дороги
         for r: Rect2 in city.block_rects:
             _wrect(r, Color(0.93, 0.95, 0.91), c, s)
+        for t: Array in turf:
+            var tc: Color = t[1]
+            _wrect(t[0], Color(tc.r, tc.g, tc.b, 0.35), c, s)
         for r: Rect2 in city.building_rects:
             _wrect(r, Color(0.70, 0.71, 0.74), c, s)
 

@@ -8,7 +8,20 @@ signal job_stopped
 signal summon_car
 signal phone_closed
 signal menu_requested
+signal app_pressed(id: String)
 
+## Приложения телефона: [id, подпись, иконка, цвет плитки].
+const APPS := [
+    ["work", "Работа", "briefcase", Color(0.85, 0.55, 0.1)],
+    ["bank", "Банк", "bank", Color(0.15, 0.55, 0.3)],
+    ["gps", "Навигатор", "nav", Color(0.2, 0.45, 0.85)],
+    ["bag", "Сумка", "bag", Color(0.55, 0.35, 0.2)],
+    ["sms", "СМС", "chat", Color(0.3, 0.7, 0.35)],
+    ["taxi", "Такси", "car", Color(0.95, 0.75, 0.1)],
+    ["car", "Моя машина", "key", Color(0.35, 0.38, 0.45)],
+    ["biz", "Бизнес", "money", Color(0.6, 0.45, 0.1)],
+    ["menu", "Меню", "gear", Color(0.3, 0.3, 0.33)],
+]
 const MinimapScript := preload("res://scripts/minimap.gd")
 const ProfileScript := preload("res://scripts/profile.gd")
 const Icons := preload("res://scripts/icons.gd")
@@ -20,6 +33,9 @@ var _cash := 0
 var _nick := ""
 var _health := 100
 var _hunger := 100
+var _wanted := 0
+var _weather_icon := ""
+var _sms_badge := 0
 var phone_open := false
 
 var _clock: Label
@@ -29,8 +45,7 @@ var _toast_time := 0.0
 var _phone: Panel
 var _phone_money: Label
 var _phone_job: Label
-var _courier_btn: Button
-var _taxi_btn: Button
+var _app_btns := {}
 var _job_active := false
 
 
@@ -39,7 +54,7 @@ func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_IGNORE
 
     _clock = _make_label(self, 18, Color(1, 1, 1, 0.9))
-    _clock.position = Vector2(24, ROW_Y + 56)
+    _clock.position = Vector2(54, ROW_Y + 56)
     _job = _make_label(self, 19, Color(1.0, 0.85, 0.3))
     _job.position = Vector2(24, ROW_Y + 82)
 
@@ -80,10 +95,32 @@ func set_money(cash: int, bank: int) -> void:
 func set_vitals(health: float, hunger: float) -> void:
     var h := int(ceil(health))
     var f := int(ceil(hunger))
-    if h != _health or f != _hunger or h < 25:
+    if h != _health or f != _hunger or h < 25 or _wanted > 0:
         _health = h
         _hunger = f
         queue_redraw()
+
+
+## Значок погоды у часов: "sun", "cloud", "rain", "snow".
+func set_weather(icon: String) -> void:
+    if icon != _weather_icon:
+        _weather_icon = icon
+        queue_redraw()
+
+
+## Звёзды розыска (0..5).
+func set_wanted(stars: int) -> void:
+    if stars != _wanted:
+        _wanted = stars
+        queue_redraw()
+
+
+## Сколько непрочитанных СМС (кружок на приложении).
+func set_sms_badge(n: int) -> void:
+    if n != _sms_badge:
+        _sms_badge = n
+        if _app_btns.has("sms"):
+            (_app_btns["sms"] as Button).queue_redraw()
 
 
 func _vital_bar(pos: Vector2, k: float, col: Color, icon: String) -> void:
@@ -122,6 +159,14 @@ func _draw() -> void:
     draw_string(font, Vector2(bx + 56, y + 9), nick, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE)
     _vital_bar(Vector2(24, y + 36), _health / 100.0, Color(0.85, 0.15, 0.15), "heart")
     _vital_bar(Vector2(184, y + 36), _hunger / 100.0, Color(0.95, 0.6, 0.1), "food")
+    if _weather_icon != "":
+        Icons.draw(self, _weather_icon, Vector2(36, y + 67), 26, Color.WHITE, Color.BLACK)
+    if _wanted > 0:
+        var blink := fmod(Time.get_ticks_msec() / 1000.0, 1.0) < 0.5
+        for k in 5:
+            var on := k < _wanted
+            var col := (Color(1.0, 0.25, 0.2) if blink else Color(0.35, 0.55, 1.0)) if on else Color(1, 1, 1, 0.25)
+            Icons.draw(self, "star", Vector2(360 + k * 28, y + 36), 24, col, Color.BLACK if on else Color(0, 0, 0, 0))
 
 
 static func _fmt(v: int) -> String:
@@ -174,8 +219,6 @@ func close_phone() -> void:
 
 func update_phone(job_active: bool, job_text: String) -> void:
     _job_active = job_active
-    _courier_btn.text = "Закончить смену" if job_active else "Работа: курьер"
-    _taxi_btn.visible = not job_active
     _phone_job.text = job_text
 
 
@@ -189,6 +232,15 @@ func _build_phone() -> void:
     _phone.add_theme_stylebox_override("panel", sb)
     _phone.visible = false
     add_child(_phone)
+    if ResourceLoader.exists("res://textures/phone_wallpaper.jpg"):
+        var wp := TextureRect.new()
+        wp.texture = load("res://textures/phone_wallpaper.jpg")
+        wp.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        wp.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+        wp.modulate = Color(1, 1, 1, 0.85)
+        wp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        _phone.add_child(wp)
+        wp.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 12)
     _phone.anchor_left = 0.5
     _phone.anchor_right = 0.5
     _phone.anchor_top = 0.5
@@ -215,16 +267,45 @@ func _build_phone() -> void:
     spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
     box.add_child(spacer)
 
-    _courier_btn = _make_button(box, "Работа: курьер")
-    _courier_btn.pressed.connect(_on_courier_pressed)
-    _taxi_btn = _make_button(box, "Работа: таксист")
-    _taxi_btn.pressed.connect(_on_taxi_pressed)
-    var summon := _make_button(box, "Подогнать машину")
-    summon.pressed.connect(_on_summon_pressed)
-    var menu := _make_button(box, "Меню / пауза")
-    menu.pressed.connect(_on_menu_pressed)
+    var grid := GridContainer.new()
+    grid.columns = 3
+    grid.add_theme_constant_override("h_separation", 10)
+    grid.add_theme_constant_override("v_separation", 10)
+    box.add_child(grid)
+    for app: Array in APPS:
+        var b := Button.new()
+        b.custom_minimum_size = Vector2(102, 96)
+        b.focus_mode = Control.FOCUS_NONE
+        b.flat = true
+        b.draw.connect(_draw_app.bind(b, app))
+        b.pressed.connect(_click)
+        b.pressed.connect(_on_app.bind(String(app[0])))
+        grid.add_child(b)
+        _app_btns[String(app[0])] = b
     var close := _make_button(box, "Закрыть")
     close.pressed.connect(close_phone)
+
+
+func _draw_app(b: Button, app: Array) -> void:
+    var col: Color = app[3]
+    var r := Rect2(Vector2(19, 2), Vector2(64, 64))
+    Icons.panel(b, r, col.darkened(0.25) if b.is_pressed() else col, 16)
+    Icons.draw(b, String(app[2]), r.get_center(), 40, Color.WHITE)
+    var font := ThemeDB.fallback_font
+    var t := String(app[1])
+    var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+    b.draw_string(font, Vector2((b.size.x - w) * 0.5, 88), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+    if String(app[0]) == "sms" and _sms_badge > 0:
+        b.draw_circle(Vector2(82, 6), 11, Color(0.9, 0.15, 0.15))
+        var n := str(mini(_sms_badge, 9))
+        b.draw_string(font, Vector2(77, 12), n, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+
+
+func _on_app(id: String) -> void:
+    if id == "menu":
+        _on_menu_pressed()
+        return
+    app_pressed.emit(id)
 
 
 func _on_menu_pressed() -> void:

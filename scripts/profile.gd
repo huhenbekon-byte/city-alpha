@@ -7,6 +7,7 @@ signal opened
 signal closed
 signal navigator_requested
 signal faction_requested
+signal inventory_requested
 
 const Icons := preload("res://scripts/icons.gd")
 const BG := Color(0.06, 0.06, 0.07, 0.97)
@@ -36,6 +37,7 @@ func _ready() -> void:
     _pill_button(_popup, "Статистика", open_stats)
     _pill_button(_popup, "Банковский счёт", open_bank)
     _pill_button(_popup, "Навигатор", _on_navigator)
+    _pill_button(_popup, "Инвентарь", _on_inventory)
     _faction_btn = _pill_button(_popup, "Фракция", _on_faction)
     _faction_btn.visible = false   # появляется, только если игрок во фракции
 
@@ -83,6 +85,11 @@ func open_bank() -> void:
 func _on_navigator() -> void:
     close_all()
     navigator_requested.emit()
+
+
+func _on_inventory() -> void:
+    close_all()
+    inventory_requested.emit()
 
 
 func _on_faction() -> void:

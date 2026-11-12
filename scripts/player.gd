@@ -5,6 +5,13 @@ extends CharacterBody3D
 ## используется он и его анимации Idle / Walk / Run / Jump.
 
 const TouchControlsScript := preload("res://scripts/touch_controls.gd")
+const BodyMesh := preload("res://scripts/body_mesh.gd")
+## Персонаж Quaternius (CC0) с анимациями. Если файла нет — собираем своего из деталей.
+const CHARACTER_PATH := "res://models/character/character.gltf"
+const CHAR_DIR := "res://models/character/"
+## Какие анимации из библиотеки брать для состояний.
+const ANIM_NAMES := {"idle": "Idle_Loop", "walk": "Walk_Loop", "run": "Sprint_Loop", "jog": "Jog_Fwd_Loop",
+        "jump": "Jump_Loop"}
 
 @export_group("Движение")
 @export var walk_speed := 2.4
@@ -65,6 +72,8 @@ func _ready() -> void:
     _visual = Node3D.new()
     _visual.name = "Visual"
     add_child(_visual)
+    if model_scene == null and ResourceLoader.exists(CHARACTER_PATH):
+        model_scene = load(CHARACTER_PATH)
     if model_scene:
         _setup_model()
     else:
@@ -141,6 +150,21 @@ func set_look(colors: Dictionary, textures := {}) -> void:
     for id: String in textures:
         if _look_mats.has(id):
             _set_cloth(_look_mats[id], String(textures[id]))
+    if _body_sh:
+        for slot: String in ["jacket", "pants", "shoes"]:
+            if colors.has(slot):
+                var c: Color = colors[slot]
+                _body_sh.set_shader_parameter(slot + "_col", Vector3(c.r, c.g, c.b))
+            if textures.has(slot):
+                var t := _load_tex(String(textures[slot]))
+                if t:
+                    _body_sh.set_shader_parameter(slot + "_tex", t)
+        if colors.has("skin"):
+            var sc: Color = colors["skin"]
+            _body_sh.set_shader_parameter("skin_tint", Vector3(sc.r / 0.87, sc.g / 0.68, sc.b / 0.55))
+    if _hair_mat and colors.has("hair"):
+        var hc: Color = colors["hair"]
+        _hair_mat.albedo_color = hc.lightened(0.15)
     if _face_mat and colors.has("skin"):
         var c: Color = colors["skin"]
         _face_mat.set_shader_parameter("skin", Vector3(c.r, c.g, c.b))
@@ -276,12 +300,16 @@ func _setup_model() -> void:
         push_warning("В модели нет AnimationPlayer — анимаций не будет.")
         return
     _anim = players[0] as AnimationPlayer
+    _setup_character_look(m)
+    for key: String in ANIM_NAMES:
+        if _anim.has_animation(ANIM_NAMES[key]):
+            _anim_map[key] = ANIM_NAMES[key]
     for anim_name in _anim.get_animation_list():
         var low := String(anim_name).to_lower()
         for key in ["idle", "walk", "run", "jump"]:
             if low.contains(key) and not _anim_map.has(key):
                 _anim_map[key] = anim_name
-    for key in ["idle", "walk", "run"]:
+    for key in ["idle", "walk", "run", "jog", "jump"]:
         if _anim_map.has(key):
             _anim.get_animation(_anim_map[key]).loop_mode = Animation.LOOP_LINEAR
 
@@ -289,17 +317,54 @@ func _setup_model() -> void:
 func _animate_model() -> void:
     var hspeed := Vector2(velocity.x, velocity.z).length()
     var want := "idle"
+    var rate := 1.0
     if not is_on_floor() and _anim_map.has("jump"):
         want = "jump"
-    elif hspeed > (walk_speed + run_speed) * 0.5 and _anim_map.has("run"):
+    elif hspeed > walk_speed + 0.8 and _anim_map.has("run"):
         want = "run"
+        rate = clampf(hspeed / 6.0, 0.7, 1.4)
     elif hspeed > 0.2 and _anim_map.has("walk"):
         want = "walk"
+        rate = clampf(hspeed / 1.5, 0.6, 1.7)   # анимация шагает ~1.5 м/с
     if not _anim_map.has(want):
         return
     var anim_name: String = _anim_map[want]
     if _anim.current_animation != anim_name:
         _anim.play(anim_name, 0.2)
+    _anim.speed_scale = rate
+
+
+## Материалы для персонажа Quaternius: тело с одеждой по маске, волосы, брови.
+var _body_sh: ShaderMaterial = null
+var _hair_mat: StandardMaterial3D = null
+
+
+func _setup_character_look(root: Node) -> void:
+    if not ResourceLoader.exists("res://shaders/character.gdshader") or not ResourceLoader.exists(CHAR_DIR + "body_mask.png"):
+        return
+    _body_sh = ShaderMaterial.new()
+    _body_sh.shader = load("res://shaders/character.gdshader")
+    _body_sh.set_shader_parameter("body_tex", load(CHAR_DIR + "body_light.png"))
+    _body_sh.set_shader_parameter("mask_tex", load(CHAR_DIR + "body_mask.png"))
+    for slot: String in ["jacket", "pants", "shoes"]:
+        var t := _load_tex({"jacket": "cloth_nylon", "pants": "cloth_denim", "shoes": "cloth_sneaker"}[slot])
+        if t:
+            _body_sh.set_shader_parameter(slot + "_tex", t)
+    _hair_mat = StandardMaterial3D.new()
+    _hair_mat.albedo_color = Color(0.25, 0.17, 0.12)
+    if ResourceLoader.exists(CHAR_DIR + "hair_gray.png"):
+        _hair_mat.albedo_texture = load(CHAR_DIR + "hair_gray.png")
+    _hair_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+    _hair_mat.alpha_scissor_threshold = 0.4
+    _hair_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+    _hair_mat.roughness = 0.7
+    for mi: Node in root.find_children("*", "MeshInstance3D", true, false):
+        var mesh_i := mi as MeshInstance3D
+        var nm := String(mesh_i.name).to_lower()
+        if nm.contains("superhero") or nm.contains("body"):
+            mesh_i.material_override = _body_sh
+        elif nm.contains("hair") or nm.contains("eyebrow"):
+            mesh_i.material_override = _hair_mat
 
 
 # ---------------------------------------------------------------- встроенный персонаж
@@ -326,25 +391,26 @@ func _build_character() -> void:
 
     var body := _joint(_visual, Vector3.ZERO, "body")
     var pelvis := _joint(body, Vector3(0, 0.95, 0), "pelvis")
-    _part(pelvis, _capsule(0.15, 0.42), jeans, Vector3(0, 0.02, 0), Vector3(0, 0, PI / 2), Vector3(1, 1, 0.8))
+    _part(pelvis, BodyMesh.part("pelvis"), jeans, Vector3(0, 0.02, 0))
 
     for side in [-1.0, 1.0]:
         var sfx := "_l" if side < 0.0 else "_r"
         var hip := _joint(pelvis, Vector3(0.1 * side, -0.02, 0), "hip" + sfx)
-        _part(hip, _capsule(0.085, 0.5), jeans, Vector3(0, -0.22, 0))
+        _part(hip, BodyMesh.part("thigh"), jeans, Vector3.ZERO)
         var knee := _joint(hip, Vector3(0, -0.45, 0), "knee" + sfx)
-        _part(knee, _capsule(0.075, 0.46), jeans, Vector3(0, -0.2, 0))
-        _part(knee, _capsule(0.065, 0.27), shoes, Vector3(0, -0.41, -0.04), Vector3(PI / 2, 0, 0))
-        _part(knee, _box(Vector3(0.13, 0.03, 0.27)), sole, Vector3(0, -0.455, -0.04))
+        _part(knee, _sphere(0.068), jeans, Vector3.ZERO)
+        _part(knee, BodyMesh.part("calf"), jeans, Vector3.ZERO)
+        _part(knee, BodyMesh.part("shoe"), shoes, Vector3(0, -0.41, 0.07), Vector3(-PI / 2, 0, 0))
+        _part(knee, _box(Vector3(0.11, 0.025, 0.29)), sole, Vector3(0, -0.452, -0.075))
 
     var spine := _joint(pelvis, Vector3(0, 0.05, 0), "spine")
-    _part(spine, _capsule(0.2, 0.58), jacket, Vector3(0, 0.25, 0), Vector3.ZERO, Vector3(1.15, 1, 0.72))
+    _part(spine, BodyMesh.part("torso"), jacket, Vector3.ZERO)
     _part(spine, _box(Vector3(0.12, 0.26, 0.02)), shirt, Vector3(0, 0.25, -0.142))
     _part(spine, _cylinder(0.055, 0.1), skin, Vector3(0, 0.55, 0))
 
     var head := _joint(spine, Vector3(0, 0.58, 0), "head")
     _part(head, _sphere(0.12), head_mat, Vector3(0, 0.1, 0))
-    _part(head, _sphere(0.13), hair, Vector3(0, 0.14, 0.02), Vector3.ZERO, Vector3(1, 0.85, 1.05))
+    _part(head, BodyMesh.part("hair"), hair, Vector3(0, 0.125, 0.02))
     if _face_mat == null:   # без картинки лица — простые глаза
         for side in [-1.0, 1.0]:
             _part(head, _sphere(0.018), eye, Vector3(0.045 * side, 0.11, -0.112))
@@ -352,11 +418,12 @@ func _build_character() -> void:
     for side in [-1.0, 1.0]:
         var sfx := "_l" if side < 0.0 else "_r"
         var sh := _joint(spine, Vector3(0.26 * side, 0.45, 0), "sh" + sfx)
-        _part(sh, _sphere(0.08), jacket, Vector3.ZERO)
-        _part(sh, _capsule(0.07, 0.32), jacket, Vector3(0, -0.14, 0))
+        _part(sh, _sphere(0.085), jacket, Vector3.ZERO)
+        _part(sh, BodyMesh.part("upper_arm"), jacket, Vector3.ZERO)
         var el := _joint(sh, Vector3(0, -0.29, 0), "el" + sfx)
-        _part(el, _capsule(0.058, 0.28), jacket, Vector3(0, -0.13, 0))
-        _part(el, _sphere(0.055), skin, Vector3(0, -0.29, 0))
+        _part(el, _sphere(0.058), jacket, Vector3.ZERO)
+        _part(el, BodyMesh.part("forearm"), jacket, Vector3.ZERO)
+        _part(el, BodyMesh.part("hand"), skin, Vector3.ZERO)
 
 
 func _animate_procedural(delta: float) -> void:

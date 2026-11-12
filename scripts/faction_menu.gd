@@ -8,6 +8,7 @@ signal gps_requested(kind: String)      # "base" / "garage"
 signal leave_requested
 signal spawn_requested(index: int)
 signal announce_posted(text: String)
+signal duty_toggled
 
 const Icons := preload("res://scripts/icons.gd")
 const BG := Color(0.07, 0.07, 0.08, 0.97)
@@ -145,6 +146,10 @@ func _rebuild() -> void:
     _news_edit = null
     var c0 := CONTENT.position
     match tab:
+        "main":
+            var on := bool(data.get("on_duty", false))
+            var b := _small_button("Закончить смену" if on else "Начать смену", Vector2(WIN.x - 26 - 230, 112), Vector2(230, 48), true)
+            b.pressed.connect(func() -> void: duty_toggled.emit())
         "garage":
             var list: Array = data.get("vehicles", [])
             for i in list.size():
