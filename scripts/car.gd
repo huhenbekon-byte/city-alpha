@@ -14,6 +14,12 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var kind := "car"   # "car", "bus", "truck"
 @export var car_name := "Классика"
 @export var price := 8000
+## Фракционная раскраска: надпись и полоса по бортам, мигалки на крыше.
+@export var livery_text := ""
+@export var livery_color := Color(0.15, 0.30, 0.70)
+@export var has_lights := false
+@export var light_a := Color(1.0, 0.12, 0.10)
+@export var light_b := Color(0.15, 0.35, 1.0)
 
 ## Куплена ли машина. Чужую (с рынка, не купленную) водить нельзя.
 var owned := false
@@ -40,6 +46,9 @@ var _look_timer := 0.0
 var _flip_timer := 0.0
 var _tail_mat: StandardMaterial3D
 var _spawn := Transform3D()
+var _lamp_a: StandardMaterial3D = null
+var _lamp_b: StandardMaterial3D = null
+var _flash_t := 0.0
 
 # Звук мотора синтезируется прямо в коде (без аудиофайлов).
 const MIX_RATE := 22050.0
@@ -74,6 +83,7 @@ func _ready() -> void:
     for spot: Array in CarModel.wheel_spots(kind):
         _add_wheel(spot[0], spot[1])
 
+    _build_livery()
     _setup_camera()
     _setup_audio()
 
@@ -92,7 +102,7 @@ func _ready() -> void:
     _headlight.rotation = Vector3(-0.12, PI, 0.0)  # SpotLight светит в -Z, а перед машины — +Z
     _headlight.spot_range = 38.0
     _headlight.spot_angle = 34.0
-    _headlight.light_energy = 3.0
+    _headlight.light_energy = 1.6
     _headlight.light_color = Color(1.0, 0.95, 0.82)
     _headlight.shadow_enabled = false
     _headlight.visible = false
@@ -316,6 +326,8 @@ func _setup_camera() -> void:
 
 
 func _process(delta: float) -> void:
+    if _lamp_a != null:
+        _update_flashers(delta)
     if not driven:
         return
     if _playback:
@@ -360,3 +372,112 @@ func _fill_engine_sound() -> void:
         _filt += ((saw * 0.5 + pulse * 0.5) * amp - _filt) * 0.22  # мягкий фильтр
         buf[i] = Vector2(_filt, _filt)
     _playback.push_buffer(buf)
+
+
+# ---------------------------------------------------------------- раскраска и мигалки
+
+func _build_livery() -> void:
+    if livery_text == "" and not has_lights:
+        return
+    # [полуширина борта, высота надписи, высота полосы, толщина полосы, длина, центр по Z, кегль]
+    var w := 0.82
+    var ty := 0.74
+    var sy := 0.50
+    var sh := 0.12
+    var ln := 3.4
+    var lz := 0.0
+    var fs := 64
+    match kind:
+        "bus":
+            w = 1.27
+            ty = 1.30
+            sy = 0.85
+            sh = 0.25
+            ln = 9.4
+            fs = 110
+        "truck":
+            w = 1.27
+            ty = 2.35
+            sy = 1.45
+            sh = 0.30
+            ln = 6.0
+            lz = -1.1
+            fs = 130
+    if livery_text != "":
+        var sm := StandardMaterial3D.new()
+        sm.albedo_color = livery_color
+        sm.roughness = 0.5
+        var bm := BoxMesh.new()
+        bm.size = Vector3(0.02, sh, ln)
+        for side: float in [1.0, -1.0]:
+            var stripe := MeshInstance3D.new()
+            stripe.mesh = bm
+            stripe.material_override = sm
+            stripe.position = Vector3(w * side, sy, lz)
+            add_child(stripe)
+            var l := Label3D.new()
+            l.text = livery_text
+            l.font_size = fs
+            l.pixel_size = 0.004
+            l.modulate = livery_color
+            l.outline_size = 0
+            l.double_sided = false
+            l.position = Vector3((w + 0.025) * side, ty, lz)
+            l.rotation.y = PI * 0.5 * side
+            add_child(l)
+    if has_lights:
+        var ly := 1.47
+        var bz := -0.15
+        var span := 0.32
+        match kind:
+            "bus":
+                ly = 3.26
+                bz = 4.3
+                span = 0.6
+            "truck":
+                ly = 3.0
+                bz = 3.5
+                span = 0.55
+        var base := MeshInstance3D.new()
+        var bb := BoxMesh.new()
+        bb.size = Vector3(span * 2.0 + 0.3, 0.06, 0.28)
+        base.mesh = bb
+        var bmat := StandardMaterial3D.new()
+        bmat.albedo_color = Color(0.1, 0.1, 0.11)
+        base.material_override = bmat
+        base.position = Vector3(0, ly - 0.04, bz)
+        add_child(base)
+        _lamp_a = _lamp_mat(light_a)
+        _lamp_b = _lamp_mat(light_b)
+        var lm := BoxMesh.new()
+        lm.size = Vector3(span, 0.14, 0.24)
+        for k in 2:
+            var mi := MeshInstance3D.new()
+            mi.mesh = lm
+            mi.material_override = _lamp_a if k == 0 else _lamp_b
+            mi.position = Vector3(span * 0.5 * (1.0 if k == 0 else -1.0), ly + 0.06, bz)
+            add_child(mi)
+
+
+func _lamp_mat(col: Color) -> StandardMaterial3D:
+    var m := StandardMaterial3D.new()
+    m.albedo_color = col.darkened(0.3)
+    m.emission_enabled = true
+    m.emission = col
+    m.emission_energy_multiplier = 0.2
+    return m
+
+
+## Мигалки работают, пока в машине водитель.
+func _update_flashers(delta: float) -> void:
+    if not driven:
+        if _flash_t != 0.0:
+            _flash_t = 0.0
+            _lamp_a.emission_energy_multiplier = 0.2
+            _lamp_b.emission_energy_multiplier = 0.2
+        return
+    _flash_t += delta
+    var strobe := fmod(_flash_t * 10.0, 1.0) < 0.5     # частое «моргание»
+    var first := fmod(_flash_t, 0.8) < 0.4              # половина времени — один цвет
+    _lamp_a.emission_energy_multiplier = 5.0 if first and strobe else 0.2
+    _lamp_b.emission_energy_multiplier = 5.0 if not first and strobe else 0.2

@@ -6,6 +6,7 @@ extends Control
 signal opened
 signal closed
 signal navigator_requested
+signal faction_requested
 
 const Icons := preload("res://scripts/icons.gd")
 const BG := Color(0.06, 0.06, 0.07, 0.97)
@@ -19,6 +20,7 @@ var _popup: VBoxContainer
 var _stats: Control
 var _bank: Control
 var _font: Font
+var _faction_btn: Button
 
 
 func _ready() -> void:
@@ -34,6 +36,8 @@ func _ready() -> void:
     _pill_button(_popup, "Статистика", open_stats)
     _pill_button(_popup, "Банковский счёт", open_bank)
     _pill_button(_popup, "Навигатор", _on_navigator)
+    _faction_btn = _pill_button(_popup, "Фракция", _on_faction)
+    _faction_btn.visible = false   # появляется, только если игрок во фракции
 
     _stats = _make_window(Vector2(780, 520))
     _stats.draw.connect(_draw_stats.bind(_stats))
@@ -79,6 +83,17 @@ func open_bank() -> void:
 func _on_navigator() -> void:
     close_all()
     navigator_requested.emit()
+
+
+func _on_faction() -> void:
+    close_all()
+    faction_requested.emit()
+
+
+## Вкладка «Фракция» видна только тем, кто состоит во фракции.
+func set_faction_visible(on: bool, title := "Фракция") -> void:
+    _faction_btn.visible = on
+    _faction_btn.text = "  " + title
 
 
 func close_all() -> void:
@@ -217,7 +232,7 @@ func _make_window(sz: Vector2) -> Control:
     return w
 
 
-func _pill_button(parent: Control, text: String, cb: Callable) -> void:
+func _pill_button(parent: Control, text: String, cb: Callable) -> Button:
     var b := Button.new()
     b.text = "  " + text
     b.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -234,6 +249,7 @@ func _pill_button(parent: Control, text: String, cb: Callable) -> void:
     b.pressed.connect(func() -> void: Sfx.play("click"))
     b.pressed.connect(cb)
     parent.add_child(b)
+    return b
 
 
 func _text(ci: Control, pos: Vector2, text: String, font_size: int, col: Color, max_w := -1.0) -> void:

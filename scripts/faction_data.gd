@@ -1,0 +1,112 @@
+extends RefCounted
+## Фракции: государственные (type "state") и ОПГ (type "gang").
+## Ранги, зарплаты (у ОПГ — доля из общака), машины автопарка.
+
+## Ранги (номер = индекс + 1). Лимит — сколько человек может быть на ранге (для онлайна).
+const RANKS := ["Новенький", "Начинающий", "Знающий", "Помощник", "Заместитель", "Лидер"]
+const RANK_TAGS := ["", "", "", "", "СС", "Л/СС"]
+const RANK_LIMITS := [115, 115, 115, 115, 2, 1]
+## Зарплата за каждую получку (раз в 3 игровых часа) по рангам.
+const SALARY := [400, 550, 700, 900, 1200, 1600]
+## Сколько получек «стажа» нужно для повышения с ранга 1, 2, 3.
+## Заместителя и лидера назначает лидер (будет в онлайне).
+const PROMOTE_AFTER := [3, 5, 8]
+
+## Ранги ОПГ: Авторитета (СС) и Вора в Законе (Л/СС) назначают, остальные — за стаж.
+const GANG_RANKS := ["Пешка", "Шнырь", "Фраер", "Барыга", "Авторитет", "Вор в Законе"]
+const GANG_LIMITS := [100, 100, 100, 100, 2, 1]
+const GANG_SALARY := [300, 450, 600, 800, 1100, 1500]
+
+const LIST := [
+    {"id": "mayor", "name": "Мэрия", "title": "МЭРИЯ", "color": Color(0.85, 0.68, 0.25),
+        "wall": Color(0.90, 0.84, 0.72), "vehicles": [
+            {"name": "Служебная", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 1, "speed": 140.0, "force": 5600.0},
+            {"name": "Автобус мэрии", "kind": "bus", "paint": Color(0.92, 0.92, 0.90), "livery": "МЭРИЯ", "livery_col": Color(0.15, 0.25, 0.55), "rank": 2, "speed": 90.0, "force": 18000.0},
+            {"name": "Представительская", "kind": "car", "paint": Color(0.10, 0.14, 0.28), "rank": 5, "speed": 170.0, "force": 7400.0},
+        ]},
+    {"id": "police", "name": "Милиция", "title": "МИЛИЦИЯ", "color": Color(0.20, 0.35, 0.75),
+        "wall": Color(0.70, 0.76, 0.84), "vehicles": [
+            {"name": "ППС", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "МИЛИЦИЯ", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 1, "speed": 150.0, "force": 6000.0},
+            {"name": "ДПС", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "ДПС", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 2, "speed": 170.0, "force": 7000.0},
+            {"name": "Автозак", "kind": "truck", "paint": Color(0.40, 0.45, 0.55), "livery": "МИЛИЦИЯ", "livery_col": Color(0.95, 0.95, 0.95), "lights": true, "rank": 3, "speed": 100.0, "force": 22000.0},
+            {"name": "Начальник отдела", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 5, "speed": 170.0, "force": 7400.0},
+        ]},
+    {"id": "hospital", "name": "Больница", "title": "БОЛЬНИЦА", "color": Color(0.85, 0.15, 0.15),
+        "wall": Color(0.86, 0.93, 0.90), "vehicles": [
+            {"name": "Скорая помощь", "kind": "truck", "paint": Color(0.95, 0.95, 0.93), "livery": "СКОРАЯ", "livery_col": Color(0.85, 0.12, 0.12), "lights": true, "light_b": Color(0.2, 0.4, 1.0), "rank": 1, "speed": 110.0, "force": 22000.0},
+            {"name": "Служебная", "kind": "car", "paint": Color(0.95, 0.95, 0.93), "livery": "МЕДСЛУЖБА", "livery_col": Color(0.85, 0.12, 0.12), "rank": 3, "speed": 140.0, "force": 5600.0},
+            {"name": "Главврач", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 5, "speed": 170.0, "force": 7400.0},
+        ]},
+    {"id": "fire", "name": "Пожарная станция", "title": "ПОЖАРНАЯ ЧАСТЬ", "color": Color(0.85, 0.20, 0.10),
+        "wall": Color(0.92, 0.84, 0.78), "vehicles": [
+            {"name": "Пожарная машина", "kind": "truck", "paint": Color(0.78, 0.10, 0.08), "livery": "ПОЖАРНАЯ", "livery_col": Color(0.95, 0.95, 0.95), "lights": true, "light_b": Color(0.2, 0.4, 1.0), "rank": 1, "speed": 100.0, "force": 24000.0},
+            {"name": "Командирская", "kind": "car", "paint": Color(0.78, 0.10, 0.08), "livery": "МЧС", "livery_col": Color(0.95, 0.95, 0.95), "lights": true, "light_b": Color(0.2, 0.4, 1.0), "rank": 3, "speed": 150.0, "force": 6000.0},
+        ]},
+    {"id": "kgb", "name": "КГБ", "title": "КГБ", "color": Color(0.30, 0.32, 0.30),
+        "wall": Color(0.48, 0.40, 0.32), "vehicles": [
+            {"name": "Оперативная", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 1, "speed": 160.0, "force": 6400.0},
+            {"name": "Наружка", "kind": "car", "paint": Color(0.35, 0.37, 0.38), "rank": 2, "speed": 160.0, "force": 6400.0},
+            {"name": "Спецгруппа", "kind": "bus", "paint": Color(0.18, 0.20, 0.22), "rank": 4, "speed": 95.0, "force": 19000.0},
+            {"name": "Руководство", "kind": "car", "paint": Color(0.06, 0.06, 0.07), "rank": 5, "speed": 180.0, "force": 7800.0},
+        ]},
+    {"id": "tyap", "type": "gang", "name": "ОПГ «Тяп-Ляп»", "title": "ТЯП-ЛЯП", "color": Color(0.20, 0.65, 0.30),
+        "wall": Color(0.45, 0.47, 0.45), "vehicles": [
+            {"name": "Классика", "kind": "car", "paint": Color(0.15, 0.35, 0.18), "rank": 1, "speed": 115.0, "force": 4600.0},
+            {"name": "Девятка тонированная", "kind": "car", "paint": Color(0.08, 0.09, 0.08), "rank": 2, "speed": 140.0, "force": 5600.0},
+            {"name": "Седан бригадира", "kind": "car", "paint": Color(0.10, 0.25, 0.12), "rank": 4, "speed": 165.0, "force": 7000.0},
+            {"name": "Чёрный седан", "kind": "car", "paint": Color(0.05, 0.05, 0.06), "rank": 5, "speed": 180.0, "force": 7800.0},
+        ]},
+    {"id": "universam", "type": "gang", "name": "Универсамское ОПГ", "title": "УНИВЕРСАМ", "color": Color(0.25, 0.45, 0.90),
+        "wall": Color(0.45, 0.46, 0.50), "vehicles": [
+            {"name": "Классика", "kind": "car", "paint": Color(0.20, 0.30, 0.55), "rank": 1, "speed": 115.0, "force": 4600.0},
+            {"name": "Девятка тонированная", "kind": "car", "paint": Color(0.08, 0.08, 0.10), "rank": 2, "speed": 140.0, "force": 5600.0},
+            {"name": "Микроавтобус", "kind": "bus", "paint": Color(0.30, 0.32, 0.36), "rank": 3, "speed": 95.0, "force": 18000.0},
+            {"name": "Чёрный седан", "kind": "car", "paint": Color(0.05, 0.05, 0.06), "rank": 5, "speed": 180.0, "force": 7800.0},
+        ]},
+    {"id": "solnce", "type": "gang", "name": "Солнечные ОПГ", "title": "СОЛНЕЧНЫЕ", "color": Color(0.95, 0.75, 0.15),
+        "wall": Color(0.50, 0.47, 0.42), "vehicles": [
+            {"name": "Классика", "kind": "car", "paint": Color(0.75, 0.60, 0.15), "rank": 1, "speed": 115.0, "force": 4600.0},
+            {"name": "Девятка тонированная", "kind": "car", "paint": Color(0.08, 0.08, 0.08), "rank": 2, "speed": 140.0, "force": 5600.0},
+            {"name": "Седан бригадира", "kind": "car", "paint": Color(0.55, 0.40, 0.10), "rank": 4, "speed": 165.0, "force": 7000.0},
+            {"name": "Чёрный седан", "kind": "car", "paint": Color(0.05, 0.05, 0.06), "rank": 5, "speed": 180.0, "force": 7800.0},
+        ]},
+    {"id": "kavkaz", "type": "gang", "name": "Кавказское ОПГ", "title": "КАВКАЗ", "color": Color(0.80, 0.15, 0.15),
+        "wall": Color(0.48, 0.44, 0.42), "vehicles": [
+            {"name": "Классика", "kind": "car", "paint": Color(0.55, 0.12, 0.12), "rank": 1, "speed": 115.0, "force": 4600.0},
+            {"name": "Девятка тонированная", "kind": "car", "paint": Color(0.06, 0.06, 0.06), "rank": 2, "speed": 140.0, "force": 5600.0},
+            {"name": "Седан бригадира", "kind": "car", "paint": Color(0.92, 0.92, 0.90), "rank": 4, "speed": 165.0, "force": 7000.0},
+            {"name": "Чёрный седан", "kind": "car", "paint": Color(0.05, 0.05, 0.06), "rank": 5, "speed": 180.0, "force": 7800.0},
+        ]},
+]
+
+
+static func get_faction(id: String) -> Dictionary:
+    for f: Dictionary in LIST:
+        if f["id"] == id:
+            return f
+    return {}
+
+
+static func is_gang(id: String) -> bool:
+    return String(get_faction(id).get("type", "state")) == "gang"
+
+
+static func ranks(id: String) -> Array:
+    return GANG_RANKS if is_gang(id) else RANKS
+
+
+static func limits(id: String) -> Array:
+    return GANG_LIMITS if is_gang(id) else RANK_LIMITS
+
+
+static func salary(id: String, rank: int) -> int:
+    var list: Array = GANG_SALARY if is_gang(id) else SALARY
+    return int(list[clampi(rank, 1, list.size()) - 1])
+
+
+## «Заместитель (СС)», «Пешка» и т. п.
+static func rank_name(rank: int, id := "") -> String:
+    var names := ranks(id)
+    var i := clampi(rank, 1, names.size()) - 1
+    var tag: String = RANK_TAGS[i]
+    return String(names[i]) + (" (%s)" % tag if tag != "" else "")
