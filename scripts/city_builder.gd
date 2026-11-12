@@ -1289,7 +1289,15 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
     var yaw := _face_center(to_center)
     var front := _ff
     var accent: Color = f["color"]
-    var wall := _tinted("plaster", f["wall"], 3.0)
+    var wall: Material = _tinted("plaster", f["wall"], 3.0)
+    # фасад из модулей «стена + окно» (картинки textures/org/*_window.png): 11 x 3 по фасаду, 5 x 3 по торцу
+    var module := String({"mayor": "mayor_window", "police": "police_window", "hospital": "hospital_window",
+            "kgb": "kgb_window"}.get(fid, ""))
+    var has_module := module != "" and _org_tex(module) != null
+    if has_module:
+        wall = _module_mat(module, Vector3(34.0, 11.0, 16.0), Vector3(11.0, 3.0, 5.0))
+    elif fid == "fire" and _org_tex("fire_brick") != null:
+        wall = _tinted("org/fire_brick", Color(1, 1, 1), 2.0)
     if not _defs.has("fwin"):
         _batch("fwin", _box_mesh(Vector3(1.5, 1.9, 0.12)), _m["vitrine"], 260.0)
 
@@ -1301,14 +1309,16 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
     var base := Vector3(bc.x, 0.0, bc.z)
     _solid(Vector3(BW, BH, BD), base + Vector3(0, BH * 0.5, 0), wall, yaw)
     var plinth: Material = _m["granite"] if fid == "kgb" or fid == "mayor" else _m["plinth"]
+    if fid == "kgb" and _org_tex("kgb_granite") != null:
+        plinth = _tinted("org/kgb_granite", Color(0.85, 0.85, 0.85), 2.0)
     _deco(Vector3(BW + 0.2, 0.9, BD + 0.2), base + Vector3(0, 0.45, 0), plinth, yaw)
     _deco(Vector3(BW + 0.4, 0.5, BD + 0.4), base + Vector3(0, BH + 0.25, 0), _m["roof"], yaw)
     _deco(Vector3(BW + 0.12, 0.5, BD + 0.12), base + Vector3(0, BH - 0.9, 0), _tinted("plaster", accent, 3.0), yaw)
     _focc(base, BW + 2.0, BD + 2.0)
     _focc(base, BW, BD, true)
 
-    # Окна по всем сторонам (кроме двери и ворот пожарной части)
-    for fl: int in 3:
+    # Окна по всем сторонам (кроме двери и ворот пожарной части); с модулями окна уже на текстуре
+    for fl: int in (0 if has_module else 3):
         var wy := 2.1 + fl * 3.3
         for k: int in 11:
             var x := -15.0 + k * 3.0
@@ -1329,13 +1339,15 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
         if fid == "fire":
             col_mat = _m["concrete"]
         elif fid == "kgb":
-            col_mat = _m["granite"]
+            col_mat = plinth
         _solid(Vector3(0.5, 3.6, 0.5), _fp(cx, 0.0) + Vector3(0, 1.8, 0), col_mat, yaw)
     _deco(Vector3(2.8, 2.9, 0.1), _fp(0, -3.98) + Vector3(0, 1.5, 0), _m["glass"], yaw)
     _deco(Vector3(3.1, 0.15, 0.14), _fp(0, -3.95) + Vector3(0, 3.0, 0), _m["metal"], yaw)
     _deco(Vector3(16.0, 1.5, 0.15), _fp(0, -3.95) + Vector3(0, 5.0, 0), _m["sign"], yaw)
     var title: String = f["title"]
     _label(title, _fp(0, -3.86) + Vector3(0, 5.0, 0), front, 150 if title.length() < 10 else 120, accent.darkened(0.2))
+    _emblem(String(f.get("emblem", "")), _fp(-6.6, -3.84) + Vector3(0, 5.0, 0), front, 1.3)
+    _emblem(String(f.get("emblem", "")), _fp(6.6, -3.84) + Vector3(0, 5.0, 0), front, 1.3)
     _flat(_fp(0, 0), _fsz(40.0, 8.0), _m["paving"], SIDE_H + 0.006)
     _focc(_fp(0, 0), 40.0, 8.0)
 
@@ -1360,8 +1372,12 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
             _deco(Vector3(2.8, 0.85, 0.12), _fp(-11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
             _deco(Vector3(0.85, 2.8, 0.12), _fp(-11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
         "fire":
+            var gate := _fit_mat("org/fire_gate", Vector3(3.64, 4.2, 0.08), Color(0.80, 0.12, 0.08))
             for gx: float in [6.5, 10.5, 14.5]:
-                _put("garage_door", _fp(gx, -3.95) + Vector3(0, 2.1 - SIDE_H, 0), yaw, Color(0.80, 0.12, 0.08), Vector3(1.4, 2.0, 1.0))
+                if _org_tex("fire_gate") != null:
+                    _deco(Vector3(3.64, 4.2, 0.08), _fp(gx, -3.96) + Vector3(0, 2.1 - SIDE_H, 0), gate, yaw)
+                else:
+                    _put("garage_door", _fp(gx, -3.95) + Vector3(0, 2.1 - SIDE_H, 0), yaw, Color(0.80, 0.12, 0.08), Vector3(1.4, 2.0, 1.0))
             var tw := _fp(-12.0, -25.0)
             _solid(Vector3(4.0, 18.0, 4.0), Vector3(tw.x, 9.0, tw.z), _tinted("plaster", Color(0.75, 0.35, 0.25), 3.0), yaw)
             _deco(Vector3(4.4, 0.5, 4.4), Vector3(tw.x, 18.25, tw.z), _m["roof"], yaw)
@@ -1369,7 +1385,7 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
             _focc(tw, 4.0, 4.0, true)
         "kgb":
             for cx: float in [-12.0, -8.0, 8.0, 12.0]:
-                _deco(Vector3(0.7, BH - 1.2, 0.3), _fp(cx, -3.9) + Vector3(0, (BH - 1.2) * 0.5, 0), _m["granite"], yaw)
+                _deco(Vector3(0.7, BH - 1.2, 0.3), _fp(cx, -3.9) + Vector3(0, (BH - 1.2) * 0.5, 0), plinth, yaw)
 
     # Стоянка служебных машин и выезд к дороге
     _flat(_fp(0, 13), _fsz(44.0, 18.0), _m["yard_asphalt"], SIDE_H + 0.008)
@@ -1410,7 +1426,7 @@ func _build_interiors() -> void:
         if String(f.get("type", "state")) == "gang":
             _gang_interior(f, o)
             continue
-        var wall := _tinted("plaster", Color(f["wall"]).lightened(0.25), 3.0)
+        var wall: Material = _tinted("plaster", Color(f["wall"]).lightened(0.25), 3.0)
         var floor_mat: Material
         match fid:
             "mayor":
@@ -1421,14 +1437,30 @@ func _build_interiors() -> void:
                 floor_mat = _tinted("concrete", Color(0.35, 0.22, 0.18), 3.0)
             _:
                 floor_mat = _tinted("ground_tiles", Color(0.75, 0.75, 0.75), 2.0)
+        # Свои текстуры пола и стен (textures/org), если есть
+        var org_ok := _org_tex("parquet") != null
+        if org_ok:
+            match fid:
+                "mayor":
+                    floor_mat = _tinted("org/parquet", Color(1, 1, 1), 1.6)
+                    wall = _tinted("org/wood_panel", Color(1, 1, 1), 2.0)
+                "kgb":
+                    floor_mat = _tinted("org/parquet", Color(0.55, 0.45, 0.40), 1.6)
+                    wall = _tinted("org/wood_panel", Color(0.75, 0.70, 0.68), 2.0)
+                "hospital":
+                    floor_mat = _tinted("org/tiles_white", Color(1, 1, 1), 2.0)
+                    wall = _wall_mat("wall_hospital", H, 2.0)
+                _:
+                    floor_mat = _tinted("org/linoleum", Color(1, 1, 1), 2.5)
+                    wall = _wall_mat("wall_office", H, 3.0)
         _solid(Vector3(W + 1.0, 0.4, D + 1.0), o + Vector3(0, -0.2, 0), floor_mat)
         _solid(Vector3(W + 1.0, 0.4, D + 1.0), o + Vector3(0, H + 0.2, 0), _m["white"])
         _solid(Vector3(0.4, H, D), o + Vector3(-W * 0.5, H * 0.5, 0), wall)
         _solid(Vector3(0.4, H, D), o + Vector3(W * 0.5, H * 0.5, 0), wall)
         _solid(Vector3(W, H, 0.4), o + Vector3(0, H * 0.5, -D * 0.5), wall)
         _solid(Vector3(W, H, 0.4), o + Vector3(0, H * 0.5, D * 0.5), wall)
-        # плинтус-полоса цвета фракции
-        for zz: float in [-D * 0.5 + 0.21, D * 0.5 - 0.21]:
+        # плинтус-полоса цвета фракции (на однотонных стенах)
+        for zz: float in ([] if org_ok else [-D * 0.5 + 0.21, D * 0.5 - 0.21]):
             _deco(Vector3(W - 0.5, 0.5, 0.02), o + Vector3(0, 0.25, zz), _tinted("plaster", accent, 3.0))
         # свет: лампы на потолке и два источника
         var lamp := _mat(Color(1, 1, 0.95), 0.3)
@@ -1454,9 +1486,16 @@ func _build_interiors() -> void:
         # вывеска фракции на дальней стене
         _deco(Vector3(9.0, 1.4, 0.06), o + Vector3(0, 3.1, -D * 0.5 + 0.23), _m["sign"])
         _label(String(f["title"]), o + Vector3(0, 3.1, -D * 0.5 + 0.28), Vector3(0, 0, 1), 110, accent.darkened(0.2))
+        if fid != "hospital":   # у больницы на стене уже красный крест
+            _emblem(String(f.get("emblem", "")), o + Vector3(0, 1.6, -D * 0.5 + 0.26), Vector3(0, 0, 1), 1.1)
 
         # отдел кадров (слева) и стойка (справа)
-        var desk_mat := _mat(Color(0.35, 0.24, 0.16), 0.6) if fid != "kgb" else _mat(Color(0.15, 0.12, 0.10), 0.5)
+        var desk_mat: Material = _mat(Color(0.35, 0.24, 0.16), 0.6) if fid != "kgb" else _mat(Color(0.15, 0.12, 0.10), 0.5)
+        if _org_tex("desk_front") != null:
+            desk_mat = _fit_mat("org/desk_front", Vector3(1.7, 1.05, 0.9), Color(0.35, 0.24, 0.16))
+        # доска объявлений
+        _deco(Vector3(0.04, 1.0, 1.4), o + Vector3(-W * 0.5 + 0.23, 1.9, -5.6),
+                _fit_mat("org/cork_board", Vector3(0.04, 1.0, 1.4), Color(0.70, 0.55, 0.35)))
         for side: float in [-1.0, 1.0]:
             _solid(Vector3(3.4, 1.05, 0.9), o + Vector3(7.0 * side, 0.525, -5.2), desk_mat)
             _deco(Vector3(0.6, 0.9, 0.6), o + Vector3(7.0 * side, 0.45, -6.6), _m["metal"])   # стул за стойкой
@@ -1481,7 +1520,7 @@ func _build_interiors() -> void:
         # обстановка по фракции
         match fid:
             "mayor":
-                var carpet := _mat(Color(0.55, 0.08, 0.10), 0.95)
+                var carpet := _plane_mat("carpet_runner", Vector2(1.0, 5.0), Color(0.55, 0.08, 0.10))
                 _flat(o + Vector3(0, 0, 0), Vector2(2.6, D - 1.0), carpet, SIDE_H + 0.01)
                 for fx: float in [-2.5, 2.5]:
                     _deco(Vector3(0.08, 3.0, 0.08), o + Vector3(fx, 1.5, -D * 0.5 + 0.6), _m["metal"])
@@ -1493,31 +1532,39 @@ func _build_interiors() -> void:
                     _put("bush", o + Vector3(px, 1.5, 6.5), 0.0, Color.WHITE, Vector3(0.8, 0.9, 0.8))
             "police":
                 # камера (КПЗ) с решёткой у правой стены
-                for bz in 15:
-                    _solid(Vector3(0.06, H, 0.06), o + Vector3(8.6, H * 0.5, 0.2 + bz * 0.38), _m["metal"])
+                if _org_tex("kpz_bars") != null:
+                    _solid(Vector3(0.1, H, 5.4), o + Vector3(8.6, H * 0.5, 2.86), _fit_mat("org/kpz_bars", Vector3(0.1, H, 2.0), Color(0.5, 0.5, 0.5)))
+                else:
+                    for bz in 15:
+                        _solid(Vector3(0.06, H, 0.06), o + Vector3(8.6, H * 0.5, 0.2 + bz * 0.38), _m["metal"])
                 _solid(Vector3(3.2, 0.5, 0.8), o + Vector3(10.6, 0.25, 5.8), _m["wood"])
                 _label("КПЗ", o + Vector3(8.5, 3.4, 3.0), Vector3(-1, 0, 0), 64, Color(0.9, 0.9, 0.9))
-                _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), _mat(Color(0.12, 0.25, 0.65), 0.6))
+                if not org_ok:
+                    _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), _mat(Color(0.12, 0.25, 0.65), 0.6))
             "hospital":
+                var bed := _fit_mat("org/bed_sheet", Vector3(1.0, 0.6, 2.1), Color(0.95, 0.95, 0.95))
                 for bz: float in [-1.5, 1.5, 4.5]:
-                    _solid(Vector3(2.1, 0.6, 1.0), o + Vector3(10.6, 0.3, bz), _m["white"])
-                    _deco(Vector3(0.5, 0.15, 0.8), o + Vector3(11.3, 0.67, bz), _mat(Color(0.75, 0.88, 0.95), 0.9))
+                    _solid(Vector3(1.0, 0.6, 2.1), o + Vector3(10.6, 0.3, bz), bed)
                     _deco(Vector3(0.05, 1.8, 1.4), o + Vector3(9.3, 0.9, bz + 1.4), _mat(Color(0.55, 0.80, 0.80), 0.9))
                 var red := _mat(Color(0.85, 0.08, 0.08), 0.6)
                 _deco(Vector3(1.6, 0.5, 0.04), o + Vector3(0, 1.2, -D * 0.5 + 0.25), red)
                 _deco(Vector3(0.5, 1.6, 0.04), o + Vector3(0, 1.2, -D * 0.5 + 0.25), red)
             "fire":
                 var lred := _mat(Color(0.75, 0.10, 0.08), 0.5)
-                for bz in 10:
-                    _solid(Vector3(0.6, 2.0, 0.6), o + Vector3(W * 0.5 - 0.55, 1.0, -3.0 + bz * 0.7), lred)
+                if _org_tex("lockers") != null:
+                    _solid(Vector3(0.6, 2.0, 7.2), o + Vector3(W * 0.5 - 0.55, 1.0, 0.15), _fit_mat("org/lockers", Vector3(0.6, 2.0, 2.4), lred.albedo_color))
+                else:
+                    for bz in 10:
+                        _solid(Vector3(0.6, 2.0, 0.6), o + Vector3(W * 0.5 - 0.55, 1.0, -3.0 + bz * 0.7), lred)
                 _deco(Vector3(0.12, H, 0.12), o + Vector3(4.0, H * 0.5, 3.0), _m["pipe"])
                 _flat(o + Vector3(4.0, 0, 3.0), Vector2(1.6, 1.6), _m["rubber_red"], SIDE_H + 0.01)
-                _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), lred)
+                if not org_ok:
+                    _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), lred)
             "kgb":
                 for bz in 6:
-                    _solid(Vector3(0.7, 1.9, 0.9), o + Vector3(W * 0.5 - 0.6, 0.95, -4.0 + bz * 1.2), _tinted("steel", Color(0.60, 0.62, 0.58), 1.0))
-                _flat(o + Vector3(0, 0, 0), Vector2(6.0, 4.0), _mat(Color(0.35, 0.08, 0.08), 0.95), SIDE_H + 0.01)
-                _deco(Vector3(1.4, 1.8, 0.05), o + Vector3(0, 2.0, -D * 0.5 + 0.6), _mat(Color(0.55, 0.45, 0.25), 0.6))
+                    _solid(Vector3(0.7, 1.9, 0.9), o + Vector3(W * 0.5 - 0.6, 0.95, -4.0 + bz * 1.2),
+                            _fit_mat("org/file_cabinet", Vector3(0.7, 1.9, 0.9), Color(0.45, 0.46, 0.45)))
+                _flat(o + Vector3(0, 0, 0), Vector2(6.0, 4.0), _plane_mat("carpet_wall", Vector2(1, 1), Color(0.35, 0.08, 0.08)), SIDE_H + 0.01)
 
         interiors[fid] = {"spawn": o + Vector3(0, 0.3, D * 0.5 - 3.6), "exit": o + Vector3(0, 0, D * 0.5 - 1.3),
                 "hr": o + Vector3(-7.0, 0, -4.0), "desk": o + Vector3(7.0, 0, -4.0)}
@@ -1546,16 +1593,23 @@ func _tpl_gang(gid: String, to_center: Vector2) -> void:
     var base := Vector3(gc.x, 0.0, gc.z)
     var wall := _tinted("corrugated" if ResourceLoader.exists("res://textures/corrugated.png") else "metal_wall",
             Color(f["wall"]).lightened(0.3), 1.5)
+    if _org_tex("gang_wall") != null:
+        wall = _tinted("org/gang_wall", Color(1, 1, 1), 4.0)
     _solid(Vector3(16.0, 4.5, 10.0), base + Vector3(0, 2.25, 0), wall, yaw)
     _deco(Vector3(16.4, 0.3, 10.4), base + Vector3(0, 4.6, 0), _m["roof"], yaw)
     _deco(Vector3(16.1, 0.5, 10.1), base + Vector3(0, 0.25, 0), _m["plinth"], yaw)
     _focc(gc, 18.0, 12.0)
     _focc(gc, 16.0, 10.0, true)
-    _put("garage_door", _fp(-13, 9.03) + Vector3(0, 2.05 - SIDE_H, 0), yaw, accent.darkened(0.45), Vector3(2.0, 1.9, 1.0))
+    if _org_tex("gang_gate") != null:
+        _deco(Vector3(5.2, 4.0, 0.08), _fp(-13, 9.04) + Vector3(0, 2.0, 0) - Vector3(0, SIDE_H, 0),
+                _fit_mat("org/gang_gate", Vector3(5.2, 4.0, 0.08), Color(0.4, 0.35, 0.3)), yaw)
+    else:
+        _put("garage_door", _fp(-13, 9.03) + Vector3(0, 2.05 - SIDE_H, 0), yaw, accent.darkened(0.45), Vector3(2.0, 1.9, 1.0))
     _deco(Vector3(1.2, 2.3, 0.08), _fp(-4.5, 9.03) + Vector3(0, 1.15, 0), _mat(Color(0.22, 0.20, 0.18), 0.6), yaw)
     _deco(Vector3(0.5, 0.2, 0.3), _fp(-4.5, 9.15) + Vector3(0, 2.5, 0), lamp_mat, yaw)
     # «граффити» с названием на стене
     _label(String(f["title"]), _fp(-10, 9.08) + Vector3(0, 3.55, 0), _ff, 120, accent)
+    _emblem(String(f.get("emblem", "")), _fp(-4.5, 9.1) + Vector3(0, 3.5, 0), _ff, 1.2)
     _label(String(f["title"]), base + _fb * Vector3(0, 0, -5.06) + Vector3(0, 2.4, 0), -_ff, 140, accent)
     # обычные гаражи рядом
     _garages(_fp(14, 3), 5, along, _ff)
@@ -1583,6 +1637,9 @@ func _gang_interior(f: Dictionary, o: Vector3) -> void:
     var accent: Color = f["color"]
     var wall := _tinted("metal_wall", Color(f["wall"]).lightened(0.1), 3.0)
     var floor_mat := _tinted("concrete", Color(0.55, 0.55, 0.55), 3.0)
+    if _org_tex("garage_floor") != null:
+        floor_mat = _tinted("org/garage_floor", Color(1, 1, 1), 3.0)
+        wall = _tinted("org/garage_brick", Color(1, 1, 1), 2.5)
     _solid(Vector3(W + 1.0, 0.4, D + 1.0), o + Vector3(0, -0.2, 0), floor_mat)
     _solid(Vector3(W + 1.0, 0.4, D + 1.0), o + Vector3(0, H + 0.2, 0), _m["concrete"])
     _solid(Vector3(0.4, H, D), o + Vector3(-W * 0.5, H * 0.5, 0), wall)
@@ -1610,17 +1667,17 @@ func _gang_interior(f: Dictionary, o: Vector3) -> void:
     _label("ВЫХОД", o + Vector3(0, 2.9, D * 0.5 - 0.25), Vector3(0, 0, -1), 64, Color(0.3, 0.9, 0.4))
     # название ОПГ «краской» на дальней стене
     _label(String(f["title"]), o + Vector3(0, 3.0, -D * 0.5 + 0.23), Vector3(0, 0, 1), 170, accent)
+    _emblem(String(f.get("emblem", "")), o + Vector3(0, 1.5, -D * 0.5 + 0.24), Vector3(0, 0, 1), 1.2)
     # уголок смотрящего: ковёр на стене, диван, стол
-    _deco(Vector3(0.03, 2.0, 3.2), o + Vector3(-W * 0.5 + 0.23, 2.0, -3.0), _mat(Color(0.55, 0.12, 0.10), 0.95))
-    _deco(Vector3(0.03, 1.6, 2.8), o + Vector3(-W * 0.5 + 0.25, 2.0, -3.0), _mat(Color(0.75, 0.55, 0.20), 0.95))
-    var sofa := _mat(Color(0.25, 0.15, 0.10), 0.8)
+    _deco(Vector3(0.03, 2.0, 3.2), o + Vector3(-W * 0.5 + 0.23, 2.0, -3.0), _fit_mat("org/carpet_wall", Vector3(0.03, 2.0, 3.2), Color(0.55, 0.12, 0.10)))
+    var sofa := _fit_mat("org/sofa", Vector3(1.0, 1.0, 3.0), Color(0.25, 0.15, 0.10))
+    _deco(Vector3(0.04, 1.0, 1.4), o + Vector3(W * 0.5 - 0.23, 2.0, -1.5), _fit_mat("org/cork_board", Vector3(0.04, 1.0, 1.4), Color(0.70, 0.55, 0.35)))
     _solid(Vector3(1.0, 0.5, 3.0), o + Vector3(-W * 0.5 + 1.0, 0.25, -3.0), sofa)
     _deco(Vector3(0.3, 0.6, 3.0), o + Vector3(-W * 0.5 + 0.6, 0.75, -3.0), sofa)
     _solid(Vector3(1.2, 0.75, 1.8), o + Vector3(-W * 0.5 + 2.8, 0.375, -3.0), _m["wood"])
     _label("СМОТРЯЩИЙ", o + Vector3(-W * 0.5 + 0.3, 3.4, -3.0), Vector3(1, 0, 0), 56, Color(0.95, 0.95, 0.9))
     # общак
-    var safe := _tinted("steel", Color(0.55, 0.57, 0.58), 1.0)
-    safe.metallic = 0.5
+    var safe := _fit_mat("org/safe_door", Vector3(0.9, 1.1, 0.8), Color(0.40, 0.43, 0.40))
     _solid(Vector3(0.9, 1.1, 0.8), o + Vector3(-W * 0.5 + 0.8, 0.55, 3.5), safe)
     _label("ОБЩАК", o + Vector3(-W * 0.5 + 1.26, 0.8, 3.5), Vector3(1, 0, 0), 40, Color(1.0, 0.8, 0.3))
     # подъёмник с машиной
@@ -1681,4 +1738,64 @@ func _tiled_vc_mat(tex_name: String, meters: float, fallback: Color) -> Standard
         _ground_tex(m, t, Color.WHITE, meters)
     else:
         m.albedo_color = fallback
+    return m
+
+
+
+## Эмблема организации (картинка из textures/emblems) плоской табличкой на стене.
+func _emblem(id: String, pos: Vector3, facing: Vector3, size: float) -> void:
+    var t := _tex_mip("res://textures/emblems/%s.png" % id)
+    if t == null:
+        return
+    var sp := Sprite3D.new()
+    sp.texture = t
+    sp.pixel_size = size / float(t.get_width())
+    sp.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+    sp.shaded = true
+    sp.double_sided = false
+    sp.position = pos
+    sp.rotation.y = atan2(facing.x, facing.z)
+    sp.visibility_range_end = 120.0
+    add_child(sp)
+
+
+
+# ================================================================ текстуры организаций (textures/org)
+
+func _org_tex(tex_name: String) -> Texture2D:
+    return _tex_mip("res://textures/org/%s.png" % tex_name)
+
+
+## Фасад из одинаковых модулей «стена + окно»: counts — сколько модулей по X, Y, Z ящика size.
+func _module_mat(tex_name: String, size: Vector3, counts: Vector3) -> StandardMaterial3D:
+    var m := _mat(Color.WHITE, 0.85)
+    m.albedo_texture = _org_tex(tex_name)
+    m.uv1_triplanar = true   # по координатам самого здания: модули ровно по краям
+    m.uv1_scale = Vector3(counts.x / size.x, -counts.y / size.y, counts.z / size.z)
+    m.uv1_offset = Vector3(0.5, 0.5, 0.5)
+    m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+    return m
+
+
+## Стена в два цвета (низ/верх): картинка на всю высоту стены h, по длине повтор каждые tile м.
+func _wall_mat(tex_name: String, h: float, tile: float) -> StandardMaterial3D:
+    var m := _mat(Color(0.85, 0.85, 0.82), 0.85)
+    var t := _org_tex(tex_name)
+    if t:
+        m.albedo_color = Color.WHITE
+        m.albedo_texture = t
+        m.uv1_triplanar = true
+        m.uv1_scale = Vector3(1.0 / tile, -1.0 / h, 1.0 / tile)
+        m.uv1_offset = Vector3(0.0, 0.5, 0.0)
+    return m
+
+
+## Материал для плоскости (_flat): картинка целиком, rep — повторы по ширине и длине.
+func _plane_mat(tex_name: String, rep: Vector2, fallback: Color) -> StandardMaterial3D:
+    var m := _mat(fallback, 0.9)
+    var t := _org_tex(tex_name)
+    if t:
+        m.albedo_color = Color.WHITE
+        m.albedo_texture = t
+        m.uv1_scale = Vector3(rep.x, rep.y, 1.0)
     return m

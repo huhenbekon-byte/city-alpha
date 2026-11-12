@@ -18,8 +18,9 @@ const MarkerScript := preload("res://scripts/marker.gd")
 const DialogScript := preload("res://scripts/dialog.gd")
 const WorkScript := preload("res://scripts/work.gd")
 const FactionData := preload("res://scripts/faction_data.gd")
+const FactionMenuScript := preload("res://scripts/faction_menu.gd")
 
-const VERSION := "v0.13"
+const VERSION := "v0.14"
 const SAVE_PATH := "user://save.cfg"
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
@@ -97,6 +98,8 @@ var faction_exp := 0         # стаж: сколько получек полу�
 var _payday_acc := 0.0       # игровых минут с последней получки
 var _faction_car = null      # машина из автопарка (одна на игрока)
 var _interior := ""          # в каком здании игрок ("" — на улице)
+var faction_news: Array = []  # объявления организации: [текст, автор]
+var _fmenu: FactionMenuScript
 
 var _touch: TouchControlsScript
 var _hud: HudScript
@@ -230,6 +233,8 @@ func _process(delta: float) -> void:
     _hud.set_nick(passport_name)
     if _hud.profile.is_open():
         _hud.profile.set_data(_profile_data())
+    if _fmenu.visible:
+        _fmenu.set_data(_fmenu_data())
     var hh := int(minutes) / 60
     var mm := int(minutes) % 60
     var clock := "%02d:%02d   День %d" % [hh, mm, day]
@@ -327,6 +332,7 @@ func _open_menu() -> void:
         _hud.close_phone()
     _hud.profile.close_all()
     _win.close_window()
+    _fmenu.close_menu()
     get_tree().paused = true
     _touch.visible = false
     _menu.show_menu(_started, VERSION)
@@ -413,7 +419,7 @@ func _focus() -> Vector3:
 # ---------------------------------------------------------------- телефон и работа
 
 func _toggle_phone() -> void:
-    if _win.visible or _dialog.visible or _hud.profile.is_open():
+    if _win.visible or _dialog.visible or _hud.profile.is_open() or _fmenu.visible:
         return
     if _hud.phone_open:
         _hud.close_phone()
@@ -613,7 +619,7 @@ func _on_step(run: bool) -> void:
 
 ## Кнопка действия: сначала работа, потом точка рядом, потом машина.
 func _on_interact() -> void:
-    if _hud.phone_open or _win.visible or _dialog.visible or _hud.profile.is_open():
+    if _hud.phone_open or _win.visible or _dialog.visible or _hud.profile.is_open() or _fmenu.visible:
         return
     if _work.action_text(_focus(), _driving != null) != "":
         _work.do_action()
@@ -815,6 +821,7 @@ func _save_game() -> void:
     cfg.set_value("faction", "rank", faction_rank)
     cfg.set_value("faction", "exp", faction_exp)
     cfg.set_value("faction", "payday", _payday_acc)
+    cfg.set_value("faction", "news", faction_news)
     var cars := []
     for car in _cars:
         var f: Vector3 = car.global_transform.basis.z
@@ -861,6 +868,7 @@ func _load_game() -> void:
     faction_rank = int(cfg.get_value("faction", "rank", 0))
     faction_exp = int(cfg.get_value("faction", "exp", 0))
     _payday_acc = float(cfg.get_value("faction", "payday", 0.0))
+    faction_news = cfg.get_value("faction", "news", [])
     if FactionData.get_faction(faction).is_empty():
         faction = ""
         faction_rank = 0
@@ -1036,6 +1044,14 @@ func _build_ui() -> void:
     _win.right_pressed.connect(_on_win_right)
     _win.closed.connect(_on_win_closed)
 
+    _fmenu = FactionMenuScript.new()
+    layer.add_child(_fmenu)
+    _fmenu.closed.connect(_on_fmenu_closed)
+    _fmenu.gps_requested.connect(_on_fmenu_gps)
+    _fmenu.leave_requested.connect(_confirm_leave)
+    _fmenu.spawn_requested.connect(_on_fmenu_spawn)
+    _fmenu.announce_posted.connect(_on_fmenu_news)
+
     _dialog = DialogScript.new()
     layer.add_child(_dialog)
     _dialog.closed.connect(_on_dialog_closed)
@@ -1108,7 +1124,7 @@ func _setup_points() -> void:
 
 ## Ближайшая доступная точка: пешком — «пешие», в своей машине на месте — «машинные».
 func _find_point(focus: Vector3, speed: float):
-    if _dialog.visible or _win.visible:
+    if _dialog.visible or _win.visible or _fmenu.visible:
         return null
     var best = null
     var best_d := INF
@@ -1133,7 +1149,7 @@ func _open_dialog(title: String, text: String, buttons: Array, input_hint := "")
 
 
 func _on_dialog_closed() -> void:
-    _touch.blocked = false
+    _touch.blocked = _fmenu.visible
 
 
 ## Есть ли документы для работы. need_license — нужны права.
@@ -1784,6 +1800,7 @@ func _set_faction(fid: String, rank: int) -> void:
     faction_rank = rank
     faction_exp = 0
     _payday_acc = 0.0
+    faction_news = []
     _hud.profile.set_faction_visible(fid != "")
 
 
@@ -1918,6 +1935,7 @@ func _confirm_leave() -> void:
 
 func _leave_faction() -> void:
     var old := _faction_name()
+    _fmenu.close_menu()
     _despawn_faction_car()
     _set_faction("", 0)
     _dialog.close()
@@ -1937,8 +1955,7 @@ func _open_garage(fid: String) -> void:
             _hud.show_toast("Автопарк только для сотрудников: %s. Вступить — в отделе кадров внутри здания" % fname)
         return
     _touch.blocked = true
-    _win_mode = "garage"
-    _win.open_window("АВТОПАРК", "car", [{"id": "cars", "name": _faction_name(), "icon": "car"}], false)
+    _fmenu.open_menu(_fmenu_data(), "garage")
 
 
 func _fill_garage_rows(rows: Array) -> void:
@@ -2022,22 +2039,73 @@ func _despawn_faction_car() -> void:
     c.queue_free()
 
 
-# ---------------------------------------------------------------- меню фракции (заглушка)
+# ---------------------------------------------------------------- меню организации
 
 func _open_faction_menu() -> void:
     if faction == "":
         return
+    _touch.blocked = true
+    _fmenu.open_menu(_fmenu_data(), "main")
+
+
+func _fmenu_data() -> Dictionary:
+    var f := FactionData.get_faction(faction)
+    var gang := FactionData.is_gang(faction)
+    var names := FactionData.ranks(faction)
+    var lim := FactionData.limits(faction)
+    var ranks := []
+    for i in names.size():
+        ranks.append([FactionData.rank_name(i + 1, faction), int(lim[i]),
+                HudScript.format_money(FactionData.salary(faction, i + 1))])
     var site: Dictionary = _city.faction_sites[faction]
-    var need := _need_exp()
-    var left := int(ceil(PAYDAY_MINUTES - _payday_acc))
-    var pay_word := "Доля из общака" if FactionData.is_gang(faction) else "Зарплата"
-    var text := "%s\nРанг: %s\n%s: %s\nДо получки: %d мин (игровых)\n" % [_faction_name(),
-            FactionData.rank_name(faction_rank, faction), pay_word, HudScript.format_money(_salary()), left]
-    if need > 0:
-        text += "Стаж: %d из %d получек до повышения\n" % [mini(faction_exp, need), need]
-    text += "\nПолное меню — скоро."
-    _open_dialog("Фракция", text, [["Метка: база" if FactionData.is_gang(faction) else "Метка: здание", _faction_gps.bind(site["door"], String(site["name"]))],
-            ["Метка: автопарк", _faction_gps.bind(site["marker"], "Автопарк")], ["Закрыть", _dialog.close]])
+    var mk: Vector3 = site["marker"]
+    var at_garage := _driving == null and Vector2(_focus().x - mk.x, _focus().z - mk.z).length() < 6.0
+    return {"id": faction, "title": String(f.get("name", "")).to_upper(), "emblem": String(f.get("emblem", "")),
+            "accent": f["color"] if gang else Color(1.0, 0.76, 0.18), "gang": gang,
+            "rank": faction_rank, "rank_name": FactionData.rank_name(faction_rank, faction),
+            "exp": faction_exp, "need": _need_exp(), "pay": HudScript.format_money(_salary()),
+            "pay_word": "Доля из общака" if gang else "Зарплата",
+            "payday_left": int(ceil(PAYDAY_MINUTES - _payday_acc)), "online": 1, "members": 1,
+            "ranks": ranks, "vehicles": f.get("vehicles", []), "at_garage": at_garage,
+            "nick": passport_name if passport_name != "" else "Без_Имени", "news": faction_news}
+
+
+func _on_fmenu_closed() -> void:
+    _touch.blocked = false
+
+
+func _on_fmenu_gps(kind: String) -> void:
+    if faction == "":
+        return
+    var site: Dictionary = _city.faction_sites[faction]
+    var gang := FactionData.is_gang(faction)
+    if kind == "garage":
+        _faction_gps(site["marker"], "Автопарк")
+    else:
+        _faction_gps(site["door"], ("База: %s" if gang else "%s") % site["name"])
+    _fmenu.close_menu()
+
+
+func _on_fmenu_spawn(i: int) -> void:
+    var list: Array = FactionData.get_faction(faction).get("vehicles", [])
+    if i < 0 or i >= list.size():
+        return
+    if not bool(_fmenu_data()["at_garage"]):
+        Sfx.play("error")
+        _hud.show_toast("Встань на красную метку автопарка у базы — там выдают машины")
+        return
+    _fmenu.close_menu()
+    _spawn_faction_car(list[i])
+
+
+func _on_fmenu_news(text: String) -> void:
+    var tag: String = FactionData.RANK_TAGS[clampi(faction_rank, 1, 6) - 1]
+    faction_news.append([text, "%s (%s)" % [passport_name, tag] if tag != "" else passport_name])
+    if faction_news.size() > 20:
+        faction_news.pop_front()
+    Sfx.play("notify")
+    _fmenu.set_data(_fmenu_data())
+    _save_game()
 
 
 func _faction_gps(pos: Vector3, place: String) -> void:
