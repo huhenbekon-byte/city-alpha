@@ -12,6 +12,8 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var max_steer := 0.55
 @export var look_sensitivity := 0.006
 @export var kind := "car"   # "car", "bus", "truck", "moto"
+## Готовая 3D-модель из models/cars ("vaz2106", "sedan", "uaz452"...). Пусто — своя модель из кода.
+@export var model_id := ""
 @export var car_name := "Классика"
 @export var price := 8000
 ## Фракционная раскраска: надпись и полоса по бортам, мигалки на крыше.
@@ -39,6 +41,8 @@ var _all_wheels: Array[VehicleWheel3D] = []
 var _plates: Array[Label3D] = []
 var _smoke: CPUParticles3D = null
 var _rider: Node3D = null
+var _model_info := {}
+var _paint_surfaces: Array[int] = []
 
 ## Бензин. uses_fuel = false у рабочих машин (автобус, фура, учебная).
 var tank := 40.0
@@ -99,15 +103,19 @@ func _ready() -> void:
 
     CarModel.add_collision(self, kind)
     _tail_mat = CarModel.make_tail_material()
-    _body_mi = MeshInstance3D.new()
-    _body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
-    add_child(_body_mi)
-
-    for spot: Array in CarModel.wheel_spots(kind):
-        _add_wheel(spot[0], spot[1])
+    _model_info = CarModel.model_info(model_id) if kind == "car" else {}
+    if not _model_info.is_empty():
+        _setup_model()
+    else:
+        _body_mi = MeshInstance3D.new()
+        _body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
+        add_child(_body_mi)
+        for spot: Array in CarModel.wheel_spots(kind):
+            _add_wheel(spot[0], spot[1])
 
     _build_livery()
     if kind == "car":
+        var plates: Dictionary = _model_info.get("plates", {})
         for sz: float in [1.0, -1.0]:
             var l := Label3D.new()
             l.font_size = 30
@@ -116,6 +124,11 @@ func _ready() -> void:
             l.outline_size = 0
             l.double_sided = false
             l.position = Vector3(0, 0.455, 2.1 * sz + 0.004 * sz)
+            var key := "PlateF" if sz > 0.0 else "PlateR"
+            if plates.has(key):
+                l.position = plates[key] + Vector3(0, 0, 0.03 * sz)
+            elif not _model_info.is_empty():
+                l.visible = false   # у модели нет места под номер
             l.rotation.y = 0.0 if sz > 0.0 else PI
             add_child(l)
             _plates.append(l)
@@ -164,12 +177,12 @@ func set_owned(value: bool) -> void:
     _price_label.text = "%s\n%d %03d ₽\n%d км/ч" % [car_name, price / 1000, price % 1000, int(max_speed_kmh)]
 
 
-func _add_wheel(pos: Vector3, front: bool) -> void:
+func _add_wheel(pos: Vector3, front: bool, model_wheel: Mesh = null, model_r := 0.0) -> void:
     var w := VehicleWheel3D.new()
     w.position = pos
     w.use_as_steering = front
     w.use_as_traction = not front
-    var r := CarModel.wheel_radius(kind)
+    var r := model_r if model_wheel != null else CarModel.wheel_radius(kind)
     w.wheel_radius = r
     w.wheel_rest_length = 0.12
     w.suspension_travel = 0.18
@@ -182,8 +195,11 @@ func _add_wheel(pos: Vector3, front: bool) -> void:
     add_child(w)
     _all_wheels.append(w)
     var mi := MeshInstance3D.new()
-    mi.mesh = CarModel.wheel_mesh()
-    mi.scale = Vector3.ONE * (r / CarModel.WHEEL_RADIUS)
+    if model_wheel != null:
+        mi.mesh = model_wheel
+    else:
+        mi.mesh = CarModel.wheel_mesh()
+        mi.scale = Vector3.ONE * (r / CarModel.WHEEL_RADIUS)
     w.add_child(mi)
     _wheel_mis.append(mi)
     if not front:
@@ -456,6 +472,13 @@ func _build_livery() -> void:
             ln = 6.0
             lz = -1.1
             fs = 130
+    if _model_info.has("side"):   # у готовой модели — по её борту
+        var sd: Vector3 = _model_info["side"]
+        w = sd.x + 0.01
+        ty = sd.y + 0.04
+        sy = sd.y - 0.18
+        ln = 3.0 if sd.y < 0.9 else 3.6
+        fs = 64 if sd.y < 0.9 else 84
     if livery_text != "":
         var sm := StandardMaterial3D.new()
         sm.albedo_color = livery_color
@@ -491,6 +514,10 @@ func _build_livery() -> void:
                 ly = 3.0
                 bz = 3.5
                 span = 0.55
+        if _model_info.has("roof"):
+            var rf: Vector3 = _model_info["roof"]
+            ly = rf.y + 0.04
+            bz = rf.z
         var base := MeshInstance3D.new()
         var bb := BoxMesh.new()
         bb.size = Vector3(span * 2.0 + 0.3, 0.06, 0.28)
@@ -563,6 +590,10 @@ func _cam_h() -> float:
 ## Перекрасить (меш кузова собирается заново).
 func repaint(col: Color) -> void:
     paint = col
+    if not _model_info.is_empty():
+        for i in _paint_surfaces:
+            _body_mi.set_surface_override_material(i, CarModel.paint_material(_body_mi.mesh.surface_get_material(i), paint))
+        return
     _body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
     apply_tuning()
 
@@ -576,7 +607,8 @@ func apply_tuning() -> void:
     tinted.metallic = 0.7
     var mesh := _body_mi.mesh
     for i in mesh.get_surface_count():
-        if mesh.surface_get_material(i) == glass:
+        var sm := mesh.surface_get_material(i)
+        if sm == glass or (sm and String(sm.resource_name) == "Glass"):
             _body_mi.set_surface_override_material(i, tinted if tint else null)
     var rim := CarModel.rim_material()
     var custom: StandardMaterial3D = null
@@ -587,7 +619,8 @@ func apply_tuning() -> void:
         custom.roughness = 0.25
     for mi in _wheel_mis:
         for i in mi.mesh.get_surface_count():
-            if mi.mesh.surface_get_material(i) == rim:
+            var wm := mi.mesh.surface_get_material(i)
+            if wm == rim or (wm and String(wm.resource_name) in ["Rim", "M_Grey"]):
                 mi.set_surface_override_material(i, custom)
     for l in _plates:
         l.text = plate_text
@@ -675,3 +708,32 @@ func set_rider_color(col: Color) -> void:
     if _rider:
         var body: MeshInstance3D = _rider.get_child(0)
         (body.material_override as StandardMaterial3D).albedo_color = col
+
+
+
+## Готовая модель: кузов (с покраской и стоп-сигналами) и 4 колеса на своих местах.
+func _setup_model() -> void:
+    var root := CarModel.model_instance(model_id)
+    var wheels: Dictionary = _model_info["wheels"]
+    var r: float = _model_info["radius"]
+    for n: Node in root.find_children("*", "MeshInstance3D", true, false):
+        var mi := n as MeshInstance3D
+        var nm := String(mi.name)
+        if nm == "Body":
+            _body_mi = MeshInstance3D.new()
+            _body_mi.mesh = mi.mesh
+            _body_mi.transform = CarModel._rel(mi, root)
+            add_child(_body_mi)
+            for i in mi.mesh.get_surface_count():
+                var mat := mi.mesh.surface_get_material(i)
+                var role := String(mat.resource_name) if mat else ""
+                if role == "Paint":
+                    _paint_surfaces.append(i)
+                    _body_mi.set_surface_override_material(i, CarModel.paint_material(mat, paint))
+                elif role == "Tail":
+                    _body_mi.set_surface_override_material(i, _tail_mat)
+        elif nm.begins_with("Wheel_"):
+            var front := nm.begins_with("Wheel_F")
+            # точка подвески чуть выше центра колеса (ход подвески 0,12 м)
+            _add_wheel(wheels[nm] + Vector3(0, 0.11, 0), front, mi.mesh, r)
+    root.free()

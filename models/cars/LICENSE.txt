@@ -1,0 +1,8 @@
+Модели машин
+
+sedan, hatch, sport, coupe, suv, taxi, cop — Quaternius, "Realistic Car Pack (Nov 2018)",
+лицензия CC0 1.0 (public domain). https://quaternius.com
+
+vaz2106 (VAZ_2106_TAXI) и uaz452 (uaz-452) — скачаны автором проекта со стоков.
+Перед публичным релизом проверь лицензию на странице, откуда они скачаны,
+и укажи там же автора, если лицензия этого требует.

@@ -22,17 +22,18 @@ const FactionMenuScript := preload("res://scripts/faction_menu.gd")
 const DutyScript := preload("res://scripts/duty.gd")
 const CarScript := preload("res://scripts/car.gd")
 
-const VERSION := "v0.19"
+const VERSION := "Альфа 1.0"
 const SAVE_PATH := "user://save.cfg"
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
 ## Машины на Общем рынке: название, цена, цвет, макс. скорость, мощность.
 const CAR_MODELS := [
-    {"name": "Классика", "price": 8000, "color": Color(0.92, 0.92, 0.90), "speed": 105.0, "force": 4200.0},
-    {"name": "Комфорт", "price": 15000, "color": Color(0.15, 0.22, 0.45), "speed": 125.0, "force": 5000.0},
-    {"name": "Спорт", "price": 28000, "color": Color(0.45, 0.06, 0.10), "speed": 155.0, "force": 6500.0},
-    {"name": "Люкс", "price": 45000, "color": Color(0.10, 0.10, 0.11), "speed": 175.0, "force": 7400.0},
+    {"name": "Шестёрка", "price": 8000, "color": Color(0.92, 0.92, 0.90), "speed": 110.0, "force": 4300.0, "model": "vaz2106"},
+    {"name": "Комфорт", "price": 15000, "color": Color(0.15, 0.22, 0.45), "speed": 125.0, "force": 5000.0, "model": "sedan"},
+    {"name": "Спорт", "price": 28000, "color": Color(0.45, 0.06, 0.10), "speed": 155.0, "force": 6500.0, "model": "sport"},
+    {"name": "Люкс", "price": 45000, "color": Color(0.10, 0.10, 0.11), "speed": 175.0, "force": 7400.0, "model": "coupe"},
     {"name": "Мотоцикл", "price": 12000, "color": Color(0.75, 0.10, 0.10), "speed": 150.0, "force": 1500.0, "kind": "moto"},
+    {"name": "Внедорожник", "price": 60000, "color": Color(0.12, 0.14, 0.12), "speed": 165.0, "force": 8200.0, "model": "suv"},
 ]
 ## Тюнинг на СТО
 const PAINTS := [["Белый", Color(0.92, 0.92, 0.90)], ["Чёрный", Color(0.06, 0.06, 0.07)], ["Красный", Color(0.65, 0.06, 0.08)],
@@ -315,6 +316,9 @@ func _process(delta: float) -> void:
         _update_daylight()
 
     var focus := _focus()
+    var hcam := get_viewport().get_camera_3d()
+    if hcam:
+        _city.update_horizon(hcam.global_position, _view_far)
     var speed := 0.0
     if _driving:
         speed = _driving.speed_kmh()
@@ -859,7 +863,13 @@ func _toggle_vehicle() -> void:
             return
         _player.set_active(false)
         if car.kind == "moto":
-            car.set_rider_color(Clothes.colors(look)["jacket"])
+            var rider_col: Color = Clothes.colors(look)["jacket"]
+            var rider_tex := String(Clothes.textures(look)["jacket"])
+            if rider_tex.contains("red"):
+                rider_col = Color(0.70, 0.10, 0.10)
+            elif rider_tex.contains("leather_"):
+                rider_col = Color(0.20, 0.14, 0.10) if rider_tex.contains("brown") else Color(0.08, 0.08, 0.08)
+            car.set_rider_color(rider_col)
         car.set_driven(true)
         _driving = car
 
@@ -1002,7 +1012,7 @@ func _closer_to_focus(a: Vector3, b: Vector3) -> bool:
 
 ## Стоянка у рынка: сюда доставляют купленные машины.
 func _car_spawn(i: int) -> Transform3D:
-    var xs := [-16.0, -10.0, 10.0, 16.0, -4.0]
+    var xs := [-16.0, -10.0, 10.0, 16.0, -4.0, 4.0]
     return Transform3D(Basis(), Vector3(xs[i % xs.size()], 0.6, 20.0))
 
 
@@ -1014,6 +1024,7 @@ func _spawn_cars() -> void:
         var car = CarScene.instantiate()
         car.paint = m["color"]
         car.kind = String(m.get("kind", "car"))
+        car.model_id = String(m.get("model", ""))
         car.car_name = m["name"]
         car.price = m["price"]
         car.max_speed_kmh = m["speed"]
@@ -1834,6 +1845,7 @@ func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
         _:
             v.car_name = "Учебная"
             v.paint = Color(0.95, 0.95, 0.95)
+            v.model_id = "vaz2106"
             v.max_engine_force = 4200.0
             v.max_speed_kmh = 110.0
     v.transform = at
@@ -2182,7 +2194,7 @@ func _fill_market_rows(rows: Array) -> void:
                     var worn := int(look.get(id, 0)) == k
                     var have := _cloth_owned(id, k)
                     var value := "Надето" if worn else ("Есть" if have else ("Бесплатно" if price == 0 else HudScript.format_money(price)))
-                    rows.append({"icon": "shirt", "icon_col": item[1], "name": "%s: %s" % [slot["name"], item[0]],
+                    rows.append({"icon": "shirt", "icon_col": Clothes.swatch(item), "name": "%s: %s" % [slot["name"], item[0]],
                             "value": value, "value_col": green if (worn or have) else gold})
                     _win_payload.append({"type": "cloth", "slot": id, "i": k, "price": price})
         _:
@@ -2482,6 +2494,7 @@ func _spawn_faction_car(v: Dictionary) -> void:
     c.price = 0
     c.uses_fuel = false
     c.kind = String(v["kind"])
+    c.model_id = String(v.get("model", ""))
     c.car_name = String(v["name"])
     c.paint = v["paint"]
     c.max_engine_force = float(v["force"])

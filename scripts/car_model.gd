@@ -76,7 +76,11 @@ static func wheel_mesh() -> ArrayMesh:
 
 
 ## Целая машина с колёсами — для припаркованных (MultiMesh).
-static func parked_mesh(paint: Color) -> ArrayMesh:
+static func parked_mesh(paint: Color, model_id := "") -> ArrayMesh:
+    if has_model(model_id):
+        var mm := model_mesh(model_id, paint)
+        if mm:
+            return mm
     var tail := _mat("tail_static", Color(0.55, 0.04, 0.04), 0.3, 0.0, 0.3)
     if tail.albedo_texture == null and _textured(tail, "car_taillight"):
         tail.albedo_color = Color(1, 1, 1)
@@ -406,3 +410,132 @@ static func _shape(body: CollisionObject3D, size: Vector3, pos: Vector3) -> void
     c.shape = s
     c.position = pos
     body.add_child(c)
+
+
+# ================================================================ готовые 3D-модели машин (models/cars)
+## Конвертированы из бесплатных моделей: вперёд +Z, земля y=0, узлы Body, Wheel_FL/FR/RL/RR,
+## метки Side (борт для надписей), Roof (крыша для мигалки), PlateF/PlateR (номера).
+## Материалы с ролями: Paint (красится), Glass (тонировка), Tail (стоп-сигналы), Rim / M_Grey (диски).
+const MODELS := {
+    "vaz2106": "res://models/cars/vaz2106.gltf",   # ВАЗ-2106 (бесплатная модель с CGTrader)
+    "sedan": "res://models/cars/sedan.gltf",       # Quaternius Realistic Car Pack (CC0)
+    "hatch": "res://models/cars/hatch.gltf",
+    "sport": "res://models/cars/sport.gltf",
+    "coupe": "res://models/cars/coupe.gltf",
+    "suv": "res://models/cars/suv.gltf",
+    "taxi": "res://models/cars/taxi.gltf",
+    "cop": "res://models/cars/cop.gltf",
+    "uaz452": "res://models/cars/uaz452.gltf",     # УАЗ-452 «буханка» (OpenGameArt)
+}
+
+static var _model_scenes := {}
+static var _model_infos := {}
+static var _model_meshes := {}
+
+
+static func has_model(id: String) -> bool:
+    return id != "" and MODELS.has(id) and ResourceLoader.exists(MODELS[id])
+
+
+static func model_instance(id: String) -> Node3D:
+    if not has_model(id):
+        return null
+    if not _model_scenes.has(id):
+        _model_scenes[id] = load(MODELS[id])
+    var ps: PackedScene = _model_scenes[id]
+    return ps.instantiate() as Node3D if ps else null
+
+
+## Положение узла относительно корня модели (модель ещё не в дереве сцены).
+static func _rel(n: Node3D, root: Node) -> Transform3D:
+    var t := n.transform
+    var p := n.get_parent()
+    while p != null and p != root:
+        if p is Node3D:
+            t = (p as Node3D).transform * t
+        p = p.get_parent()
+    return t
+
+
+## {"wheels": {"Wheel_FL": Vector3, ...}, "radius", "side": Vector3, "roof": Vector3, "plates": {...}}
+static func model_info(id: String) -> Dictionary:
+    if _model_infos.has(id):
+        return _model_infos[id]
+    var info := {}
+    var root := model_instance(id)
+    if root:
+        var wheels := {}
+        var plates := {}
+        var radius := WHEEL_RADIUS
+        for n: Node in root.find_children("*", "Node3D", true, false):
+            var nm := String(n.name)
+            var pos := _rel(n as Node3D, root).origin
+            if nm.begins_with("Wheel_"):
+                wheels[nm] = pos
+                if n is MeshInstance3D and (n as MeshInstance3D).mesh:
+                    radius = (n as MeshInstance3D).mesh.get_aabb().size.y * 0.5
+            elif nm == "Side":
+                info["side"] = pos
+            elif nm == "Roof":
+                info["roof"] = pos
+            elif nm.begins_with("Plate"):
+                plates[nm] = pos
+        if wheels.size() == 4:
+            info["wheels"] = wheels
+            info["radius"] = radius
+            info["plates"] = plates
+        root.free()
+    _model_infos[id] = info
+    return info
+
+
+## Свой материал «Paint» в нужный цвет (для текстурной модели — оттенок поверх текстуры).
+static func paint_material(src: Material, paint: Color) -> StandardMaterial3D:
+    var m: StandardMaterial3D
+    if src is StandardMaterial3D:
+        m = (src as StandardMaterial3D).duplicate()
+    else:
+        m = StandardMaterial3D.new()
+    m.albedo_color = paint if m.albedo_texture == null else paint.lightened(0.1)
+    m.roughness = 0.35
+    m.metallic_specular = 0.6
+    return m
+
+
+static func _role(mat: Material) -> String:
+    return String(mat.resource_name) if mat else ""
+
+
+## Неподвижная машина целиком (для припаркованных и машин-ботов): один меш, колёса на месте.
+static func model_mesh(id: String, paint: Color) -> ArrayMesh:
+    var key := id + paint.to_html()
+    if _model_meshes.has(key):
+        return _model_meshes[key]
+    var root := model_instance(id)
+    if root == null:
+        return null
+    var groups := {}   # материал -> SurfaceTool
+    var paint_mat: StandardMaterial3D = null
+    for n: Node in root.find_children("*", "MeshInstance3D", true, false):
+        var mi := n as MeshInstance3D
+        if mi.mesh == null:
+            continue
+        var xf := _rel(mi, root)
+        for s in mi.mesh.get_surface_count():
+            var mat := mi.mesh.surface_get_material(s)
+            if _role(mat) == "Paint":
+                if paint_mat == null:
+                    paint_mat = paint_material(mat, paint)
+                mat = paint_mat
+            if not groups.has(mat):
+                var st := SurfaceTool.new()
+                st.begin(Mesh.PRIMITIVE_TRIANGLES)
+                st.set_material(mat)
+                groups[mat] = st
+            (groups[mat] as SurfaceTool).append_from(mi.mesh, s, xf)
+    var out := ArrayMesh.new()
+    for mat in groups:
+        (groups[mat] as SurfaceTool).commit(out)
+    root.free()
+    _model_meshes[key] = out
+    return out

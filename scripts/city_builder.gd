@@ -103,6 +103,7 @@ func _ready() -> void:
     _service(Vector3(-248, 0, 32), Vector3(0, 0, -1))
     _build_home_interiors()
     _build_decals()
+    _build_horizon()
     _flush_batches()
 
 
@@ -654,6 +655,7 @@ func _make_materials() -> void:
         ["wood", "wood_planks", Color(1, 1, 1), 1.2],
         ["concrete", "concrete", Color(0.85, 0.85, 0.85), 3.0],
         ["plinth", "concrete_panel", Color(0.75, 0.75, 0.75), 2.4],
+        ["wasteland", "ground_wasteland", Color(0.95, 0.95, 0.9), 6.0],
     ]
     for sf: Array in surfaces:
         var t := _tex_mip("res://textures/%s.png" % sf[1])
@@ -694,7 +696,14 @@ func _make_materials() -> void:
             _ground_tex(_m[pm[0]], t, pm[2], pm[3])
     var glass := _mat(Color(0.18, 0.26, 0.32), 0.1)
     glass.metallic = 0.5
+    var gt := _tex_mip("res://textures/mat_glass_dirty.png")
+    if gt:
+        _ground_tex(glass, gt, Color(0.42, 0.50, 0.58), 2.0)
+        glass.roughness = 0.15
     _m["glass"] = glass
+    var paint := _tex_mip("res://textures/mat_road_paint.png")
+    if paint:
+        _ground_tex(_m["white"], paint, Color(0.95, 0.95, 0.93), 1.2)
 
 
 ## Загрузить картинку с мипмапами (без них текстура «рябит» вдали). null — файла нет.
@@ -860,7 +869,7 @@ func _define_batches() -> void:
     _batch("bal_rail", _box_mesh(Vector3(2.5, 0.86, 0.95)), _fit_mat("balcony_rail", Vector3(2.5, 0.86, 0.95), Color(0.62, 0.62, 0.62)), 200.0)
     _batch("bal_sheet", _box_mesh(Vector3(2.5, 0.86, 0.95)), _tiled_vc_mat("corrugated", 1.2, Color(0.65, 0.68, 0.70)), 200.0)
     _batch("bal_boards", _box_mesh(Vector3(2.5, 0.86, 0.95)), _tiled_vc_mat("balcony_boards", 1.5, Color(0.74, 0.73, 0.70)), 200.0)
-    _batch("door", _box_mesh(Vector3(1.4, 2.2, 0.12)), _fit_mat("door_old", Vector3(1.4, 2.2, 0.12), Color(0.32, 0.22, 0.15)), 90.0)
+    _batch("door", _box_mesh(Vector3(1.4, 2.2, 0.12)), _fit_mat("door_entrance" if ResourceLoader.exists("res://textures/door_entrance.png") else "door_old", Vector3(1.4, 2.2, 0.12), Color(0.32, 0.22, 0.15)), 90.0)
     var pipe := _mat(Color(0.45, 0.46, 0.47), 0.6)
     var pipe_tex := _tex_mip("res://textures/drainpipe.png")
     if pipe_tex:
@@ -914,7 +923,7 @@ func _define_batches() -> void:
         door_mat.uv1_offset = Vector3(0.5, 0.5, 0.5)
     _batch("garage_door", _box_mesh(Vector3(2.6, 2.1, 0.06)), door_mat, 140.0)
     for i in PARKED_COLORS.size():
-        _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i]), null, 160.0, true)
+        _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i], ["vaz2106", "hatch", "sedan", "vaz2106", "suv"][i % 5]), null, 160.0, true)
     _define_sign_batches()
 
 
@@ -1422,7 +1431,13 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
         elif fid == "kgb":
             col_mat = plinth
         _solid(Vector3(0.5, 3.6, 0.5), _fp(cx, 0.0) + Vector3(0, 1.8, 0), col_mat, yaw)
-    _deco(Vector3(2.8, 2.9, 0.1), _fp(0, -3.98) + Vector3(0, 1.5, 0), _m["glass"], yaw)
+    var gdoor: Material = _m["glass"]
+    if ResourceLoader.exists("res://textures/door_glass.png"):
+        var gd := _fit_mat("door_glass", Vector3(2.8, 2.9, 0.1), Color(0.2, 0.25, 0.3))
+        gd.roughness = 0.25
+        gd.metallic = 0.3
+        gdoor = gd
+    _deco(Vector3(2.8, 2.9, 0.1), _fp(0, -3.98) + Vector3(0, 1.5, 0), gdoor, yaw)
     _deco(Vector3(3.1, 0.15, 0.14), _fp(0, -3.95) + Vector3(0, 3.0, 0), _m["metal"], yaw)
     _deco(Vector3(16.0, 1.5, 0.15), _fp(0, -3.95) + Vector3(0, 5.0, 0), _m["sign"], yaw)
     var title: String = f["title"]
@@ -1445,10 +1460,15 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
         "police":
             _deco(Vector3(BW + 0.1, 0.45, 0.05), _fp(0, -3.96) + Vector3(0, 3.3, 0), _mat(Color(0.12, 0.25, 0.65), 0.6), yaw)
         "hospital":
-            _deco(Vector3(3.4, 3.4, 0.08), _fp(11.0, -3.95) + Vector3(0, 7.6, 0), _m["white"], yaw)
-            var red := _mat(Color(0.85, 0.08, 0.08), 0.6)
-            _deco(Vector3(2.8, 0.85, 0.12), _fp(11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
-            _deco(Vector3(0.85, 2.8, 0.12), _fp(11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
+            if ResourceLoader.exists("res://textures/obj_red_cross.png"):
+                var cross := _fit_mat("obj_red_cross", Vector3(3.4, 3.4, 0.12), Color.WHITE)
+                for cx: float in [11.0, -11.0]:
+                    _deco(Vector3(3.4, 3.4, 0.12), _fp(cx, -3.95) + Vector3(0, 7.6, 0), cross, yaw)
+            else:
+                _deco(Vector3(3.4, 3.4, 0.08), _fp(11.0, -3.95) + Vector3(0, 7.6, 0), _m["white"], yaw)
+                var red := _mat(Color(0.85, 0.08, 0.08), 0.6)
+                _deco(Vector3(2.8, 0.85, 0.12), _fp(11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
+                _deco(Vector3(0.85, 2.8, 0.12), _fp(11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
             _deco(Vector3(3.4, 3.4, 0.08), _fp(-11.0, -3.95) + Vector3(0, 7.6, 0), _m["white"], yaw)
             _deco(Vector3(2.8, 0.85, 0.12), _fp(-11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
             _deco(Vector3(0.85, 2.8, 0.12), _fp(-11.0, -3.92) + Vector3(0, 7.6, 0), red, yaw)
@@ -1471,7 +1491,7 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
     # Стоянка служебных машин и выезд к дороге
     _flat(_fp(0, 13), _fsz(44.0, 18.0), _m["yard_asphalt"], SIDE_H + 0.008)
     _flat(_fp(2, 27.5), _fsz(9.0, 9.0), _m["yard_asphalt"], SIDE_H + 0.007)
-    var line := _mat(Color(0.9, 0.9, 0.85), 0.8)
+    var line: Material = _m["white"]
     for k: int in 11:
         var lx := -20.0 + k * 4.0
         _flat(_fp(lx, 6.5), _fsz(0.15, 5.0), line, SIDE_H + 0.012)
@@ -1562,7 +1582,7 @@ func _build_interiors() -> void:
             add_child(ol)
 
         # дверь «ВЫХОД» на задней стене (+z)
-        _deco(Vector3(2.4, 2.8, 0.08), o + Vector3(0, 1.4, D * 0.5 - 0.22), _mat(Color(0.30, 0.20, 0.13), 0.6))
+        _deco(Vector3(2.4, 2.8, 0.08), o + Vector3(0, 1.4, D * 0.5 - 0.22), _fit_mat("door_office", Vector3(2.4, 2.8, 0.08), Color(0.30, 0.20, 0.13)))
         _label("ВЫХОД", o + Vector3(0, 3.2, D * 0.5 - 0.25), Vector3(0, 0, -1), 64, Color(0.3, 0.9, 0.4))
         # вывеска фракции на дальней стене
         _deco(Vector3(9.0, 1.4, 0.06), o + Vector3(0, 3.1, -D * 0.5 + 0.23), _m["sign"])
@@ -1579,7 +1599,18 @@ func _build_interiors() -> void:
                 _fit_mat("org/cork_board", Vector3(0.04, 1.0, 1.4), Color(0.70, 0.55, 0.35)))
         for side: float in [-1.0, 1.0]:
             _solid(Vector3(3.4, 1.05, 0.9), o + Vector3(7.0 * side, 0.525, -5.2), desk_mat)
-            _deco(Vector3(0.6, 0.9, 0.6), o + Vector3(7.0 * side, 0.45, -6.6), _m["metal"])   # стул за стойкой
+            _f_chair(o + Vector3(7.0 * side, 0, -6.6), 0.0)   # стул за стойкой
+            _deco(Vector3(0.42, 0.36, 0.4), o + Vector3(7.0 * side - 0.8, 1.23, -5.3), _fm("monitor"), PI)
+            _deco(Vector3(0.3, 0.01, 0.22), o + Vector3(7.0 * side + 0.6, 1.06, -5.2), _fm("papers"))
+            _deco(Vector3(0.2, 0.08, 0.16), o + Vector3(7.0 * side + 0.1, 1.09, -5.0), _fm("phone"), PI)
+        # общая обстановка: цветы по углам, кулер, часы над выходом, батареи
+        for cx: float in [-W * 0.5 + 0.6, W * 0.5 - 0.6]:
+            _f_plant(o + Vector3(cx, 0, D * 0.5 - 0.6), true)
+        _f_plant(o + Vector3(-W * 0.5 + 0.6, 0, -D * 0.5 + 0.6), true)
+        _f_cooler(o + Vector3(-W * 0.5 + 0.5, 0, 4.8), PI * 0.5)
+        _f_clock(o + Vector3(0, 3.6, D * 0.5 - 0.22), PI)
+        for rx: float in [-5.0, 5.0]:
+            _f_radiator(o + Vector3(rx, 0, D * 0.5 - 0.3), PI, 1.6)
         _deco(Vector3(4.6, 0.9, 0.06), o + Vector3(-7.0, 2.4, -D * 0.5 + 0.23), _m["sign"])
         _label("ОТДЕЛ КАДРОВ", o + Vector3(-7.0, 2.4, -D * 0.5 + 0.28), Vector3(0, 0, 1), 64, Color(0.15, 0.15, 0.18))
         var desk_name := "ПАСПОРТНЫЙ СТОЛ"
@@ -1611,6 +1642,11 @@ func _build_interiors() -> void:
                 for px: float in [-10.5, 10.5]:
                     _deco(Vector3(0.8, 1.2, 0.8), o + Vector3(px, 0.6, 6.5), _m["concrete"])
                     _put("bush", o + Vector3(px, 1.5, 6.5), 0.0, Color.WHITE, Vector3(0.8, 0.9, 0.8))
+                # кабинет мэра: стол с лампой, книжные шкафы, картина
+                _f_desk(o + Vector3(0, 0, -4.6), PI, true)
+                for bx: float in [-1.4, 1.4]:
+                    _f_bookshelf(o + Vector3(bx + (4.0 if bx > 0 else -4.0), 0, -D * 0.5 + 0.45), 0.0, 1.2, 2.2)
+                _f_picture(o + Vector3(W * 0.5 - 0.22, 2.3, 2.0), -PI * 0.5, 1.6, 1.0)
             "police":
                 # камера (КПЗ) с решёткой у правой стены
                 if _org_tex("kpz_bars") != null:
@@ -1623,14 +1659,26 @@ func _build_interiors() -> void:
                 _solid(Vector3(3.6, H, 0.2), o + Vector3(10.4, H * 0.5, 0.06), wall)
                 _solid(Vector3(3.6, H, 0.2), o + Vector3(10.4, H * 0.5, 5.66), wall)
                 kpz_cell = o + Vector3(10.4, 0.3, 2.8)
+                # стол дежурного и доска «Их разыскивает милиция»
+                _f_desk(o + Vector3(3.0, 0, 0.5), -PI * 0.5)
+                _f_desk(o + Vector3(3.0, 0, -2.0), -PI * 0.5)
+                _f_bookshelf(o + Vector3(W * 0.5 - 0.45, 0, -3.5), -PI * 0.5, 1.4, 2.0)
+                _deco(Vector3(1.6, 1.1, 0.04), o + Vector3(-2.5, 1.9, -D * 0.5 + 0.24), _fit_mat("org/cork_board", Vector3(1.6, 1.1, 0.04), Color(0.7, 0.55, 0.35)))
+                for pk in 6:
+                    _deco(Vector3(0.22, 0.3, 0.01), o + Vector3(-3.05 + (pk % 3) * 0.55, 2.15 - (pk / 3) * 0.45, -D * 0.5 + 0.265), _fm("paper"))
+                _label("ИХ РАЗЫСКИВАЕТ МИЛИЦИЯ", o + Vector3(-2.5, 2.6, -D * 0.5 + 0.27), Vector3(0, 0, 1), 28, Color(0.75, 0.1, 0.1))
                 _label("КПЗ", o + Vector3(8.5, 3.4, 3.0), Vector3(-1, 0, 0), 64, Color(0.9, 0.9, 0.9))
                 if not org_ok:
                     _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), _mat(Color(0.12, 0.25, 0.65), 0.6))
             "hospital":
-                var bed := _fit_mat("org/bed_sheet", Vector3(1.0, 0.6, 2.1), Color(0.95, 0.95, 0.95))
                 for bz: float in [-1.5, 1.5, 4.5]:
-                    _solid(Vector3(1.0, 0.6, 2.1), o + Vector3(10.6, 0.3, bz), bed)
-                    _deco(Vector3(0.05, 1.8, 1.4), o + Vector3(9.3, 0.9, bz + 1.4), _mat(Color(0.55, 0.80, 0.80), 0.9))
+                    _f_hospital_bed(o + Vector3(10.6, 0, bz), 0.0)
+                    _deco(Vector3(0.05, 1.8, 1.4), o + Vector3(9.3, 0.9, bz + 1.4), _tinted("mat_teal_fabric", Color(1, 1, 1), 0.8))
+                # шкаф с лекарствами и кабинет врача
+                _solid(Vector3(1.2, 1.9, 0.45), o + Vector3(3.0, 0.95, -D * 0.5 + 0.45), _fm("med_cabinet"))
+                for mk in (0 if ResourceLoader.exists("res://textures/obj_med_cabinet.png") else 8):
+                    _deco(Vector3(0.08, 0.14, 0.08), o + Vector3(2.6 + (mk % 4) * 0.25, 1.05 + (mk / 4) * 0.45, -D * 0.5 + 0.55), _book_mat([Color(0.9, 0.9, 0.9), Color(0.5, 0.3, 0.15), Color(0.2, 0.5, 0.8)][mk % 3]))
+                _f_desk(o + Vector3(-3.0, 0, 0.5), PI * 0.5)
                 var red := _mat(Color(0.85, 0.08, 0.08), 0.6)
                 _deco(Vector3(1.6, 0.5, 0.04), o + Vector3(0, 1.2, -D * 0.5 + 0.25), red)
                 _deco(Vector3(0.5, 1.6, 0.04), o + Vector3(0, 1.2, -D * 0.5 + 0.25), red)
@@ -1643,6 +1691,17 @@ func _build_interiors() -> void:
                         _solid(Vector3(0.6, 2.0, 0.6), o + Vector3(W * 0.5 - 0.55, 1.0, -3.0 + bz * 0.7), lred)
                 _deco(Vector3(0.12, H, 0.12), o + Vector3(4.0, H * 0.5, 3.0), _m["pipe"])
                 _flat(o + Vector3(4.0, 0, 3.0), Vector2(1.6, 1.6), _m["rubber_red"], SIDE_H + 0.01)
+                # каски на шкафчиках и катушки с рукавами
+                for hz in 6:
+                    _mdeco(_sphere_mesh(0.16, 0.18), o + Vector3(W * 0.5 - 0.55, 2.1, -2.6 + hz * 1.1), _fm("red"))
+                for rz: float in [-3.5, -1.5]:
+                    var reel := MeshInstance3D.new()
+                    reel.mesh = _cyl_mesh(0.45, 0.45, 0.35, 16)
+                    reel.material_override = _fm("red")
+                    reel.position = o + Vector3(-3.0, 0.5, rz)
+                    reel.rotation.z = PI * 0.5
+                    add_child(reel)
+                _f_desk(o + Vector3(-3.0, 0, 2.5), PI * 0.5)
                 if not org_ok:
                     _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), lred)
             "kgb":
@@ -1650,6 +1709,13 @@ func _build_interiors() -> void:
                     _solid(Vector3(0.7, 1.9, 0.9), o + Vector3(W * 0.5 - 0.6, 0.95, -4.0 + bz * 1.2),
                             _fit_mat("org/file_cabinet", Vector3(0.7, 1.9, 0.9), Color(0.45, 0.46, 0.45)))
                 _flat(o + Vector3(0, 0, 0), Vector2(6.0, 4.0), _plane_mat("carpet_wall", Vector2(1, 1), Color(0.35, 0.08, 0.08)), SIDE_H + 0.01)
+                # кабинет: стол с зелёной лампой, книги, сейф
+                _f_desk(o + Vector3(0, 0, -0.6), PI, true)
+                _f_chair(o + Vector3(-0.6, 0, 1.0), PI)
+                _f_chair(o + Vector3(0.6, 0, 1.0), PI)
+                _f_bookshelf(o + Vector3(-4.5, 0, -D * 0.5 + 0.45), 0.0, 1.4, 2.4)
+                _f_bookshelf(o + Vector3(4.5, 0, -D * 0.5 + 0.45), 0.0, 1.4, 2.4)
+                _solid(Vector3(0.8, 1.0, 0.7), o + Vector3(-W * 0.5 + 0.7, 0.5, -6.0), _fit_mat("org/safe_door", Vector3(0.8, 1.0, 0.7), Color(0.4, 0.43, 0.4)))
 
         interiors[fid] = {"spawn": o + Vector3(0, 0.3, D * 0.5 - 3.6), "exit": o + Vector3(0, 0, D * 0.5 - 1.3),
                 "hr": o + Vector3(-7.0, 0, -4.0), "desk": o + Vector3(7.0, 0, -4.0)}
@@ -1690,7 +1756,7 @@ func _tpl_gang(gid: String, to_center: Vector2) -> void:
                 _fit_mat("org/gang_gate", Vector3(5.2, 4.0, 0.08), Color(0.4, 0.35, 0.3)), yaw)
     else:
         _put("garage_door", _fp(-13, 9.03) + Vector3(0, 2.05 - SIDE_H, 0), yaw, accent.darkened(0.45), Vector3(2.0, 1.9, 1.0))
-    _deco(Vector3(1.2, 2.3, 0.08), _fp(-4.5, 9.03) + Vector3(0, 1.15, 0), _mat(Color(0.22, 0.20, 0.18), 0.6), yaw)
+    _deco(Vector3(1.2, 2.3, 0.08), _fp(-4.5, 9.03) + Vector3(0, 1.15, 0), _fit_mat("door_steel", Vector3(1.2, 2.3, 0.08), Color(0.22, 0.20, 0.18)), yaw)
     _deco(Vector3(0.5, 0.2, 0.3), _fp(-4.5, 9.15) + Vector3(0, 2.5, 0), lamp_mat, yaw)
     # «граффити» с названием на стене
     _label(String(f["title"]), _fp(-10, 9.08) + Vector3(0, 3.55, 0), _ff, 120, accent)
@@ -1748,7 +1814,7 @@ func _gang_interior(f: Dictionary, o: Vector3) -> void:
         ol.shadow_enabled = false
         add_child(ol)
     # выход
-    _deco(Vector3(1.4, 2.4, 0.08), o + Vector3(0, 1.2, D * 0.5 - 0.22), _mat(Color(0.22, 0.20, 0.18), 0.6))
+    _deco(Vector3(1.4, 2.4, 0.08), o + Vector3(0, 1.2, D * 0.5 - 0.22), _fit_mat("door_steel", Vector3(1.4, 2.4, 0.08), Color(0.22, 0.20, 0.18)))
     _label("ВЫХОД", o + Vector3(0, 2.9, D * 0.5 - 0.25), Vector3(0, 0, -1), 64, Color(0.3, 0.9, 0.4))
     # название ОПГ «краской» на дальней стене
     _label(String(f["title"]), o + Vector3(0, 3.0, -D * 0.5 + 0.23), Vector3(0, 0, 1), 170, accent)
@@ -1772,13 +1838,22 @@ func _gang_interior(f: Dictionary, o: Vector3) -> void:
     # верстак и покрышки
     _solid(Vector3(0.8, 0.95, 3.5), o + Vector3(W * 0.5 - 0.6, 0.475, 3.0), _m["wood"])
     _deco(Vector3(0.05, 1.2, 3.0), o + Vector3(W * 0.5 - 0.23, 1.8, 3.0), _m["metal"])
-    var tire := _mat(Color(0.07, 0.07, 0.07), 0.9)
     for tz: float in [-5.8, -4.9]:
-        _solid(Vector3(0.75, 1.2, 0.75), o + Vector3(W * 0.5 - 0.7, 0.6, tz), tire)
+        _f_tires(o + Vector3(W * 0.5 - 0.7, 0, tz))
+    _f_tires(o + Vector3(W * 0.5 - 1.5, 0, -5.8))
     # столик с картами и стулья
-    _solid(Vector3(1.2, 0.75, 1.2), o + Vector3(-2.0, 0.375, 2.5), _m["wood"])
-    for cx: float in [-3.1, -0.9]:
-        _deco(Vector3(0.5, 0.5, 0.5), o + Vector3(cx, 0.25, 2.5), _m["metal"])
+    _f_table(o + Vector3(-2.0, 0, 2.5), 0.0, 1.2, 1.2)
+    for ci in 4:
+        var ca := ci * PI * 0.5
+        _f_chair(o + Vector3(-2.0, 0, 2.5) + Vector3(sin(ca), 0, cos(ca)) * 0.85, ca + PI)
+    _deco(Vector3(1.1, 0.01, 1.1), o + Vector3(-2.0, 0.755, 2.5), _fm("cards"))
+    # ящики, бочки, телевизор, кресло
+    _f_crates(o + Vector3(-W * 0.5 + 1.2, 0, 5.6), 0.1, 4)
+    _f_crates(o + Vector3(-W * 0.5 + 2.6, 0, 5.8), -0.1, 2)
+    _f_barrel(o + Vector3(W * 0.5 - 0.6, 0, 5.8))
+    _f_barrel(o + Vector3(W * 0.5 - 1.3, 0, 6.0))
+    _f_tv(o + Vector3(-W * 0.5 + 2.8, 0, -5.9), 0.0)
+    _f_armchair(o + Vector3(-W * 0.5 + 4.8, 0, -3.0), -PI * 0.5)
     interiors[gid] = {"spawn": o + Vector3(0, 0.3, D * 0.5 - 3.6), "exit": o + Vector3(0, 0, D * 0.5 - 1.3),
             "hr": o + Vector3(-W * 0.5 + 2.6, 0, -1.2), "desk": o + Vector3(0, 0, 0)}
 
@@ -2011,13 +2086,22 @@ func _home_room(o: Vector3, w: float, d: float, wall_col: Color) -> Dictionary:
     lamp.emission_energy_multiplier = 1.5
     _deco(Vector3(0.7, 0.25, 0.7), o + Vector3(0, H - 0.15, 0), lamp)
     # дверь
-    _deco(Vector3(1.1, 2.2, 0.06), o + Vector3(0, 1.1, d * 0.5 - 0.22), _fit_mat("door_old", Vector3(1.1, 2.2, 0.06), Color(0.35, 0.24, 0.15)))
+    _deco(Vector3(1.1, 2.2, 0.06), o + Vector3(0, 1.1, d * 0.5 - 0.22), _fit_mat("door_apartment" if ResourceLoader.exists("res://textures/door_apartment.png") else "door_old", Vector3(1.1, 2.2, 0.06), Color(0.35, 0.24, 0.15)))
     _label("ВЫХОД", o + Vector3(0, 2.5, d * 0.5 - 0.25), Vector3(0, 0, -1), 48, Color(0.3, 0.9, 0.4))
     # окно с «улицей» за ним
     var sky := _mat(Color(0.6, 0.75, 0.9), 0.5)
     sky.emission_enabled = true
     sky.emission = Color(0.55, 0.7, 0.9)
     sky.emission_energy_multiplier = 0.6
+    var view := _tex_mip("res://textures/window_view.png")
+    if view:
+        sky.albedo_color = Color.WHITE
+        sky.albedo_texture = view
+        sky.emission = Color(1, 1, 1)
+        sky.emission_texture = view
+        sky.uv1_triplanar = true
+        sky.uv1_scale = Vector3(1.0 / 2.4, -1.0 / 1.4, 1.0)
+        sky.uv1_offset = Vector3(0.5, 0.5, 0.5)
     _deco(Vector3(2.4, 1.4, 0.05), o + Vector3(-1.5, 1.7, -d * 0.5 + 0.23), sky)
     _deco(Vector3(2.6, 0.1, 0.25), o + Vector3(-1.5, 0.95, -d * 0.5 + 0.3), _m["white"])
     # ковёр на стене, диван, столик, телевизор
@@ -2034,6 +2118,30 @@ func _home_room(o: Vector3, w: float, d: float, wall_col: Color) -> Dictionary:
     # кухня: столешница и холодильник
     _solid(Vector3(0.7, 0.9, 2.6), o + Vector3(w * 0.5 - 0.55, 0.45, d * 0.5 - 2.6), _fit_mat("kitchen_cabinet", Vector3(0.7, 0.9, 1.3), Color(0.6, 0.5, 0.4)))
     _solid(Vector3(0.8, 1.9, 0.8), o + Vector3(w * 0.5 - 0.6, 0.95, d * 0.5 - 0.8), _fit_mat("fridge", Vector3(0.8, 1.9, 0.8), Color(0.93, 0.93, 0.92)))
+    _deco(Vector3(0.45, 0.03, 0.5), o + Vector3(w * 0.5 - 0.55, 0.915, d * 0.5 - 2.0), _fm("chrome"))   # мойка
+    _f_stove(o + Vector3(w * 0.5 - 0.55, 0, d * 0.5 - 4.25), -PI * 0.5)
+    # кухонный стол с табуретками
+    _f_table(o + Vector3(w * 0.5 - 2.4, 0, d * 0.5 - 2.4), 0.0, 0.9, 0.9, 0.75, _fm("wood_light"))
+    _f_chair(o + Vector3(w * 0.5 - 3.2, 0, d * 0.5 - 2.4), PI * 0.5, _fm("wood_light"))
+    _f_chair(o + Vector3(w * 0.5 - 2.4, 0, d * 0.5 - 1.6), PI, _fm("wood_light"))
+    # «стенка», люстра, ковёр, шторы, батарея
+    _f_stenka(o + Vector3(1.9, 0, -d * 0.5 + 0.45), 0.0, 3.0)
+    _f_chandelier(o + Vector3(-1.5, 0, -0.5), H)
+    _f_chandelier(o + Vector3(w * 0.5 - 2.4, 0, d * 0.5 - 2.4), H)
+    _flat(o + Vector3(-w * 0.5 + 2.4, 0, -0.5), Vector2(2.6, 3.4), _plane_mat("carpet_wall", Vector2(1, 1), Color(0.5, 0.1, 0.1)), o.y + 0.01)
+    _f_curtains(o + Vector3(-1.5, 0.9, -d * 0.5 + 0.28), 0.0, 2.4, 1.5)
+    _f_radiator(o + Vector3(-1.5, 0, -d * 0.5 + 0.3), 0.0, 1.6)
+    # кресло, тумбочка с лампой, шкаф, цветы, часы, картина
+    _f_armchair(o + Vector3(-w * 0.5 + 2.4, 0, 1.6), PI * 0.5 + 0.4)
+    _solid(Vector3(0.45, 0.5, 0.45), o + Vector3(w * 0.5 - 2.25, 0.25, -d * 0.5 + 0.6), _fm("wood_dark"))
+    _mdeco(_cyl_mesh(0.03, 0.06, 0.3, 8), o + Vector3(w * 0.5 - 2.25, 0.65, -d * 0.5 + 0.6), _fm("chrome"))
+    _mdeco(_cyl_mesh(0.08, 0.16, 0.18, 10), o + Vector3(w * 0.5 - 2.25, 0.86, -d * 0.5 + 0.6), _fm("lampshade"))
+    _solid(Vector3(0.6, 2.1, 1.3), o + Vector3(w * 0.5 - 0.5, 1.05, -0.85), _fm("lacquer"))
+    _deco(Vector3(0.01, 1.9, 0.01), o + Vector3(w * 0.5 - 0.8, 1.05, -0.85), _fm("black"))
+    _f_plant(o + Vector3(-w * 0.5 + 0.5, 0, d * 0.5 - 0.6), true)
+    _f_plant(o + Vector3(-3.6, 0.0, -d * 0.5 + 0.5))
+    _f_clock(o + Vector3(1.9, 2.6, -d * 0.5 + 0.22), 0.0)
+    _f_picture(o + Vector3(-w * 0.5 + 0.22, 1.9, 2.4), PI * 0.5, 1.0, 0.6)
     return {"spawn": o + Vector3(0, 0.3, d * 0.5 - 2.6), "exit": o + Vector3(0, 0, d * 0.5 - 1.0),
             "fridge": o + Vector3(w * 0.5 - 1.6, 0, d * 0.5 - 1.2), "bed": o + Vector3(w * 0.5 - 2.3, 0, -d * 0.5 + 1.6)}
 
@@ -2053,9 +2161,10 @@ func _service(c: Vector3, front: Vector3) -> void:
     _label("СТО · РЕМОНТ · ТЮНИНГ", c + b * Vector3(0, 0, 0.3) + Vector3(0, 5.2, 0), front, 90, Color(0.15, 0.3, 0.75))
     for sx: float in [-2.2, 2.2]:
         _solid(Vector3(0.3, 3.0, 0.3), c + b * Vector3(sx, 0, -3.0) + Vector3(0, 1.5, 0), _m["blue"], yaw)
-    var tire := _mat(Color(0.07, 0.07, 0.07), 0.9)
     for tz: float in [-5.0, -4.0]:
-        _solid(Vector3(0.75, 1.2, 0.75), c + b * Vector3(6.0, 0, tz) + Vector3(0, 0.6, 0), tire, yaw)
+        _f_tires(c + b * Vector3(6.0, 0, tz))
+    _f_barrel(c + b * Vector3(-6.0, 0, -5.0))
+    _f_barrel(c + b * Vector3(-5.3, 0, -5.2))
     _occupy(c, 22.0, 16.0)
     var bc := c + b * Vector3(0, 0, -3.0)
     building_rects.append(Rect2(bc.x - (7.0 if absf(front.x) < 0.5 else 3.0), bc.z - (3.0 if absf(front.x) < 0.5 else 7.0),
@@ -2104,7 +2213,7 @@ func _billboard(pos: Vector3, facing: Vector3, ad: String) -> void:
     var b := Basis(Vector3.UP, yaw)
     for sx: float in [-2.2, 2.2]:
         _solid(Vector3(0.3, 4.5, 0.3), pos + b * Vector3(sx, 0, -0.2) + Vector3(0, 2.25, 0), _m["metal"], yaw)
-    _deco(Vector3(7.0, 3.8, 0.25), pos + b * Vector3(0, 0, -0.2) + Vector3(0, 6.2, 0), _mat(Color(0.25, 0.26, 0.28), 0.5), yaw)
+    _deco(Vector3(7.0, 3.8, 0.25), pos + b * Vector3(0, 0, -0.2) + Vector3(0, 6.2, 0), _tinted("mat_rust_panel", Color(0.9, 0.9, 0.9), 2.0), yaw)
     var m := _mat(Color.WHITE, 0.6)
     m.albedo_texture = t
     m.emission_enabled = true          # щит слегка подсвечен — виден и ночью
@@ -2221,3 +2330,464 @@ func _build_decals() -> void:
 
 ## Места на стенах для декалей: [точка у основания стены, наружу, высота, низкий ли дом].
 var _wall_spots: Array = []
+
+
+# ================================================================ мебель и мелочи для интерьеров
+
+var _fmat := {}
+
+
+## Материалы мебели (создаются один раз).
+func _fm(key: String) -> Material:
+    if _fmat.has(key):
+        return _fmat[key]
+    var m: StandardMaterial3D
+    match key:
+        "wood_dark":
+            m = _tinted("mat_wood_table", Color(0.9, 0.85, 0.8), 1.0) if ResourceLoader.exists("res://textures/mat_wood_table.png") else _tinted("wood_planks", Color(0.50, 0.33, 0.22), 1.0)
+        "wood_light":
+            m = _tinted("wood_planks", Color(1.0, 0.90, 0.75), 1.0)
+        "lacquer":   # полированная «стенка»
+            m = _mat(Color(0.32, 0.17, 0.09), 0.25)
+            var t := _tex_mip("res://textures/mat_lacquer.png")
+            if t == null:
+                t = _tex_mip("res://textures/wood_planks.png")
+            if t:
+                _ground_tex(m, t, Color(1, 1, 1) if ResourceLoader.exists("res://textures/mat_lacquer.png") else Color(0.55, 0.32, 0.20), 0.8)
+                m.roughness = 0.22
+        "chrome":
+            m = _tinted("mat_chrome", Color(1, 1, 1), 0.5) if ResourceLoader.exists("res://textures/mat_chrome.png") else _mat(Color(0.75, 0.76, 0.78), 0.2)
+            m.metallic = 0.6
+            m.roughness = 0.3
+        "black":
+            m = _tinted("mat_plastic_black", Color(1, 1, 1), 0.4) if ResourceLoader.exists("res://textures/mat_plastic_black.png") else _mat(Color(0.05, 0.05, 0.05), 0.5)
+            m.roughness = 0.55
+        "beige":
+            m = _tinted("mat_plastic_beige", Color(1, 1, 1), 0.4) if ResourceLoader.exists("res://textures/mat_plastic_beige.png") else _mat(Color(0.80, 0.76, 0.66), 0.6)
+        "white":
+            m = _tinted("mat_enamel", Color(1, 1, 1), 0.7) if ResourceLoader.exists("res://textures/mat_enamel.png") else _mat(Color(0.93, 0.93, 0.92), 0.3)
+            m.roughness = 0.3
+        "paper":
+            m = _mat(Color(0.96, 0.95, 0.90), 0.9)
+        "screen":
+            m = _mat(Color(0.05, 0.12, 0.10), 0.2)
+            m.emission_enabled = true
+            m.emission = Color(0.20, 0.75, 0.45)
+            m.emission_energy_multiplier = 0.6
+        "lampshade":
+            m = _mat(Color(1.0, 0.90, 0.65), 0.6)
+            m.emission_enabled = true
+            m.emission = Color(1.0, 0.85, 0.55)
+            m.emission_energy_multiplier = 1.2
+            var lt := _tex_mip("res://textures/mat_lampshade.png")
+            if lt:
+                m.albedo_color = Color.WHITE
+                m.albedo_texture = lt
+                m.emission = Color(1, 1, 1)
+                m.emission_texture = lt
+        "green_glass":
+            m = _mat(Color(0.10, 0.45, 0.20), 0.2)
+            m.emission_enabled = true
+            m.emission = Color(0.20, 0.60, 0.25)
+            m.emission_energy_multiplier = 0.5
+        "radiator":
+            m = _obj_mat("obj_radiator", Vector3(0.3, 0.62, 0.09), Color(0.90, 0.90, 0.88), true)
+        "curtain":
+            m = _tinted("cloth_gabardine", Color(1.0, 0.92, 0.80), 0.8)
+        "armchair":
+            m = _tinted("cloth_corduroy", Color(1, 1, 1), 0.6)
+        "upholstery":
+            m = _tinted("cloth_quilted_navy", Color(0.9, 0.9, 0.9), 0.8)
+        "pot":
+            m = _tinted("mat_terracotta", Color(1, 1, 1), 0.5) if ResourceLoader.exists("res://textures/mat_terracotta.png") else _mat(Color(0.62, 0.30, 0.18), 0.8)
+        "soil":
+            m = _tinted("mat_soil", Color(1, 1, 1), 0.4) if ResourceLoader.exists("res://textures/mat_soil.png") else _mat(Color(0.20, 0.13, 0.08), 1.0)
+        "red":
+            m = _mat(Color(0.75, 0.08, 0.06), 0.5)
+        "barrel":
+            m = _mat(Color(0.15, 0.30, 0.55), 0.5)
+            var t2 := _tex_mip("res://textures/obj_barrel.png")
+            if t2:
+                m.albedo_color = Color.WHITE
+                m.albedo_texture = t2   # цилиндр сам оборачивает картинку вокруг
+            else:
+                t2 = _tex_mip("res://textures/painted_metal.png")
+                if t2:
+                    _ground_tex(m, t2, Color(0.35, 0.50, 0.85), 1.0)
+        "tires":
+            m = _fit_mat("tires", Vector3(0.75, 1.2, 0.75), Color(0.07, 0.07, 0.07))
+            m.roughness = 0.9
+        "box":
+            m = _fit_mat("box_cardboard", Vector3(0.6, 0.6, 0.6), Color(0.72, 0.55, 0.35))
+        "pallet":
+            m = _fit_mat("pallet", Vector3(1.2, 0.15, 1.0), Color(0.6, 0.45, 0.3))
+        "tv":
+            m = _fit_mat("tv", Vector3(0.5, 0.55, 0.6), Color(0.05, 0.05, 0.06))
+        "monitor":
+            m = _obj_mat("obj_monitor", Vector3(0.42, 0.36, 0.4), Color(0.80, 0.76, 0.66))
+        "keyboard":
+            m = _obj_mat("obj_keyboard", Vector3(0.45, 0.025, 0.16), Color(0.80, 0.76, 0.66))
+        "phone":
+            m = _obj_mat("obj_phone", Vector3(0.2, 0.08, 0.16), Color(0.75, 0.08, 0.06), true)
+        "papers":
+            m = _obj_mat("obj_papers", Vector3(0.3, 0.01, 0.22), Color(0.96, 0.95, 0.90))
+        "stove":
+            m = _obj_mat("obj_stove", Vector3(0.6, 0.85, 0.6), Color(0.93, 0.93, 0.92))
+        "med_cabinet":
+            m = _obj_mat("obj_med_cabinet", Vector3(1.2, 1.9, 0.45), Color(0.93, 0.93, 0.92))
+        "cooler":
+            m = _obj_mat("obj_cooler", Vector3(0.4, 1.45, 0.4), Color(0.85, 0.88, 0.9), true)
+        "cards":
+            m = _obj_mat("obj_cards", Vector3(0.9, 0.01, 0.9), Color(0.1, 0.4, 0.15))
+        "picture":
+            m = _fit_mat("window_view", Vector3(0.05, 0.55, 1.0), Color(0.5, 0.6, 0.7))
+        "posters":
+            m = _fit_mat("decals/posters", Vector3(0.05, 1.0, 1.4), Color(0.9, 0.9, 0.85))
+        _:
+            m = _mat(Color(0.5, 0.5, 0.5), 0.7)
+    _fmat[key] = m
+    return m
+
+
+## Точка p + поворот yaw + смещение l (в осях предмета).
+func _at(p: Vector3, yaw: float, l: Vector3) -> Vector3:
+    return p + Basis(Vector3.UP, yaw) * l
+
+
+## Цилиндр/шар как украшение (без столкновений).
+func _mdeco(mesh: Mesh, center: Vector3, mat: Material, yaw := 0.0) -> void:
+    var mi := MeshInstance3D.new()
+    mi.mesh = mesh
+    mi.material_override = mat
+    mi.position = center
+    mi.rotation.y = yaw
+    mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    add_child(mi)
+
+
+## Стул: сиденье, спинка, 4 ножки. Спинка сзади (-Z предмета), сидят лицом в +Z.
+func _f_chair(p: Vector3, yaw: float, mat: Material = null) -> void:
+    var m: Material = mat if mat else _fm("wood_dark")
+    _solid(Vector3(0.46, 0.05, 0.46), _at(p, yaw, Vector3(0, 0.45, 0)), m, yaw)
+    _deco(Vector3(0.46, 0.5, 0.04), _at(p, yaw, Vector3(0, 0.72, -0.21)), m, yaw)
+    for lx: float in [-0.2, 0.2]:
+        for lz: float in [-0.2, 0.2]:
+            _deco(Vector3(0.04, 0.43, 0.04), _at(p, yaw, Vector3(lx, 0.215, lz)), m, yaw)
+
+
+## Стол на четырёх ножках.
+func _f_table(p: Vector3, yaw: float, w: float, d: float, h := 0.75, mat: Material = null) -> void:
+    var m: Material = mat if mat else _fm("wood_dark")
+    _solid(Vector3(w, 0.05, d), _at(p, yaw, Vector3(0, h - 0.025, 0)), m, yaw)
+    for lx: float in [-w * 0.5 + 0.06, w * 0.5 - 0.06]:
+        for lz: float in [-d * 0.5 + 0.06, d * 0.5 - 0.06]:
+            _deco(Vector3(0.05, h - 0.05, 0.05), _at(p, yaw, Vector3(lx, (h - 0.05) * 0.5, lz)), m, yaw)
+
+
+## Конторский стол: тумба с ящиками, монитор-«ящик», клавиатура, бумаги, лампа, стул.
+func _f_desk(p: Vector3, yaw: float, green_lamp := false) -> void:
+    var wood := _fm("wood_dark")
+    _solid(Vector3(1.5, 0.05, 0.75), _at(p, yaw, Vector3(0, 0.75, 0)), wood, yaw)
+    _deco(Vector3(0.45, 0.72, 0.7), _at(p, yaw, Vector3(0.48, 0.36, 0)), wood, yaw)
+    for dy: float in [0.18, 0.4, 0.62]:
+        _deco(Vector3(0.12, 0.02, 0.02), _at(p, yaw, Vector3(0.48, dy, 0.36)), _fm("chrome"), yaw)
+    _deco(Vector3(0.05, 0.72, 0.7), _at(p, yaw, Vector3(-0.7, 0.36, 0)), wood, yaw)
+    _deco(Vector3(1.4, 0.4, 0.03), _at(p, yaw, Vector3(0, 0.5, -0.33)), wood, yaw)
+    if green_lamp:
+        _mdeco(_cyl_mesh(0.07, 0.07, 0.3, 8), _at(p, yaw, Vector3(-0.5, 0.92, -0.15)), _fm("chrome"))
+        _deco(Vector3(0.38, 0.1, 0.14), _at(p, yaw, Vector3(-0.5, 1.1, -0.1)), _fm("green_glass"), yaw)
+        _deco(Vector3(0.5, 0.01, 0.35), _at(p, yaw, Vector3(0.15, 0.78, 0.05)), _fm("papers"), yaw)
+    else:
+        # монитор
+        _deco(Vector3(0.42, 0.36, 0.4), _at(p, yaw, Vector3(-0.25, 0.97, -0.12)), _fm("monitor"), yaw)
+        _deco(Vector3(0.45, 0.025, 0.16), _at(p, yaw, Vector3(-0.2, 0.79, 0.2)), _fm("keyboard"), yaw)
+        _deco(Vector3(0.3, 0.01, 0.22), _at(p, yaw, Vector3(0.35, 0.78, 0.05)), _fm("papers"), yaw)
+        # телефон
+        _deco(Vector3(0.2, 0.08, 0.16), _at(p, yaw, Vector3(0.55, 0.81, -0.15)), _fm("phone"), yaw)
+    _f_chair(_at(p, yaw, Vector3(0, 0, 0.75)), yaw + PI)
+
+
+## Книжный шкаф с книгами разных цветов.
+func _f_bookshelf(p: Vector3, yaw: float, w := 1.2, h := 2.0) -> void:
+    var wood := _fm("wood_dark")
+    _solid(Vector3(w, h, 0.05), _at(p, yaw, Vector3(0, h * 0.5, -0.17)), wood, yaw)
+    for sx: float in [-w * 0.5, w * 0.5]:
+        _deco(Vector3(0.04, h, 0.38), _at(p, yaw, Vector3(sx, h * 0.5, 0)), wood, yaw)
+    var shelves := int(h / 0.4)
+    var cols := [Color(0.55, 0.10, 0.10), Color(0.12, 0.25, 0.50), Color(0.20, 0.40, 0.20), Color(0.70, 0.60, 0.40),
+            Color(0.25, 0.20, 0.15), Color(0.80, 0.80, 0.75)]
+    for s in shelves + 1:
+        var y := 0.03 + s * (h - 0.06) / float(shelves)
+        _deco(Vector3(w, 0.03, 0.38), _at(p, yaw, Vector3(0, y, 0)), wood, yaw)
+        if s == shelves:
+            break
+        if ResourceLoader.exists("res://textures/obj_books.png"):
+            _deco(Vector3(w - 0.08, 0.3, 0.24), _at(p, yaw, Vector3(0, y + 0.165, 0.0)), _books_mat(w - 0.08), yaw)
+            continue
+        var x := -w * 0.5 + 0.06
+        while x < w * 0.5 - 0.1:
+            var bw := _drng.randf_range(0.04, 0.09)
+            var bh := _drng.randf_range(0.22, 0.32)
+            _deco(Vector3(bw, bh, 0.24), _at(p, yaw, Vector3(x + bw * 0.5, y + 0.015 + bh * 0.5, 0.0)),
+                    _book_mat(cols[_drng.randi() % cols.size()]), yaw)
+            x += bw + 0.005
+            if _drng.randf() < 0.08:
+                x += 0.15
+
+
+var _book_mats := {}
+
+
+func _book_mat(c: Color) -> Material:
+    var k := c.to_html()
+    if not _book_mats.has(k):
+        _book_mats[k] = _mat(c, 0.7)
+    return _book_mats[k]
+
+
+## Советская «стенка»: тумбы внизу, стекло с посудой, книги и антресоли.
+func _f_stenka(p: Vector3, yaw: float, w := 3.0) -> void:
+    var lac := _fm("lacquer")
+    const H := 2.3
+    _solid(Vector3(w, H, 0.5), _at(p, yaw, Vector3(0, H * 0.5, -0.05)), lac, yaw)
+    var sec := w / 3.0
+    for i in 3:
+        var x := -w * 0.5 + sec * (i + 0.5)
+        # ручки нижних дверок
+        _deco(Vector3(0.02, 0.12, 0.02), _at(p, yaw, Vector3(x - 0.05, 0.55, 0.21)), _fm("chrome"), yaw)
+        _deco(Vector3(0.02, 0.12, 0.02), _at(p, yaw, Vector3(x + 0.05, 0.55, 0.21)), _fm("chrome"), yaw)
+        _deco(Vector3(sec - 0.08, 0.01, 0.01), _at(p, yaw, Vector3(x, 0.85, 0.205)), _fm("black"), yaw)
+        if i == 1:
+            # ниша с сервизом за стеклом
+            _deco(Vector3(sec - 0.12, 0.8, 0.01), _at(p, yaw, Vector3(x, 1.35, 0.215)), _m["glass"], yaw)
+            for k in 4:
+                _mdeco(_cyl_mesh(0.04, 0.03, 0.09, 8), _at(p, yaw, Vector3(x - 0.27 + k * 0.18, 1.05, 0.18)), _fm("white"))
+                _mdeco(_cyl_mesh(0.09, 0.09, 0.012, 12), _at(p, yaw, Vector3(x - 0.27 + k * 0.18, 1.45, 0.17)), _fm("white"))
+        else:
+            # полка с книгами
+            if ResourceLoader.exists("res://textures/obj_books.png"):
+                _deco(Vector3(sec - 0.16, 0.28, 0.05), _at(p, yaw, Vector3(x, 1.15, 0.21)), _books_mat(sec - 0.16), yaw)
+                _deco(Vector3(sec - 0.08, 0.01, 0.01), _at(p, yaw, Vector3(x, 1.85, 0.205)), _fm("black"), yaw)
+                continue
+            var bx := x - sec * 0.5 + 0.08
+            while bx < x + sec * 0.5 - 0.1:
+                var bw := _drng.randf_range(0.04, 0.08)
+                var bh := _drng.randf_range(0.2, 0.28)
+                _deco(Vector3(bw, bh, 0.05), _at(p, yaw, Vector3(bx + bw * 0.5, 1.0 + bh * 0.5, 0.21)),
+                        _book_mat([Color(0.55, 0.10, 0.10), Color(0.12, 0.25, 0.50), Color(0.70, 0.60, 0.40), Color(0.20, 0.35, 0.20)][_drng.randi() % 4]), yaw)
+                bx += bw + 0.005
+        _deco(Vector3(sec - 0.08, 0.01, 0.01), _at(p, yaw, Vector3(x, 1.85, 0.205)), _fm("black"), yaw)
+
+
+## Диван с подлокотниками и подушками; сидят лицом в +Z.
+func _f_sofa(p: Vector3, yaw: float, length := 2.2, mat: Material = null) -> void:
+    var m: Material = mat if mat else _fm("upholstery")
+    _solid(Vector3(length, 0.42, 0.9), _at(p, yaw, Vector3(0, 0.21, 0)), m, yaw)
+    _deco(Vector3(length, 0.55, 0.22), _at(p, yaw, Vector3(0, 0.68, -0.34)), m, yaw)
+    for sx: float in [-1.0, 1.0]:
+        _deco(Vector3(0.18, 0.62, 0.9), _at(p, yaw, Vector3(sx * (length * 0.5 - 0.09), 0.31, 0)), m, yaw)
+    var n := 2 if length < 1.8 else 3
+    var cw := (length - 0.4) / n
+    for i in n:
+        _deco(Vector3(cw - 0.03, 0.12, 0.62), _at(p, yaw, Vector3(-length * 0.5 + 0.2 + cw * (i + 0.5), 0.48, 0.08)), m, yaw)
+
+
+func _f_armchair(p: Vector3, yaw: float) -> void:
+    _f_sofa(p, yaw, 0.95, _fm("armchair"))
+
+
+## Батарея отопления из секций.
+func _f_radiator(p: Vector3, yaw: float, length := 1.4) -> void:
+    if ResourceLoader.exists("res://textures/obj_radiator.png"):
+        var m := _obj_mat("obj_radiator", Vector3(0.3, 0.62, 0.09), Color(0.9, 0.9, 0.88), true)
+        m.uv1_scale = Vector3(1.0 / 0.3, -1.0 / 0.62, 1.0 / 0.09)
+        _deco(Vector3(length, 0.62, 0.09), _at(p, yaw, Vector3(0, 0.45, 0)), m, yaw)
+        return
+    var n := int(length / 0.09)
+    for i in n:
+        _deco(Vector3(0.06, 0.55, 0.09), _at(p, yaw, Vector3(-length * 0.5 + 0.045 + i * 0.09, 0.45, 0)), _fm("radiator"), yaw)
+
+
+## Цветок в горшке.
+func _f_plant(p: Vector3, big := false) -> void:
+    var k := 1.4 if big else 1.0
+    _mdeco(_cyl_mesh(0.2 * k, 0.15 * k, 0.4 * k, 10), p + Vector3(0, 0.2 * k, 0), _fm("pot"))
+    _mdeco(_cyl_mesh(0.19 * k, 0.19 * k, 0.02, 10), p + Vector3(0, 0.4 * k, 0), _fm("soil"))
+    _put("bush", p + Vector3(0, 0.75 * k, 0), _drng.randf() * TAU, Color(0.8, 1.0, 0.8), Vector3(0.45, 0.6, 0.45) * k)
+
+
+## Люстра под потолком (h — высота потолка от пола).
+func _f_chandelier(p: Vector3, h: float) -> void:
+    _deco(Vector3(0.02, 0.5, 0.02), p + Vector3(0, h - 0.25, 0), _fm("chrome"))
+    _mdeco(_cyl_mesh(0.18, 0.38, 0.3, 12), p + Vector3(0, h - 0.62, 0), _fm("lampshade"))
+
+
+## Шторы по бокам окна шириной w, верх окна на высоте top.
+func _f_curtains(c: Vector3, yaw: float, w: float, top: float) -> void:
+    for sx: float in [-1.0, 1.0]:
+        _deco(Vector3(0.5, top + 0.2, 0.06), _at(c, yaw, Vector3(sx * (w * 0.5 + 0.1), (top + 0.2) * 0.5 + 0.05, 0)), _fm("curtain"), yaw)
+    _deco(Vector3(w + 1.4, 0.04, 0.04), _at(c, yaw, Vector3(0, top + 0.3, 0)), _fm("chrome"), yaw)
+
+
+## Настенные часы и картина.
+func _f_clock(p: Vector3, yaw: float) -> void:
+    var cyl := _cyl_mesh(0.18, 0.18, 0.04, 16)
+    var mi := MeshInstance3D.new()
+    mi.mesh = cyl
+    mi.material_override = _fm("white")
+    mi.position = p
+    mi.rotation = Vector3(PI * 0.5, yaw, 0)
+    add_child(mi)
+    _deco(Vector3(0.02, 0.13, 0.01), _at(p, yaw, Vector3(0, 0.05, 0.025)), _fm("black"), yaw)
+    _deco(Vector3(0.1, 0.02, 0.01), _at(p, yaw, Vector3(0.04, 0, 0.025)), _fm("black"), yaw)
+
+
+func _f_picture(p: Vector3, yaw: float, w := 1.0, h := 0.6) -> void:
+    _deco(Vector3(w + 0.08, h + 0.08, 0.03), p, _fm("wood_dark"), yaw)
+    var m := _fmat.get("picture_m") as StandardMaterial3D
+    if m == null:
+        m = _mat(Color(0.5, 0.6, 0.7), 0.6)
+        var t := _tex_mip("res://textures/window_view.png")
+        if t:
+            m.albedo_color = Color(1.0, 0.95, 0.85)
+            m.albedo_texture = t
+        _fmat["picture_m"] = m
+    var mi := MeshInstance3D.new()
+    var qm := QuadMesh.new()
+    qm.size = Vector2(w, h)
+    mi.mesh = qm
+    mi.material_override = m
+    mi.position = _at(p, yaw, Vector3(0, 0, 0.02))
+    mi.rotation.y = yaw
+    add_child(mi)
+
+
+## Кухня: плита с конфорками и мойка (ставятся в ряд).
+func _f_stove(p: Vector3, yaw: float) -> void:
+    _solid(Vector3(0.6, 0.85, 0.6), _at(p, yaw, Vector3(0, 0.425, 0)), _fm("stove"), yaw)
+    _deco(Vector3(0.6, 0.02, 0.6), _at(p, yaw, Vector3(0, 0.86, 0)), _fm("black"), yaw)
+    for bx: float in [-0.14, 0.14]:
+        for bz: float in [-0.14, 0.14]:
+            _mdeco(_cyl_mesh(0.08, 0.08, 0.02, 12), _at(p, yaw, Vector3(bx, 0.88, bz)), _fm("chrome"))
+    _mdeco(_cyl_mesh(0.08, 0.1, 0.18, 10), _at(p, yaw, Vector3(0.14, 0.98, 0.14)), _fm("red"))   # чайник
+
+
+## Больничная кровать: железная рама, матрас, капельница.
+func _f_hospital_bed(p: Vector3, yaw: float) -> void:
+    var c := _fm("white")
+    _solid(Vector3(0.95, 0.12, 2.0), _at(p, yaw, Vector3(0, 0.55, 0)), _fit_mat("org/bed_sheet", Vector3(0.95, 0.12, 2.0), Color(0.95, 0.95, 0.95)), yaw)
+    _deco(Vector3(0.9, 0.06, 1.95), _at(p, yaw, Vector3(0, 0.46, 0)), c, yaw)
+    for lx: float in [-0.43, 0.43]:
+        for lz: float in [-0.95, 0.95]:
+            _deco(Vector3(0.04, 0.5, 0.04), _at(p, yaw, Vector3(lx, 0.25, lz)), c, yaw)
+    _deco(Vector3(0.95, 0.5, 0.04), _at(p, yaw, Vector3(0, 0.85, -0.98)), c, yaw)
+    _deco(Vector3(0.6, 0.12, 0.35), _at(p, yaw, Vector3(0, 0.66, -0.75)), _fm("paper"), yaw)   # подушка
+    # капельница
+    var s := _at(p, yaw, Vector3(0.65, 0, -0.7))
+    _deco(Vector3(0.025, 1.8, 0.025), s + Vector3(0, 0.9, 0), _fm("chrome"))
+    _deco(Vector3(0.3, 0.02, 0.02), s + Vector3(0, 1.78, 0), _fm("chrome"))
+    _deco(Vector3(0.1, 0.18, 0.04), s + Vector3(0.1, 1.62, 0), _m["glass"])
+
+
+## Ящики на поддоне.
+func _f_crates(p: Vector3, yaw: float, n := 3) -> void:
+    _deco(Vector3(1.2, 0.14, 1.0), _at(p, yaw, Vector3(0, 0.07, 0)), _fm("pallet"), yaw)
+    var spots := [Vector3(-0.3, 0, -0.2), Vector3(0.3, 0, -0.2), Vector3(-0.3, 0, 0.25), Vector3(0.0, 0.6, 0.0)]
+    for i in mini(n, spots.size()):
+        var sp: Vector3 = spots[i]
+        _solid(Vector3(0.55, 0.55, 0.45), _at(p, yaw, sp + Vector3(0, 0.42, 0)), _fm("box"), yaw + _drng.randf_range(-0.15, 0.15))
+
+
+## Бочка из-под масла.
+func _f_barrel(p: Vector3) -> void:
+    _mdeco(_cyl_mesh(0.29, 0.29, 0.88, 14), p + Vector3(0, 0.44, 0), _fm("barrel"))
+
+
+## Стопка покрышек.
+func _f_tires(p: Vector3) -> void:
+    _solid(Vector3(0.75, 1.2, 0.75), p + Vector3(0, 0.6, 0), _fm("tires"))
+
+
+## Старый телевизор на тумбочке.
+func _f_tv(p: Vector3, yaw: float) -> void:
+    _solid(Vector3(0.8, 0.5, 0.45), _at(p, yaw, Vector3(0, 0.25, 0)), _fm("wood_dark"), yaw)
+    _deco(Vector3(0.6, 0.5, 0.45), _at(p, yaw, Vector3(0, 0.75, 0)), _fm("tv"), yaw)
+    _deco(Vector3(0.44, 0.34, 0.01), _at(p, yaw, Vector3(-0.04, 0.76, 0.226)), _fm("screen"), yaw)
+
+
+## Кулер с водой.
+func _f_cooler(p: Vector3, yaw: float) -> void:
+    if ResourceLoader.exists("res://textures/obj_cooler.png"):
+        _solid(Vector3(0.36, 1.0, 0.36), _at(p, yaw, Vector3(0, 0.5, 0)), _fm("white"), yaw)
+        _deco(Vector3(0.4, 1.45, 0.02), _at(p, yaw, Vector3(0, 0.725, 0.19)), _fm("cooler"), yaw)
+        return
+    _solid(Vector3(0.32, 1.0, 0.32), _at(p, yaw, Vector3(0, 0.5, 0)), _fm("white"), yaw)
+    var w := _mat(Color(0.55, 0.75, 0.95), 0.1)
+    w.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    w.albedo_color.a = 0.6
+    _mdeco(_cyl_mesh(0.14, 0.14, 0.42, 12), _at(p, yaw, Vector3(0, 1.21, 0)), w)
+
+
+## Картинка на предмет (как _fit_mat), с прозрачностью по альфе, если cut.
+func _obj_mat(tex_name: String, size: Vector3, fallback: Color, cut := false) -> StandardMaterial3D:
+    var m := _fit_mat(tex_name, size, fallback)
+    if cut and m.albedo_texture != null:
+        m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+        m.alpha_scissor_threshold = 0.5
+        m.cull_mode = BaseMaterial3D.CULL_DISABLED
+    return m
+
+
+## Полка корешков: картинка повторяется по ширине (≈0.26 м на повтор).
+func _books_mat(w: float) -> StandardMaterial3D:
+    var key := "books|%.2f" % w
+    if _fmat.has(key):
+        return _fmat[key]
+    var m := _fit_mat("obj_books", Vector3(w, 0.3, 0.24), Color(0.5, 0.2, 0.15))
+    m.uv1_scale = Vector3(maxf(1.0, roundf(w / 0.26)) / w, -1.0 / 0.3, 1.0 / 0.24)
+    _fmat[key] = m
+    return m
+
+
+# ================================================================ горизонт: далёкий город кольцом вокруг камеры
+
+var _horizon: MeshInstance3D = null
+const HORIZON_REPEAT := 10.0
+
+
+func _build_horizon() -> void:
+    var t := _tex_mip("res://textures/horizon.png")
+    if t == null:
+        return
+    var cyl := CylinderMesh.new()
+    cyl.top_radius = 1.0
+    cyl.bottom_radius = 1.0
+    cyl.height = 1.0
+    cyl.radial_segments = 64
+    cyl.rings = 1
+    cyl.cap_top = false
+    cyl.cap_bottom = false
+    var m := StandardMaterial3D.new()
+    m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    m.cull_mode = BaseMaterial3D.CULL_DISABLED
+    m.albedo_texture = t
+    m.albedo_color = Color(0.95, 0.97, 1.0)
+    m.uv1_scale = Vector3(HORIZON_REPEAT, 1.0, 1.0)
+    _m["horizon"] = m
+    _horizon = MeshInstance3D.new()
+    _horizon.mesh = cyl
+    _horizon.material_override = m
+    _horizon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    _horizon.extra_cull_margin = 16384.0
+    add_child(_horizon)
+
+
+## Кольцо всегда чуть ближе дальности прорисовки: ближние дома закрывают его, а дальше — «город».
+func update_horizon(cam_pos: Vector3, far: float) -> void:
+    if _horizon == null:
+        return
+    var r := far * 0.96
+    var h := r * 0.14
+    _horizon.scale = Vector3(r, h, r)
+    _horizon.position = Vector3(cam_pos.x, h * 0.5 - 4.0, cam_pos.z)

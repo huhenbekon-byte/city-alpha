@@ -159,6 +159,10 @@ func set_look(colors: Dictionary, textures := {}) -> void:
                 var t := _load_tex(String(textures[slot]))
                 if t:
                     _body_sh.set_shader_parameter(slot + "_tex", t)
+        if textures.has("jacket_style"):
+            var style := String(textures["jacket_style"])
+            _body_sh.set_shader_parameter("long_sleeves", 0.0 if style.contains("short") else 1.0)
+            _body_sh.set_shader_parameter("print_on", 1.0 if style.contains("print") else 0.0)
         if colors.has("skin"):
             var sc: Color = colors["skin"]
             _body_sh.set_shader_parameter("skin_tint", Vector3(sc.r / 0.87, sc.g / 0.68, sc.b / 0.55))
@@ -346,8 +350,12 @@ func _setup_character_look(root: Node) -> void:
     _body_sh.shader = load("res://shaders/character.gdshader")
     _body_sh.set_shader_parameter("body_tex", load(CHAR_DIR + "body_light.png"))
     _body_sh.set_shader_parameter("mask_tex", load(CHAR_DIR + "body_mask.png"))
+    if ResourceLoader.exists(CHAR_DIR + "sleeve_mask.png"):
+        _body_sh.set_shader_parameter("sleeve_tex", load(CHAR_DIR + "sleeve_mask.png"))
+    if ResourceLoader.exists(CHAR_DIR + "print_ussr.png"):
+        _body_sh.set_shader_parameter("print_tex", load(CHAR_DIR + "print_ussr.png"))
     for slot: String in ["jacket", "pants", "shoes"]:
-        var t := _load_tex({"jacket": "cloth_nylon", "pants": "cloth_denim", "shoes": "cloth_sneaker"}[slot])
+        var t := _load_tex({"jacket": "cloth_red_cotton", "pants": "cloth_denim_blue", "shoes": "cloth_leather_brown"}[slot])
         if t:
             _body_sh.set_shader_parameter(slot + "_tex", t)
     _hair_mat = StandardMaterial3D.new()
@@ -361,7 +369,9 @@ func _setup_character_look(root: Node) -> void:
     for mi: Node in root.find_children("*", "MeshInstance3D", true, false):
         var mesh_i := mi as MeshInstance3D
         var nm := String(mesh_i.name).to_lower()
-        if nm.contains("superhero") or nm.contains("body"):
+        if nm.contains("hairalt"):
+            mesh_i.visible = false     # другие причёски — для прохожих
+        elif nm.contains("superhero") or nm.contains("body"):
             mesh_i.material_override = _body_sh
         elif nm.contains("hair") or nm.contains("eyebrow"):
             mesh_i.material_override = _hair_mat

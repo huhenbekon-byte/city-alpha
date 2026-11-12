@@ -35,7 +35,7 @@ func setup() -> void:
     for i in COUNT:
         var ci := _rng.randi() % COLORS.size()
         if not meshes.has(ci):
-            meshes[ci] = CarModel.parked_mesh(COLORS[ci])
+            meshes[ci] = CarModel.parked_mesh(COLORS[ci], ["vaz2106", "sedan", "hatch", "taxi", "vaz2106", "suv"][ci % 6])
         var body := AnimatableBody3D.new()
         body.sync_to_physics = true
         CarModel.add_collision(body)

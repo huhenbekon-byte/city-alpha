@@ -16,6 +16,25 @@ const SHIRTS := [
 ]
 const PANTS := [Color(0.18, 0.22, 0.32), Color(0.12, 0.12, 0.13), Color(0.40, 0.35, 0.30)]
 
+## 3D-прохожие: та же модель, что у игрока (мужчина) и женская. Одежда — ткани по маске.
+const CHAR_DIR := "res://models/character/"
+const MALE_TOPS := [["cloth_bolonya_green", ""], ["cloth_wool_gray", ""], ["cloth_gabardine", ""],
+        ["cloth_quilted_navy", ""], ["cloth_check_blue", "short"], ["cloth_nylon_blue", ""], ["cloth_corduroy", ""],
+        ["cloth_cotton_white", "short"], ["cloth_leather_black", ""], ["cloth_leather_brown", ""], ["cloth_red_cotton", "short"]]
+const MALE_PANTS := ["cloth_wool_black", "cloth_jersey_gray", "cloth_acidwash", "cloth_trousers_brown", "cloth_denim_blue", "cloth_gabardine"]
+const MALE_SHOES := ["cloth_leather_black", "cloth_leather_brown", "cloth_canvas_white", "cloth_rubber_black"]
+const FEMALE_TOPS := [["cloth_chintz", "dress"], ["cloth_chintz", "dress,short"], ["cloth_cardigan", ""], ["cloth_bolonya_green", ""],
+        ["cloth_gabardine", ""], ["cloth_cotton_white", "short"], ["cloth_check_blue", "short"], ["cloth_red_cotton", "short"]]
+const FEMALE_PANTS := ["cloth_wool_black", "cloth_acidwash", "cloth_trousers_brown", "cloth_denim_blue"]
+const FEMALE_SHOES := ["cloth_leather_black", "cloth_canvas_white", "cloth_rubber_black", "cloth_leather_brown"]
+const HAIR_COLORS := [Color(0.10, 0.07, 0.05), Color(0.30, 0.20, 0.12), Color(0.55, 0.42, 0.25), Color(0.80, 0.68, 0.42),
+        Color(0.55, 0.25, 0.10), Color(0.60, 0.60, 0.60), Color(0.05, 0.05, 0.05)]
+const SKIN_TINTS := [Vector3(1.0, 1.0, 1.0), Vector3(1.08, 1.12, 1.15), Vector3(0.85, 0.78, 0.70), Vector3(0.70, 0.60, 0.50)]
+
+var _scenes := {}        # "male"/"female" -> PackedScene
+var _tex := {}
+var _shader: Shader = null
+
 signal knocked(pos: Vector3)   # сбили машиной (для розыска)
 
 var player: Node3D = null    # пешеход останавливается перед ним
@@ -31,6 +50,14 @@ var _leg_meshes := {}
 
 func setup() -> void:
     _rng.randomize()
+    if ResourceLoader.exists("res://shaders/character.gdshader"):
+        _shader = load("res://shaders/character.gdshader")
+        for k: String in ["male", "female"]:
+            var path := CHAR_DIR + ("character.gltf" if k == "male" else "female.gltf")
+            if ResourceLoader.exists(path):
+                var sc = load(path)
+                if sc is PackedScene:
+                    _scenes[k] = sc
     _skin = StandardMaterial3D.new()
     _skin.albedo_color = Color(0.87, 0.68, 0.55)
     for i in COUNT:
@@ -49,6 +76,7 @@ func _process(delta: float) -> void:
             if float(p["timer"]) <= 0.0:
                 root.rotation = Vector3.ZERO
                 p["down"] = false
+                p["anim_state"] = ""
                 _place_random(p)
             continue
 
@@ -57,8 +85,12 @@ func _process(delta: float) -> void:
             if car.driven and absf(car.speed_kmh()) > 12.0 and car.global_position.distance_to(pos) < 2.0:
                 p["down"] = true
                 p["timer"] = 5.0
-                root.rotation.x = -PI * 0.5
-                root.position = pos + Vector3(0, 0.25, 0)
+                var ap_d = p.get("anim")
+                if ap_d is AnimationPlayer and (ap_d as AnimationPlayer).has_animation("Death01"):
+                    (ap_d as AnimationPlayer).play("Death01", 0.1)
+                else:
+                    root.rotation.x = -PI * 0.5
+                    root.position = pos + Vector3(0, 0.25, 0)
                 Sfx.play_at("hit", pos)
                 knocked.emit(pos)
                 break
@@ -85,8 +117,21 @@ func _process(delta: float) -> void:
             p["phase"] = float(p["phase"]) + step * 3.2
         p["pos"] = pos
 
-        var near := pos.distance_to(focus) < 75.0
+        var near := pos.distance_to(focus) < 70.0
         root.visible = near
+        var ap = p.get("anim")
+        if ap is AnimationPlayer:
+            var anim_p := ap as AnimationPlayer
+            anim_p.active = near
+            if near:
+                root.position = pos
+                root.rotation.y = atan2(dir.x, dir.z)
+                var want := "Idle_Loop" if stop else "Walk_Loop"
+                if String(p.get("anim_state", "")) != want and anim_p.has_animation(want):
+                    anim_p.play(want, 0.25)
+                    p["anim_state"] = want
+                anim_p.speed_scale = 1.0 if stop else SPEED * float(p["speed_k"]) / 1.5
+            continue
         if near:
             root.position = pos
             root.rotation.y = atan2(dir.x, dir.z)
@@ -115,6 +160,10 @@ func _place_random(p: Dictionary) -> void:
 
 
 func _make_ped() -> Dictionary:
+    if not _scenes.is_empty():
+        var d3 := _make_ped_3d()
+        if not d3.is_empty():
+            return d3
     var si := _rng.randi() % SHIRTS.size()
     var pi_ := _rng.randi() % PANTS.size()
     var bk := si * 10 + pi_
@@ -240,3 +289,89 @@ func _capsule(r: float, h: float) -> CapsuleMesh:
     m.radial_segments = 10
     m.rings = 4
     return m
+
+
+
+# ---------------------------------------------------------------- 3D-прохожие
+
+func _ctex(tex_name: String) -> Texture2D:
+    if _tex.has(tex_name):
+        return _tex[tex_name]
+    var path := tex_name if tex_name.begins_with("res://") else "res://textures/%s.png" % tex_name
+    var t: Texture2D = load(path) if ResourceLoader.exists(path) else null
+    _tex[tex_name] = t
+    return t
+
+
+func _make_ped_3d() -> Dictionary:
+    var female := _scenes.has("female") and (_rng.randf() < 0.45 or not _scenes.has("male"))
+    var sc: PackedScene = _scenes["female" if female else "male"]
+    var model := sc.instantiate() as Node3D
+    if model == null:
+        return {}
+    var root := Node3D.new()
+    add_child(root)
+    root.add_child(model)
+    var players := model.find_children("*", "AnimationPlayer", true, false)
+    var ap: AnimationPlayer = players[0] if not players.is_empty() else null
+    if ap:
+        for an: String in ["Walk_Loop", "Idle_Loop"]:
+            if ap.has_animation(an):
+                ap.get_animation(an).loop_mode = Animation.LOOP_LINEAR
+        if ap.has_animation("Walk_Loop"):
+            ap.play("Walk_Loop")
+            ap.seek(_rng.randf() * 1.0, true)
+
+    # одежда
+    var tops: Array = FEMALE_TOPS if female else MALE_TOPS
+    var top: Array = tops[_rng.randi() % tops.size()]
+    var style := String(top[1])
+    var pants_l: Array = FEMALE_PANTS if female else MALE_PANTS
+    var shoes_l: Array = FEMALE_SHOES if female else MALE_SHOES
+    var pants_name: String = top[0] if style.contains("dress") else pants_l[_rng.randi() % pants_l.size()]
+    var shoes_name: String = shoes_l[_rng.randi() % shoes_l.size()]
+    var mat := ShaderMaterial.new()
+    mat.shader = _shader
+    var pre := "female_" if female else "body_"
+    mat.set_shader_parameter("body_tex", _ctex(CHAR_DIR + ("female_light.png" if female else "body_light.png")))
+    mat.set_shader_parameter("mask_tex", _ctex(CHAR_DIR + pre + "mask.png"))
+    mat.set_shader_parameter("sleeve_tex", _ctex(CHAR_DIR + ("female_sleeve.png" if female else "sleeve_mask.png")))
+    mat.set_shader_parameter("jacket_tex", _ctex(String(top[0])))
+    mat.set_shader_parameter("pants_tex", _ctex(pants_name))
+    mat.set_shader_parameter("shoes_tex", _ctex(shoes_name))
+    var tint := _rng.randf_range(0.85, 1.05)
+    for slot: String in ["jacket", "pants", "shoes"]:
+        mat.set_shader_parameter(slot + "_col", Vector3(tint, tint, tint))
+    mat.set_shader_parameter("long_sleeves", 0.0 if style.contains("short") else 1.0)
+    mat.set_shader_parameter("print_on", 0.0)
+    mat.set_shader_parameter("skin_tint", SKIN_TINTS[_rng.randi() % SKIN_TINTS.size()])
+
+    # причёска и цвет волос
+    var hair_mat := StandardMaterial3D.new()
+    var hc: Color = HAIR_COLORS[_rng.randi() % HAIR_COLORS.size()]
+    hair_mat.albedo_color = hc.lightened(0.15)
+    var ht := _ctex(CHAR_DIR + ("hair2_gray.png" if female else "hair_gray.png"))
+    if ht:
+        hair_mat.albedo_texture = ht
+    hair_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+    hair_mat.alpha_scissor_threshold = 0.4
+    hair_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+    hair_mat.roughness = 0.7
+    var alt := _rng.randf() < 0.4
+    var beard := not female and _rng.randf() < 0.3
+    for mi: Node in model.find_children("*", "MeshInstance3D", true, false):
+        var mesh_i := mi as MeshInstance3D
+        mesh_i.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+        var nm := String(mesh_i.name).to_lower()
+        if nm.contains("hairalt"):
+            mesh_i.visible = (nm.contains("beard") and beard) or (not nm.contains("beard") and alt)
+            mesh_i.material_override = hair_mat
+        elif nm.contains("hair"):
+            mesh_i.visible = not alt
+            mesh_i.material_override = hair_mat
+        elif nm.contains("eyebrow"):
+            mesh_i.material_override = hair_mat
+        elif nm.contains("superhero") or nm.contains("body"):
+            mesh_i.material_override = mat
+    return {"root": root, "legs": [], "pos": Vector3.ZERO, "corners": [], "idx": 0, "anim": ap, "anim_state": "Walk_Loop",
+            "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0}

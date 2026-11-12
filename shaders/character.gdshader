@@ -4,18 +4,25 @@ shader_type spatial;
 
 uniform sampler2D body_tex : source_color, filter_linear_mipmap;
 uniform sampler2D mask_tex : filter_linear;
+// где у куртки предплечья: у майки и футболки рукава короткие (long_sleeves = 0)
+uniform sampler2D sleeve_tex : filter_linear;
+uniform float long_sleeves = 1.0;
+// принт на груди (уже разложен по развёртке тела)
+uniform sampler2D print_tex : source_color, filter_linear;
+uniform float print_on = 0.0;
 uniform sampler2D jacket_tex : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D pants_tex : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D shoes_tex : source_color, filter_linear_mipmap, repeat_enable;
-uniform vec3 jacket_col = vec3(0.09, 0.42, 0.52);
-uniform vec3 pants_col = vec3(0.17, 0.24, 0.38);
-uniform vec3 shoes_col = vec3(0.96, 0.96, 0.96);
+uniform vec3 jacket_col : source_color = vec3(0.09, 0.42, 0.52);
+uniform vec3 pants_col : source_color = vec3(0.17, 0.24, 0.38);
+uniform vec3 shoes_col : source_color = vec3(0.96, 0.96, 0.96);
 uniform vec3 skin_tint = vec3(1.0);
 uniform float cloth_scale = 8.0;
 
 void fragment() {
 	vec3 base = texture(body_tex, UV).rgb;
 	vec3 m = texture(mask_tex, UV).rgb;
+	m.r *= 1.0 - texture(sleeve_tex, UV).r * (1.0 - long_sleeves);
 	// складки и объём одежды берём из яркости кожи под ней
 	float shade = clamp(dot(base, vec3(0.333)) / 0.55, 0.65, 1.2);
 	shade = mix(1.0, shade, 0.6);
@@ -25,8 +32,13 @@ void fragment() {
 	vec3 shoes = texture(shoes_tex, cuv).rgb * shoes_col * shade;
 	vec3 col = base * skin_tint;
 	col = mix(col, pants, m.g);
+	vec4 pr = texture(print_tex, UV);
+	jacket = mix(jacket, pr.rgb * shade, pr.a * print_on);
 	col = mix(col, jacket, m.r);
 	col = mix(col, shoes, m.b);
+	// швы: край рукавов и ворота, пояс между курткой и штанами
+	float seam = max(max(4.0 * m.r * (1.0 - m.r), 4.0 * m.g * (1.0 - m.g)), m.r * m.g);
+	col *= 1.0 - 0.35 * clamp(seam, 0.0, 1.0);
 	ALBEDO = col;
 	ROUGHNESS = mix(0.55, 0.9, max(max(m.r, m.g), m.b));
 }
