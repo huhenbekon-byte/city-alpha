@@ -355,6 +355,7 @@ func _physics_process(delta: float) -> void:
         _stabilize(basis_now, fwd_speed, hand, delta)
 
     _tail_mat.emission_energy_multiplier = 2.5 if (driven and brk > 2.0) else 0.3
+    _update_fx(hand, kmh, throttle, absf(linear_velocity.dot(basis_now.x)))
 
     # Перевернулась — через 1.5 с ставим на колёса.
     if driven and basis_now.y.y < 0.45 and linear_velocity.length() < 3.0:
@@ -788,3 +789,116 @@ func _setup_model() -> void:
             # точка подвески чуть выше центра колеса (ход подвески 0,12 м)
             _add_wheel(wheels[nm] + Vector3(0, 0.11, 0), front, mi.mesh, r, mi.transform.basis)
     root.free()
+
+
+# ---------------------------------------------------------------- место водителя
+
+var _seat_cache: Array = []
+
+
+## Где сидит водитель (таз, в координатах машины) и во сколько уменьшить фигуру,
+## чтобы голова не торчала из крыши. Только легковые (у мотоцикла свой седок).
+func driver_seat() -> Array:
+    if kind != "car" or _body_mi == null or _body_mi.mesh == null:
+        return []
+    if not _seat_cache.is_empty():
+        return _seat_cache
+    var box := _body_mi.transform * _body_mi.mesh.get_aabb()
+    var front_z := 1.2
+    var wheel_y := 0.3
+    for w: VehicleWheel3D in _all_wheels:
+        if w.use_as_steering:
+            front_z = w.position.z
+            wheel_y = w.position.y - 0.11
+    var roof := box.position.y + box.size.y
+    var floor_y := box.position.y + 0.06
+    var hip_z := front_z - 1.3
+    if model_id == "uaz452":   # «буханка»: кабина над передней осью
+        floor_y = wheel_y + 0.25
+        hip_z = front_z - 0.35
+    var sc := clampf((roof - 0.14 - floor_y) / 1.42, 0.62, 1.0)
+    var hip := Vector3(box.size.x * 0.21, floor_y + 0.47 * sc, hip_z)
+    _seat_cache = [hip, sc]
+    return _seat_cache
+
+
+# ---------------------------------------------------------------- выхлоп и дым из-под колёс
+
+var _exhaust: CPUParticles3D = null
+var _tire_smoke: Array[CPUParticles3D] = []
+
+
+func _puffs(amount: int, life: float, size: float, col: Color, tex: String) -> CPUParticles3D:
+    var p := CPUParticles3D.new()
+    p.amount = amount
+    p.lifetime = life
+    p.local_coords = false      # дым остаётся в воздухе, машина уезжает
+    p.emitting = false
+    p.spread = 20.0
+    p.gravity = Vector3(0, 0.6, 0)
+    p.scale_amount_min = 0.5
+    p.scale_amount_max = 1.6
+    var q := QuadMesh.new()
+    q.size = Vector2(size, size)
+    var m := StandardMaterial3D.new()
+    m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+    m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    m.vertex_color_use_as_albedo = true
+    if ResourceLoader.exists("res://textures/fx/%s.png" % tex):
+        m.albedo_texture = load("res://textures/fx/%s.png" % tex)
+    q.material = m
+    p.mesh = q
+    var g := Gradient.new()
+    g.set_color(0, col)
+    g.set_color(1, Color(col.r, col.g, col.b, 0.0))
+    p.color_ramp = g
+    var sc := Curve.new()
+    sc.add_point(Vector2(0, 0.4))
+    sc.add_point(Vector2(1, 1.0))
+    p.scale_amount_curve = sc
+    add_child(p)
+    return p
+
+
+func _update_fx(hand: bool, kmh: float, throttle: float, slide: float) -> void:
+    if not driven:
+        if _exhaust:
+            _exhaust.emitting = false
+        for t in _tire_smoke:
+            t.emitting = false
+        return
+    if _exhaust == null and kind != "moto":
+        var rear_z := -2.1
+        var low_y := 0.3
+        if _body_mi and _body_mi.mesh:
+            var box := _body_mi.transform * _body_mi.mesh.get_aabb()
+            rear_z = box.position.z + 0.05
+            low_y = box.position.y + 0.12
+        _exhaust = _puffs(14, 1.1, 0.35, Color(0.55, 0.55, 0.55, 0.35), "smoke_light")
+        _exhaust.position = Vector3(-0.45, low_y, rear_z)
+        _exhaust.direction = Vector3(0, 0.25, -1)
+        _exhaust.initial_velocity_min = 0.6
+        _exhaust.initial_velocity_max = 1.2
+        for w in _rear:
+            var t := _puffs(24, 1.4, 1.1, Color(0.85, 0.85, 0.85, 0.5), "smoke_light")
+            t.position = Vector3(w.position.x, 0.15, w.position.z)
+            t.direction = Vector3(0, 0.6, -1)
+            t.initial_velocity_min = 0.4
+            t.initial_velocity_max = 1.4
+            t.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+            t.emission_sphere_radius = 0.25
+            _tire_smoke.append(t)
+    if _exhaust:
+        _exhaust.emitting = (not uses_fuel) or fuel > 0.0
+        _exhaust.speed_scale = 1.0 + absf(throttle) * 1.5   # газуешь — дымит гуще
+    var skid := (hand and kmh > 15.0) or (slide > 4.5 and kmh > 20.0) or (throttle > 0.9 and kmh < 8.0 and _rear_spinning())
+    for t in _tire_smoke:
+        t.emitting = skid
+
+
+func _rear_spinning() -> bool:
+    for w in _rear:
+        if w.get_skidinfo() < 0.5:
+            return true
+    return false

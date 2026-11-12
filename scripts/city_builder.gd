@@ -51,6 +51,7 @@ var _mz := 1.0
 var _panel_mats: Array[StandardMaterial3D] = []
 var _brick_mats: Array[StandardMaterial3D] = []
 var _tower_mats: Array[StandardMaterial3D] = []   # высотки-«свечки» (если есть текстура)
+var _stalin_mats: Array[StandardMaterial3D] = []  # жёлтые сталинки (Пятигорск и центр Казани)
 var _m := {}
 
 # --- данные для мини-карты и работ (читают main.gd, minimap.gd, job_courier.gd)
@@ -298,6 +299,13 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
         mat = _tower_mats[rng.randi() % _tower_mats.size()]
     else:
         mat = _panel_mats[rng.randi() % _panel_mats.size()]
+    # Сталинки: в Пятигорске — почти все невысокие дома, в Казани — часть кирпичных.
+    # Выбор по координатам, а не rng: планировка города не меняется.
+    if not _stalin_mats.is_empty() and style != "tower" and floors <= 9:
+        var hh := int(absf(base.x * 3.0 + base.z * 5.0))
+        var pyat := _city_id == "pyat"
+        if (pyat and (style == "brick" or hh % 2 == 0)) or (not pyat and style == "brick" and hh % 3 == 0):
+            mat = _stalin_mats[hh % _stalin_mats.size()]
 
     _solid(Vector3(sx, h, sz), base + Vector3(0, h * 0.5, 0), mat)
     _deco(Vector3(sx + 0.2, 0.7, sz + 0.2), base + Vector3(0, 0.35, 0), _m["plinth"])
@@ -531,10 +539,15 @@ func _parked_car(p: Vector3, yaw: float) -> void:
     _put("car%d" % (rng.randi() % PARKED_COLORS.size()), body.position, yaw)
 
 
+## Лавки: [середина сиденья на земле, куда смотрит] — на них можно сесть.
+var benches: Array = []
+
+
 func _bench(p: Vector3, facing: Vector3) -> void:
     var yaw := atan2(facing.x, facing.z)
     var b := Basis(Vector3.UP, yaw)
     var base := Vector3(p.x, SIDE_H, p.z)
+    benches.append([base, facing.normalized()])
     _put("bench_seat", base + Vector3(0, 0.45, 0), yaw)
     _put("bench_back", base + b * Vector3(0, 0.7, -0.2), yaw)
     _put("bench_leg", base + b * Vector3(-0.75, 0.225, 0), yaw)
@@ -736,6 +749,10 @@ func _make_materials() -> void:
     if not tower_tex.is_empty():
         for col: Color in [Color(0.84, 0.84, 0.84), Color(0.86, 0.82, 0.76), Color(0.78, 0.81, 0.86)]:
             _tower_mats.append(_facade_mat(col, tower_tex))
+    var stalin := _tex_mip("res://textures/facade_stalin.png")
+    if stalin:
+        for col: Color in [Color(0.95, 0.95, 0.95), Color(0.98, 0.90, 0.84), Color(0.90, 0.92, 0.86)]:
+            _stalin_mats.append(_facade_mat(col, [stalin]))
 
     _m["asphalt"] = _mat(Color(0.19, 0.19, 0.20), 0.95)
     _m["wasteland"] = _mat(Color(0.30, 0.34, 0.22), 1.0)
@@ -950,7 +967,7 @@ func set_night(k: float) -> void:
     if cone_mat:
         cone_mat.albedo_color = Color(1.0, 0.82, 0.5) * (0.10 * lk)
     if _night_base.is_empty():
-        var mats: Array = _panel_mats + _brick_mats + _tower_mats
+        var mats: Array = _panel_mats + _brick_mats + _tower_mats + _stalin_mats
         for m in _m.values():
             mats.append(m)
         for m in _tinted_cache.values():
@@ -3002,6 +3019,7 @@ func _books_mat(w: float) -> StandardMaterial3D:
 # ================================================================ горизонт: далёкий город кольцом вокруг камеры
 
 var _horizon: MeshInstance3D = null
+var _mountains: MeshInstance3D = null
 const HORIZON_REPEAT := 10.0
 
 
@@ -3031,10 +3049,34 @@ func _build_horizon() -> void:
     _horizon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     _horizon.extra_cull_margin = 16384.0
     add_child(_horizon)
+    var mt := _tex_mip("res://textures/mountains.png")
+    if mt:
+        var mm := StandardMaterial3D.new()
+        mm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+        mm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+        mm.cull_mode = BaseMaterial3D.CULL_DISABLED
+        mm.albedo_texture = mt
+        mm.uv1_scale = Vector3(5.0, 1.0, 1.0)
+        mm.render_priority = -1
+        _m["mountains"] = mm
+        _mountains = MeshInstance3D.new()
+        _mountains.mesh = cyl
+        _mountains.material_override = mm
+        _mountains.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+        _mountains.extra_cull_margin = 16384.0
+        _mountains.visible = false
+        add_child(_mountains)
 
 
 ## Кольцо всегда чуть ближе дальности прорисовки: ближние дома закрывают его, а дальше — «город».
 func update_horizon(cam_pos: Vector3, far: float) -> void:
+    if _mountains != null:   # горы Кавказа видны из Пятигорска и с моста
+        _mountains.visible = cam_pos.x < RIVER_X1 + 60.0
+        if _mountains.visible:
+            var mr := far * 0.985
+            var mh := mr * 0.22
+            _mountains.scale = Vector3(mr, mh, mr)
+            _mountains.position = Vector3(cam_pos.x, mh * 0.5 - 6.0, cam_pos.z)
     if _horizon == null:
         return
     var r := far * 0.96
@@ -3354,6 +3396,8 @@ func _village_park(c: Vector3) -> void:
 
 const BRIDGE_Z := 43.0       # мост продолжает улицу z = 43 обоих городов
 var py_center := PY_ORG
+var bridge_center := Vector3((RIVER_X0 + RIVER_X1) * 0.5, 1.2, BRIDGE_Z)
+var cottages_center := Vector3(262.0 + OUT, 0, 0)
 
 
 func _build_river_and_bridge() -> void:
@@ -3372,11 +3416,14 @@ func _build_river_and_bridge() -> void:
     add_child(wm)
     # берега: песок и бетонные парапеты (в реку не упасть)
     var sand: Material = _m["sand"]
-    var par := _tinted("concrete", Color(0.72, 0.71, 0.68), 2.0)
+    # набережная: красный гранит и чугунная решётка со звёздами
+    var par := _tinted("granite_red", Color(0.92, 0.92, 0.92), 2.6)
     for bx: float in [RIVER_X0 - 5.0, RIVER_X1 + 5.0]:
         _flat(Vector3(bx, 0, 0), Vector2(10.0, 2000.0), sand, 0.02)
     for px: float in [RIVER_X0, RIVER_X1]:
-        _solid(Vector3(0.5, 0.8, 2000.0), Vector3(px, 0.4, 0), par)
+        _solid(Vector3(0.6, 0.8, 2000.0), Vector3(px, 0.4, 0), par)
+        _deco(Vector3(0.75, 0.08, 2000.0), Vector3(px, 0.84, 0), _m["granite"])
+        _iron_rail(Vector3(px, 0.88, 0), 2000.0, 0.9, Vector3(1, 0, 0))
     # мост: настил на высоте 1.2 м и пандусы-въезды
     const DECK_Y := 1.2
     const RAMP := 20.0
@@ -3385,7 +3432,7 @@ func _build_river_and_bridge() -> void:
     var road: Material = _m["asphalt"]
     var conc := _tinted("concrete", Color(0.78, 0.77, 0.74), 2.0)
     _solid(Vector3(x1 - x0, 0.3, 14.0), Vector3((x0 + x1) * 0.5, DECK_Y - 0.15, BRIDGE_Z), road)
-    _deco(Vector3(x1 - x0, 0.6, 14.4), Vector3((x0 + x1) * 0.5, DECK_Y - 0.6, BRIDGE_Z), conc)
+    _deco(Vector3(x1 - x0, 0.6, 14.4), Vector3((x0 + x1) * 0.5, DECK_Y - 0.6, BRIDGE_Z), par)
     var ang := atan2(DECK_Y, RAMP)
     var rlen := sqrt(RAMP * RAMP + DECK_Y * DECK_Y)
     for side: float in [1.0, -1.0]:   # 1 — восточный въезд (со стороны Казани)
@@ -3405,13 +3452,14 @@ func _build_river_and_bridge() -> void:
         ramp.position = Vector3(rcx, DECK_Y * 0.5 - 0.15, BRIDGE_Z)
         add_child(ramp)
     # перила и опоры
-    var rail := _tinted("painted_metal", Color(0.55, 0.60, 0.65), 1.0)
     for sz: float in [-7.1, 7.1]:
-        _solid(Vector3(x1 - x0, 1.0, 0.15), Vector3((x0 + x1) * 0.5, DECK_Y + 0.5, BRIDGE_Z + sz), rail)
-        var k := x0 + 4.0
+        _collider(Vector3(x1 - x0, 1.1, 0.2), Vector3((x0 + x1) * 0.5, DECK_Y + 0.55, BRIDGE_Z + sz))
+        _iron_rail(Vector3((x0 + x1) * 0.5, DECK_Y, BRIDGE_Z + sz), x1 - x0, 1.0, Vector3(0, 0, 1))
+        _deco(Vector3(x1 - x0, 0.08, 0.22), Vector3((x0 + x1) * 0.5, DECK_Y + 1.02, BRIDGE_Z + sz), _m["granite"])
+        var k := x0 + 6.0
         while k < x1:
-            _deco(Vector3(0.12, 1.0, 0.2), Vector3(k, DECK_Y + 0.5, BRIDGE_Z + sz), conc)
-            k += 4.0
+            _deco(Vector3(0.45, 1.25, 0.45), Vector3(k, DECK_Y + 0.62, BRIDGE_Z + sz), par)
+            k += 6.0
     for px: float in [-485.0, -465.0, -445.0]:
         _deco(Vector3(3.0, DECK_Y, 10.0), Vector3(px, DECK_Y * 0.5 - 0.3, BRIDGE_Z), conc)
     for lx: float in [x0 + 10.0, (x0 + x1) * 0.5, x1 - 10.0]:
@@ -3437,6 +3485,36 @@ func _build_river_and_bridge() -> void:
     # указатели городов
     _city_sign(Vector3(kazan_edge - 12.0, 0, BRIDGE_Z + 10.0), "КАЗАНЬ", Vector3(-1, 0, 0))
     _city_sign(Vector3(py_edge + 12.0, 0, BRIDGE_Z - 10.0), "ПЯТИГОРСК", Vector3(1, 0, 0))
+
+
+## Чугунная решётка со звёздами: плоскость с вырезом по альфе, повторяется по длине.
+## base — середина низа, normal — куда «смотрит» решётка (поперёк её длины).
+func _iron_rail(base: Vector3, length: float, height: float, normal: Vector3) -> void:
+    var t := _tex_mip("res://textures/railing_stars.png")
+    if t == null:
+        return
+    if not _m.has("iron_rail"):
+        var m := StandardMaterial3D.new()
+        m.albedo_texture = t
+        m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+        m.alpha_scissor_threshold = 0.5
+        m.cull_mode = BaseMaterial3D.CULL_DISABLED
+        m.metallic = 0.6
+        m.roughness = 0.45
+        m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+        _m["iron_rail"] = m
+    var tile_w := height * float(t.get_width()) / float(t.get_height())
+    var q := QuadMesh.new()
+    q.size = Vector2(length, height)
+    var mat: StandardMaterial3D = (_m["iron_rail"] as StandardMaterial3D).duplicate()
+    mat.uv1_scale = Vector3(length / tile_w, 1.0, 1.0)
+    var mi := MeshInstance3D.new()
+    mi.mesh = q
+    mi.material_override = mat
+    mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    mi.position = base + Vector3(0, height * 0.5, 0)
+    mi.rotation.y = atan2(normal.x, normal.z)
+    add_child(mi)
 
 
 func _city_sign(p: Vector3, text: String, facing: Vector3) -> void:

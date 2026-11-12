@@ -102,6 +102,7 @@ const NAV_CATS := [
     {"id": "fuel", "name": "АЗС", "icon": "fuel"},
     {"id": "service", "name": "Сервисы", "icon": "wrench"},
     {"id": "fun", "name": "Развлечения", "icon": "star"},
+    {"id": "cities", "name": "Города", "icon": "pin"},
     {"id": "other", "name": "Другое", "icon": "dots"},
 ]
 ## Вопросы теории в автошколе: [вопрос, [варианты], номер правильного].
@@ -346,6 +347,7 @@ func _process(delta: float) -> void:
         _light_timer = 0.25
         _update_daylight()
 
+    _follow_seat()
     var focus := _focus()
     var hcam := get_viewport().get_camera_3d()
     if hcam:
@@ -898,6 +900,7 @@ func _toggle_vehicle() -> void:
         var yaw: float = _driving.get_camera_yaw()
         _driving.set_driven(false)
         _driving = null
+        _player.set_seated("")
         _player.global_position = pos
         _player.set_active(true)
         _player.set_camera_yaw(yaw)
@@ -916,6 +919,39 @@ func _toggle_vehicle() -> void:
             car.set_rider_color(rider_col)
         car.set_driven(true)
         _driving = car
+        _seat_driver()
+
+
+func _sit_bench(i: int) -> void:
+    var bn: Array = _city.benches[i]
+    if _player.seated == "" and _player.sit_at(bn[0], bn[1]):
+        _hud.show_toast("Сидишь на лавочке. Пошевели джойстиком, чтобы встать")
+
+
+## Водитель виден в машине: модель игрока садится за руль с анимацией вождения.
+var _seat_local := Transform3D()
+
+
+func _seat_driver() -> void:
+    if _driving == null or not _player.can_sit("drive"):
+        return
+    var seat: Array = _driving.driver_seat()
+    if seat.is_empty():
+        return
+    _player.set_seated("drive")
+    _player.set_seat_scale(float(seat[1]))
+    _seat_local = _player.driver_transform(seat[0], float(seat[1]))
+    _follow_seat()
+
+
+func _follow_seat() -> void:
+    if _player.seated != "drive":
+        return
+    if _driving == null:
+        _player.set_seated("")
+        _player.set_active(false)
+        return
+    _player.global_transform = (_driving.global_transform as Transform3D) * _seat_local
 
 
 func _nearest_car():
@@ -1129,6 +1165,7 @@ func _restore_state() -> void:
         _player.set_active(false)
         _cars[di].set_driven(true)
         _driving = _cars[di]
+        _seat_driver()
     var kind := String(_loaded.get("job_kind", ""))
     if bool(_loaded.get("job", false)) and kind != "":
         _job.start(kind, _focus())
@@ -1546,6 +1583,9 @@ func _setup_points() -> void:
     for i in _city.entrances.size():
         var en: Dictionary = _city.entrances[i]
         _add_point(en["pos"], 1.2, "ПОДЪЕЗД", _enter_podezd.bind(i), false, Color(0.85, 0.85, 0.85), false)
+    for bi in _city.benches.size():
+        var bn: Array = _city.benches[bi]
+        _add_point(bn[0] + bn[1] * 0.7, 0.9, "СЕСТЬ", _sit_bench.bind(bi), false, Color.WHITE, false)
     for sp: Vector3 in _city.soda_spots:
         _add_point(sp, 1.2, "ГАЗИРОВКА", _drink_soda, false, Color(1.0, 0.3, 0.25), false)
     if not _city.podezd.is_empty():
@@ -1922,6 +1962,7 @@ func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
     _player.set_active(false)
     v.set_driven(true)
     _driving = v
+    _seat_driver()
     for cam in get_tree().get_nodes_in_group("game_camera"):
         cam.far = _view_far
 
@@ -2212,6 +2253,18 @@ func _nav_places() -> Array:
     for p: Vector3 in c.service_stations:
         out.append({"cat": "service", "icon": "wrench", "name": "СТО — ремонт и тюнинг", "pos": p})
     out.append({"cat": "fun", "icon": "star", "name": "Центральная площадь", "pos": Vector3(0, 0, 0)})
+    # Города и сёла
+    var city_col := Color(0.55, 0.8, 1.0)
+    var green := Color(0.55, 0.85, 0.45)
+    out.append({"cat": "cities", "icon": "star", "col": Color(1.0, 0.45, 0.4), "name": "Казань — центральная площадь", "pos": Vector3(0, 0, 0)})
+    out.append({"cat": "cities", "icon": "star", "col": city_col, "name": "Пятигорск — площадь со стелой", "pos": c.py_center})
+    out.append({"cat": "cities", "icon": "pin", "col": city_col, "name": "Мост Дружбы (между городами)",
+            "pos": c.bridge_center})
+    out.append({"cat": "cities", "icon": "house", "col": green, "name": "Село Бусаево", "pos": c.village_center})
+    if c.village_park != Vector3.ZERO:
+        out.append({"cat": "cities", "icon": "pin", "col": green, "name": "Бусаево — парк имени Гагарина", "pos": c.village_park})
+    out.append({"cat": "cities", "icon": "house", "col": green, "name": "Дачный посёлок (коттеджи)", "pos": c.cottages_center})
+    out.append({"cat": "cities", "icon": "axe", "col": green, "name": "Лес и лесопилка", "pos": c.log_pile})
     out.append({"cat": "fun", "icon": "star", "name": "Лес за городом", "pos": Vector3(-356, 0, -356)})
     for p: Vector3 in c.bus_stops:
         out.append({"cat": "other", "icon": "dots", "name": "Остановка", "pos": p})

@@ -223,6 +223,8 @@ func _load_tex(tex_name: String) -> Texture2D:
 
 ## Включить/выключить игрока (выключаем, пока он сидит в машине).
 func set_active(on: bool) -> void:
+    if on and seated != "":
+        set_seated("")
     visible = on
     velocity = Vector3.ZERO
     process_mode = Node.PROCESS_MODE_INHERIT if on else Node.PROCESS_MODE_DISABLED
@@ -299,6 +301,9 @@ func _physics_process(delta: float) -> void:
 
 func _process(delta: float) -> void:
     _time += delta
+    if seated != "":
+        _process_seated()
+        return
     if _anim:
         _animate_model()
     else:
@@ -335,13 +340,14 @@ func _setup_model() -> void:
         for key in ["idle", "walk", "run", "jump"]:
             if low.contains(key) and not _anim_map.has(key):
                 _anim_map[key] = anim_name
-    for extra: Array in [["pistol_idle", "pistol_idle"], ["shoot", "pistol_shoot"], ["punch1", "punch_jab"], ["punch2", "punch_cross"]]:
+    for extra: Array in [["pistol_idle", "pistol_idle"], ["shoot", "pistol_shoot"], ["punch1", "punch_jab"], ["punch2", "punch_cross"],
+            ["drive", "driving"], ["sit", "sitting_idle"]]:
         for an in _anim.get_animation_list():
             if String(an).to_lower().begins_with(String(extra[1])) and not _anim_map.has(extra[0]):
                 _anim_map[extra[0]] = String(an)
     if _anim_map.has("pistol_idle"):
         _anim.get_animation(_anim_map["pistol_idle"]).loop_mode = Animation.LOOP_LINEAR
-    for key in ["idle", "walk", "run", "jog", "jump"]:
+    for key in ["idle", "walk", "run", "jog", "jump", "drive", "sit"]:
         if _anim_map.has(key):
             _anim.get_animation(_anim_map[key]).loop_mode = Animation.LOOP_LINEAR
 
@@ -659,3 +665,93 @@ func _set_overlay(kind: String, on: bool) -> void:
             var vt := _load_tex("uni_vest")
             if vt:
                 _body_sh.set_shader_parameter("vest_tex", vt)
+
+
+# ---------------------------------------------------------------- сидя (за рулём, на лавке)
+
+## Таз в позе сидя относительно ног персонажа (из анимаций Driving / Sitting_Idle).
+const PELVIS_DRIVE := Vector3(-0.003, 0.559, 0.321)
+const PELVIS_SIT := Vector3(-0.003, 0.561, 0.343)
+
+var seated := ""            # "" — стоит, "drive" — за рулём, "sit" — на лавке
+var _saved_layer := 1
+var _saved_mask := 1
+var _stand_pos := Vector3.ZERO
+
+
+func can_sit(kind: String) -> bool:
+    return _anim != null and _anim_map.has(kind)
+
+
+## Сесть ("drive"/"sit") или встать (""). Пока сидит — без физики и без столкновений.
+func set_seated(kind: String) -> void:
+    if kind == seated:
+        return
+    var was := seated
+    seated = kind
+    velocity = Vector3.ZERO
+    if kind != "":
+        visible = true
+        process_mode = Node.PROCESS_MODE_INHERIT
+        set_physics_process(false)
+        if collision_layer != 0:
+            _saved_layer = collision_layer
+            _saved_mask = collision_mask
+        collision_layer = 0
+        collision_mask = 0
+        _visual.rotation.y = 0.0
+        if _gun:
+            _gun.visible = false
+        if _carry_node:
+            _carry_node.visible = false
+    else:
+        _visual.scale = Vector3.ONE
+        transform.basis = Basis()   # из машины мог выйти с наклоном кузова
+        set_physics_process(true)
+        collision_layer = _saved_layer
+        collision_mask = _saved_mask
+        if _gun:
+            _gun.visible = true
+        if _carry_node:
+            _carry_node.visible = true
+        if was == "sit":
+            global_position = _stand_pos
+
+
+## Посадить за руль: seat — точка таза в машине (локально), sc — масштаб (в маленьких машинах — меньше).
+## Возвращает локальную позицию игрока в машине (повёрнут лицом по ходу машины).
+func driver_transform(seat: Vector3, sc: float) -> Transform3D:
+    var b := Basis(Vector3.UP, PI)
+    return Transform3D(b, seat - b * (PELVIS_DRIVE * sc * model_scale))
+
+
+func set_seat_scale(sc: float) -> void:
+    _visual.scale = Vector3.ONE * sc
+
+
+## Сесть на лавку: center — середина сиденья (на земле), facing — куда смотрит лавка.
+func sit_at(center: Vector3, facing: Vector3) -> bool:
+    if not can_sit("sit") or seated != "":
+        return false
+    _stand_pos = global_position
+    set_seated("sit")
+    var yaw := atan2(-facing.x, -facing.z)
+    _visual.rotation.y = yaw
+    global_position = center + Basis(Vector3.UP, yaw) * (-PELVIS_SIT * model_scale) * Vector3(1, 0, 1) - facing * 0.05
+    return true
+
+
+func _process_seated() -> void:
+    if _anim:
+        var key := "drive" if seated == "drive" else "sit"
+        if _anim_map.has(key):
+            var an: String = _anim_map[key]
+            if _anim.current_animation != an:
+                _anim.play(an, 0.3)
+            _anim.speed_scale = 1.0
+    if seated == "sit":
+        var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+        if touch and touch.joy_vector.length() > 0.3:
+            input = touch.joy_vector
+        if input.length() > 0.3 or Input.is_action_just_pressed("jump"):
+            set_seated("")
