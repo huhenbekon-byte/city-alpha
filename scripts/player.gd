@@ -169,7 +169,18 @@ func set_look(colors: Dictionary, textures := {}) -> void:
         if textures.has("jacket_style"):
             var style := String(textures["jacket_style"])
             _body_sh.set_shader_parameter("long_sleeves", 0.0 if style.contains("short") else 1.0)
-            _body_sh.set_shader_parameter("print_on", 1.0 if style.contains("print") else 0.0)
+            # шеврон фракции («badge:police») или герб СССР на майке («print»)
+            var badge := ""
+            for part in style.split(","):
+                if String(part).begins_with("badge:"):
+                    badge = String(part).substr(6)
+            var print_path := CHAR_DIR + ("body_badge_%s.png" % badge if badge != "" else "print_ussr.png")
+            if ResourceLoader.exists(print_path):
+                _body_sh.set_shader_parameter("print_tex", load(print_path))
+            _body_sh.set_shader_parameter("print_on", 1.0 if (style.contains("print") or badge != "") else 0.0)
+            _set_overlay("lampas", style.contains("lampas"))
+            _set_overlay("tape", style.contains("tape"))
+            _set_overlay("vest", style.contains("vest"))
         if colors.has("skin"):
             var sc: Color = colors["skin"]
             _body_sh.set_shader_parameter("skin_tint", Vector3(sc.r / 0.87, sc.g / 0.68, sc.b / 0.55))
@@ -627,3 +638,24 @@ func attack(melee: bool) -> void:
     _anim.play(_anim_map[key], 0.08)
     _anim.speed_scale = 1.6 if melee else 1.4
     _action_until = _time + (0.45 if melee else 0.3)
+
+
+
+## Слои формы на теле: лампасы, светоотражающая лента, жилет ДПС.
+func _set_overlay(kind: String, on: bool) -> void:
+    if _body_sh == null:
+        return
+    _body_sh.set_shader_parameter(kind + "_on", 1.0 if on else 0.0)
+    if not on or _body_sh.get_meta("ov_" + kind, false):
+        return
+    _body_sh.set_meta("ov_" + kind, true)
+    match kind:
+        "lampas":
+            _body_sh.set_shader_parameter("lampas_tex", load(CHAR_DIR + "body_lampas.png"))
+        "tape":
+            _body_sh.set_shader_parameter("tape_tex", load(CHAR_DIR + "body_tape.png"))
+        "vest":
+            _body_sh.set_shader_parameter("vest_mask", load(CHAR_DIR + "body_vest.png"))
+            var vt := _load_tex("uni_vest")
+            if vt:
+                _body_sh.set_shader_parameter("vest_tex", vt)

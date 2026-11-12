@@ -16,7 +16,8 @@ const MarkerScript := preload("res://scripts/marker.gd")
 const FactionData := preload("res://scripts/faction_data.gd")
 
 var city = null
-var kind := ""          # id фракции, пусто — смена не идёт
+var kind := ""          # вид фракции ("police" и для милиции Пятигорска), пусто — смена не идёт
+var fac := ""           # id своей фракции ("police_p"...): куда везти, чья вывеска
 var stage := ""         # что делать сейчас
 var target := Vector3.ZERO
 var calls_done := 0
@@ -45,7 +46,8 @@ func _ready() -> void:
 
 func start(fid: String) -> void:
     stop()
-    kind = fid
+    fac = fid
+    kind = FactionData.base(fid)
     calls_done = 0
     message.emit("Смена началась. Жди вызов — он придёт в телефон и на карту")
     _wait = 3.0
@@ -159,7 +161,7 @@ func do_action(in_fire_truck: bool) -> void:
 func status_text(focus: Vector3) -> String:
     if not active:
         return ""
-    var fname := String(FactionData.get_faction(kind).get("name", ""))
+    var fname := String(FactionData.get_faction(fac).get("name", ""))
     var d := int(_dist(focus, target))
     var t := ""
     if _time_left > 0.0:
@@ -217,8 +219,7 @@ func _new_call(focus: Vector3) -> void:
             _set_target(p, "ПОСТРАДАВШИЙ", Color(1.0, 0.3, 0.25))
             message.emit("Вызов скорой: пострадавший %s" % _place(p))
         "fire":
-            var drops: Array = city.dropoffs
-            var p: Vector3 = drops[_rng.randi() % drops.size()]
+            var p := _near_drop(focus)
             _make_fire(p)
             _fire_hp = 8
             _reward = 1000
@@ -245,7 +246,7 @@ func _new_call(focus: Vector3) -> void:
             if FactionData.is_gang(kind):
                 _reward = 900
                 stage = "pickup"
-                _set_target(city.faction_sites[kind]["door"], "ГРУЗ", Color(1.0, 0.3, 0.25))
+                _set_target(city.faction_sites[fac]["door"], "ГРУЗ", Color(1.0, 0.3, 0.25))
                 message.emit("Есть дело: забери груз в гараже и отвези заказчику")
 
 
@@ -264,10 +265,8 @@ func _set_deliver(text: String, title: String, to = null) -> void:
 
 func _deliver_site() -> String:
     match kind:
-        "hospital":
-            return "hospital"
-        "kgb":
-            return "kgb"
+        "hospital", "kgb", "police":
+            return fac
     return "police"
 
 
@@ -482,3 +481,15 @@ static func _fx_quad(fx_name: String, size: float) -> QuadMesh:
         m.albedo_texture = load(path)
     q.material = m
     return q
+
+
+
+## Подъезд не слишком далеко от игрока (пожары — в своём городе).
+func _near_drop(focus: Vector3) -> Vector3:
+    var drops: Array = city.dropoffs
+    var p: Vector3 = drops[_rng.randi() % drops.size()]
+    for k in 30:
+        if _dist(p, focus) < 300.0:
+            break
+        p = drops[_rng.randi() % drops.size()]
+    return p

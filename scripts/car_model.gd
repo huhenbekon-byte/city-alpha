@@ -443,7 +443,20 @@ static func model_instance(id: String) -> Node3D:
     if not _model_scenes.has(id):
         _model_scenes[id] = load(MODELS[id])
     var ps: PackedScene = _model_scenes[id]
-    return ps.instantiate() as Node3D if ps else null
+    if ps == null:
+        return null
+    var root := ps.instantiate() as Node3D
+    # У некоторых моделей (ВАЗ-2106) часть граней смотрит внутрь: заднее стекло и детали
+    # пропадали. Рисуем материалы с двух сторон.
+    for n: Node in root.find_children("*", "MeshInstance3D", true, false):
+        var mi := n as MeshInstance3D
+        if mi.mesh == null:
+            continue
+        for i in mi.mesh.get_surface_count():
+            var m := mi.mesh.surface_get_material(i) as BaseMaterial3D
+            if m:
+                m.cull_mode = BaseMaterial3D.CULL_DISABLED
+    return root
 
 
 ## Положение узла относительно корня модели (модель ещё не в дереве сцены).

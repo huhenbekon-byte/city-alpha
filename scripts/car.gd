@@ -25,6 +25,8 @@ const CarModel := preload("res://scripts/car_model.gd")
 
 ## Сцепление с дорогой у всех машин (дождь, снег — меньше). Задаёт main.gd.
 static var grip := 1.0
+const FRONT_GRIP := 2.6
+const REAR_GRIP := 2.5
 
 ## Куплена ли машина. Чужую (с рынка, не купленную) водить нельзя.
 var owned := false
@@ -91,13 +93,15 @@ func _ready() -> void:
             fuel = minf(fuel, tank)
         "bus":
             mass = 6000.0
-            center_of_mass = Vector3(0, 0.9, 0)
+            center_of_mass = Vector3(0, 0.55, 0)
         "truck":
             mass = 7000.0
-            center_of_mass = Vector3(0, 0.9, 0.5)
+            center_of_mass = Vector3(0, 0.55, 0.5)
         _:
             mass = 1150.0
-            center_of_mass = Vector3(0, 0.35, 0.1)  # низкий центр масс — меньше переворотов
+            center_of_mass = Vector3(0, 0.12, 0.0)  # центр масс почти у земли — машина не кувыркается
+    angular_damp = 0.8   # кузов не раскручивается волчком
+    linear_damp = 0.03
     _spawn = global_transform
     _last_pos = global_position
 
@@ -177,26 +181,28 @@ func set_owned(value: bool) -> void:
     _price_label.text = "%s\n%d %03d ₽\n%d км/ч" % [car_name, price / 1000, price % 1000, int(max_speed_kmh)]
 
 
-func _add_wheel(pos: Vector3, front: bool, model_wheel: Mesh = null, model_r := 0.0) -> void:
+func _add_wheel(pos: Vector3, front: bool, model_wheel: Mesh = null, model_r := 0.0, model_basis := Basis()) -> void:
     var w := VehicleWheel3D.new()
     w.position = pos
     w.use_as_steering = front
-    w.use_as_traction = not front
+    # легковые — полный привод (стабильнее на поворотах, не уходит в занос от газа)
+    w.use_as_traction = (not front) or kind == "car"
     var r := model_r if model_wheel != null else CarModel.wheel_radius(kind)
     w.wheel_radius = r
     w.wheel_rest_length = 0.12
-    w.suspension_travel = 0.18
-    w.suspension_stiffness = 40.0
-    w.suspension_max_force = mass * 12.0
-    w.damping_compression = 1.8
-    w.damping_relaxation = 2.6
-    w.wheel_friction_slip = 3.0 if front else 2.7
-    w.wheel_roll_influence = 0.0 if kind == "moto" else 0.05
+    w.suspension_travel = 0.16
+    w.suspension_stiffness = 34.0 if kind != "moto" else 40.0
+    w.suspension_max_force = mass * 14.0
+    w.damping_compression = 2.2
+    w.damping_relaxation = 3.2
+    w.wheel_friction_slip = FRONT_GRIP if front else REAR_GRIP
+    w.wheel_roll_influence = 0.0 if kind == "moto" else 0.02   # меньше крена — меньше переворотов
     add_child(w)
     _all_wheels.append(w)
     var mi := MeshInstance3D.new()
     if model_wheel != null:
         mi.mesh = model_wheel
+        mi.basis = model_basis   # правые колёса — то же колесо, развёрнутое на 180°
     else:
         mi.mesh = CarModel.wheel_mesh()
         mi.scale = Vector3.ONE * (r / CarModel.WHEEL_RADIUS)
@@ -318,16 +324,19 @@ func _physics_process(delta: float) -> void:
         eng = 0.0
     if condition <= 0.0:
         eng = 0.0
+    if kind == "car":
+        eng *= 0.5                       # сила делится на 4 ведущих колеса, а не на 2
+        if kmh < 20.0 and absf(steering) > 0.3:
+            eng *= 0.7                   # «антипробуксовка» в крутом повороте с места
 
     engine_force = eng
     brake = brk
     for w in _all_wheels:
         if w.use_as_steering:
-            w.wheel_friction_slip = 3.0 * grip
+            w.wheel_friction_slip = FRONT_GRIP * grip
     for w in _rear:
-        w.wheel_friction_slip = (1.3 if hand else 2.7) * grip
-        if hand:
-            w.brake = brake_force
+        w.wheel_friction_slip = (1.0 if hand else REAR_GRIP) * grip
+        w.brake = brake_force if hand else 0.0
     if kind == "moto":
         # мотоцикл держится вертикально: «гироскоп» гасит крен
         var up := basis_now.y
@@ -336,20 +345,60 @@ func _physics_process(delta: float) -> void:
         apply_torque(fwd * roll * mass * 40.0 - fwd * angular_velocity.dot(fwd) * mass * 6.0)
 
     # На скорости руль поворачивается меньше — машина устойчивее.
-    var steer_limit := lerpf(max_steer, 0.16, clampf(kmh / 110.0, 0.0, 1.0))
-    steering = move_toward(steering, steer_in * steer_limit, 2.2 * delta)
+    var steer_limit := lerpf(max_steer, 0.09 if kind == "car" else 0.12, clampf(kmh / 100.0, 0.0, 1.0))
+    var steer_target := steer_in * steer_limit
+    # к центру руль возвращается быстрее, чем поворачивается
+    var steer_rate := 1.6 if absf(steer_target) > absf(steering) else 3.2
+    steering = move_toward(steering, steer_target, steer_rate * delta)
+
+    if kind != "moto":
+        _stabilize(basis_now, fwd_speed, hand, delta)
 
     _tail_mat.emission_energy_multiplier = 2.5 if (driven and brk > 2.0) else 0.3
 
     # Перевернулась — через 1.5 с ставим на колёса.
-    if driven and basis_now.y.y < 0.35 and linear_velocity.length() < 2.0:
+    if driven and basis_now.y.y < 0.45 and linear_velocity.length() < 3.0:
         _flip_timer += delta
-        if _flip_timer > 1.5:
+        if _flip_timer > 1.0:
             _put_upright()
     else:
         _flip_timer = 0.0
     if global_position.y < -30.0:
         _put_upright()
+
+
+## Помощь водителю, как в аркадных гонках: держим машину на колёсах и не даём ей
+## вертеться волчком. Настоящая физика остаётся, но без «кувырков» на ровном месте.
+func _stabilize(b: Basis, fwd_speed: float, hand: bool, _delta: float) -> void:
+    var grounded := false
+    for w in _all_wheels:
+        if w.is_in_contact():
+            grounded = true
+            break
+    var up := b.y
+    var fwd := b.z
+    var side := b.x
+    # 1. Крен и тангаж: мягко возвращаем кузов горизонтально (в воздухе — сильнее)
+    var k := 6.0 if grounded else 10.0
+    var roll := up.cross(Vector3.UP).dot(fwd)
+    var pitch := up.cross(Vector3.UP).dot(side)
+    var roll_rate := angular_velocity.dot(fwd)
+    var pitch_rate := angular_velocity.dot(side)
+    apply_torque((fwd * (roll * k - roll_rate * 1.5) + side * (pitch * k * 0.5 - pitch_rate * 1.0)) * mass)
+    if not grounded:
+        return
+    var v := absf(fwd_speed)
+    # 2. Прижимная сила на скорости
+    apply_central_force(-up * mass * minf(v * v * 0.004, 6.0))
+    # 3. Боковое сцепление: гасим занос (кроме ручника)
+    if not hand:
+        var lat := linear_velocity.dot(side)
+        apply_central_force(-side * lat * mass * 2.2)
+    # 4. Поворот не быстрее, чем позволяет скорость (не крутится на месте)
+    var max_yaw := 0.25 + v * (0.32 if not hand else 0.6)
+    var yaw := angular_velocity.dot(up)
+    if absf(yaw) > max_yaw:
+        angular_velocity -= up * (yaw - signf(yaw) * max_yaw)
 
 
 func _put_upright() -> void:
@@ -605,6 +654,7 @@ func apply_tuning() -> void:
     tinted.albedo_color = Color(0.02, 0.02, 0.03)
     tinted.roughness = 0.05
     tinted.metallic = 0.7
+    tinted.cull_mode = BaseMaterial3D.CULL_DISABLED
     var mesh := _body_mi.mesh
     for i in mesh.get_surface_count():
         var sm := mesh.surface_get_material(i)
@@ -617,6 +667,7 @@ func apply_tuning() -> void:
         custom.albedo_color = rim_color
         custom.metallic = 0.85
         custom.roughness = 0.25
+        custom.cull_mode = BaseMaterial3D.CULL_DISABLED
     for mi in _wheel_mis:
         for i in mi.mesh.get_surface_count():
             var wm := mi.mesh.surface_get_material(i)
@@ -735,5 +786,5 @@ func _setup_model() -> void:
         elif nm.begins_with("Wheel_"):
             var front := nm.begins_with("Wheel_F")
             # точка подвески чуть выше центра колеса (ход подвески 0,12 м)
-            _add_wheel(wheels[nm] + Vector3(0, 0.11, 0), front, mi.mesh, r)
+            _add_wheel(wheels[nm] + Vector3(0, 0.11, 0), front, mi.mesh, r, mi.transform.basis)
     root.free()

@@ -1,4 +1,6 @@
 extends RefCounted
+
+const FactionData := preload("res://scripts/faction_data.gd")
 ## Оружие. Обычный игрок: кулак и купленный пистолет.
 ## Милиция и КГБ — табельное, ОПГ — своё (выдаётся по рангу).
 
@@ -44,7 +46,7 @@ static func available(faction: String, rank: int, has_pistol: bool) -> Array[Str
     var out: Array[String] = ["fist"]
     if has_pistol:
         out.append("pm")
-    for g: Array in FACTION_GUNS.get(faction, []):
+    for g: Array in FACTION_GUNS.get(FactionData.base(faction) if faction != "" else "", []):
         var gid := String(g[0])
         if rank >= int(g[1]) and not gid in out:
             out.append(gid)

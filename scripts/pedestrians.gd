@@ -110,7 +110,11 @@ func _process(delta: float) -> void:
             p["phase"] = float(p["phase"]) + step * 3.2
         p["pos"] = pos
 
-        var near := pos.distance_to(focus) < 70.0
+        var far := pos.distance_to(focus)
+        if far > 300.0:          # игрок уехал в другой город — прохожие «переселяются» к нему
+            _place_random(p)
+            continue
+        var near := far < 70.0
         root.visible = near
         var ap = p.get("anim")
         if ap is AnimationPlayer:
@@ -136,8 +140,11 @@ func _process(delta: float) -> void:
 
 ## Ставит пешехода на тротуар случайного квартала, подальше от камеры, если можно.
 func _place_random(p: Dictionary) -> void:
-    var g := CityBuilder.GRID
-    var c := Vector3(_rng.randi_range(-g, g) * CityBuilder.PITCH, 0.0, _rng.randi_range(-g, g) * CityBuilder.PITCH)
+    # в том городе, где сейчас игрок: Казань или Пятигорск (за рекой)
+    var in_py := focus.x < CityBuilder.RIVER_X0
+    var g := CityBuilder.PY_GRID if in_py else CityBuilder.GRID
+    var org := CityBuilder.PY_ORG if in_py else Vector3.ZERO
+    var c := org + Vector3(_rng.randi_range(-g, g) * CityBuilder.PITCH, 0.0, _rng.randi_range(-g, g) * CityBuilder.PITCH)
     var y := CityBuilder.SIDE_H
     var corners := [c + Vector3(-WALK, y, -WALK), c + Vector3(WALK, y, -WALK),
             c + Vector3(WALK, y, WALK), c + Vector3(-WALK, y, WALK)]

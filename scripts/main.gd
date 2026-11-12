@@ -78,6 +78,8 @@ const FOOD := {
     "ПРОДУКТЫ": [["Хлеб", 60, 15, 0], ["Бутерброд", 120, 25, 0], ["Кефир", 90, 15, 2], ["Пельмени", 300, 55, 0]],
     "КОФЕ": [["Кофе", 120, 10, 3], ["Пирожок", 80, 20, 0], ["Круассан", 150, 25, 0]],
     "КВАС": [["Квас", 70, 8, 2], ["Пирожок", 80, 20, 0]],
+    "ЧЕБУРЕКИ": [["Чебурек", 120, 30, 0], ["Чебурек с сыром", 160, 35, 0], ["Айран", 70, 8, 2]],
+    "СЕЛЬПО": [["Хлеб", 50, 15, 0], ["Молоко", 60, 12, 2], ["Пряники", 80, 20, 0], ["Сало", 200, 40, 0]],
     "УНИВЕРСАМ": [["Батон", 50, 15, 0], ["Колбаса", 250, 40, 0], ["Комплексный обед", 450, 80, 5]],
     "АПТЕКА": [["Аптечка", 400, 0, 40], ["Бинт", 150, 0, 15], ["Витамины", 200, 5, 10]],
     "АЗС": [["Хот-дог", 150, 30, 0], ["Энергетик", 120, 5, 5], ["Канистра 10 л", 600, 0, 0]],
@@ -170,6 +172,7 @@ var health := 100.0          # здоровье 0..100
 var hunger := 100.0          # сытость 0..100 (0 — голодный, теряешь здоровье)
 var home := -1               # номер купленного жилья в _city.homes, -1 — нет
 var _home_inside := -1       # в каком жилье сейчас игрок
+var _podezd := -1            # в каком подъезде (номер двери в _city.entrances), -1 — на улице
 var _fridge_at := -9999.0    # когда последний раз ели из холодильника (игровые минуты)
 var _starve_acc := 0.0
 var _regen_acc := 0.0
@@ -385,6 +388,9 @@ func _process(delta: float) -> void:
 
     _update_weapons(delta)
     _update_chat_events(delta)
+    var uk := _uniform_key()
+    if uk != _last_uniform:
+        _apply_look()
 
     # Кнопка действия: работа → точка (банкомат, АЗС…) → машина
     _touch.mode = TouchControlsScript.Mode.CAR if _driving else TouchControlsScript.Mode.FOOT
@@ -447,6 +453,8 @@ func _process(delta: float) -> void:
         mini.focus = _city.faction_sites[_interior]["door"]
     elif _home_inside >= 0:
         mini.focus = _city.homes[_home_inside]["pos"]
+    elif _podezd >= 0:
+        mini.focus = _city.entrances[_podezd]["out"]
     mini.heading = _driving.global_transform.basis.z if _driving else _player.get_facing()
     if _work.active:
         mini.has_target = _work.has_target()
@@ -615,8 +623,9 @@ func _on_reset() -> void:
     _init_turf()
     _set_home(-1)
     _home_inside = -1
+    _podezd = -1
     _clear_gps()
-    _player.set_look(Clothes.colors(look), Clothes.textures(look))
+    _apply_look()
     _player.global_position = PLAYER_SPAWN
     _player.set_camera_yaw(PI)
     _update_daylight()
@@ -873,7 +882,7 @@ func _on_interact() -> void:
         _work.do_action()
         return
     if _duty.action_text(_focus(), _driving != null) != "":
-        var truck: bool = _driving != null and _driving == _faction_car and faction == "fire" and _driving.kind == "truck"
+        var truck: bool = _driving != null and _driving == _faction_car and FactionData.base(faction) == "fire" and _driving.kind == "truck"
         _duty.do_action(truck)
         return
     if _point != null:
@@ -1104,7 +1113,7 @@ func _spawn_player() -> void:
         _player.position = lp + Vector3.UP * 0.3
     add_child(_player)
     _player.touch = _touch
-    _player.set_look(Clothes.colors(look), Clothes.textures(look))
+    _apply_look()
     _player.stepped.connect(_on_step)
     _player.set_camera_yaw(float(_loaded.get("player_yaw", PI)))
     _equip_weapon.call_deferred()
@@ -1156,6 +1165,8 @@ func _save_game() -> void:
         cfg.set_value("player", "pos", _city.faction_sites[_interior]["out"])
     if _home_inside >= 0:
         cfg.set_value("player", "pos", _city.homes[_home_inside]["pos"] + Vector3(0, 0.3, 0))
+    if _podezd >= 0:
+        cfg.set_value("player", "pos", _city.entrances[_podezd]["out"] + Vector3(0, 0.3, 0))
     cfg.set_value("player", "health", health)
     cfg.set_value("player", "hunger", hunger)
     cfg.set_value("player", "home", home)
@@ -1526,11 +1537,20 @@ func _setup_points() -> void:
             label = "ЕДА"
         _add_point(bz["pos"], 2.4, label, _open_kiosk.bind(i), false, Color(1.0, 0.5, 0.2), false)
     _init_turf()
-    if _city.interiors.has("hospital"):
-        _add_point(_city.interiors["hospital"]["desk"], 2.0, "ЛЕЧЕНИЕ", _open_treatment, false, Color.WHITE, false)
+    for hid: String in ["hospital", "hospital_p"]:
+        if _city.interiors.has(hid):
+            _add_point(_city.interiors[hid]["desk"], 2.0, "ЛЕЧЕНИЕ", _open_treatment, false, Color.WHITE, false)
     for i in _city.homes.size():
         var hm: Dictionary = _city.homes[i]
         _add_point(hm["pos"], 1.6, "ДОМ", _open_home.bind(i), false, Color.WHITE, false)
+    for i in _city.entrances.size():
+        var en: Dictionary = _city.entrances[i]
+        _add_point(en["pos"], 1.2, "ПОДЪЕЗД", _enter_podezd.bind(i), false, Color(0.85, 0.85, 0.85), false)
+    for sp: Vector3 in _city.soda_spots:
+        _add_point(sp, 1.2, "ГАЗИРОВКА", _drink_soda, false, Color(1.0, 0.3, 0.25), false)
+    if not _city.podezd.is_empty():
+        _add_point(_city.podezd["exit"], 1.4, "ВЫЙТИ", _exit_podezd, false, Color.WHITE, false)
+        _add_point(_city.podezd["flat"], 1.3, "КВАРТИРА", _podezd_flat, false, Color.WHITE, false)
     for kind: String in _city.home_interiors:
         var hi: Dictionary = _city.home_interiors[kind]
         _add_point(hi["exit"], 1.4, "ВЫЙТИ", _exit_home, false, Color.WHITE, false)
@@ -1939,7 +1959,7 @@ func _open_market() -> void:
 
 func _on_win_closed() -> void:
     if _win_mode == "market":
-        _player.set_look(Clothes.colors(look), Clothes.textures(look))   # снять примерку
+        _apply_look()   # снять примерку
     _win_mode = ""
     _touch.blocked = false
 
@@ -2159,6 +2179,10 @@ func _nav_places() -> Array:
     out.append({"cat": "work", "icon": "truck", "name": "Стоянка фур — дальнобойщик", "pos": c.truck_depot})
     out.append({"cat": "work", "icon": "axe", "name": "Лесопилка — лесоруб", "pos": c.log_pile})
     out.append({"cat": "market", "icon": "car", "col": gold, "name": "Общий рынок", "pos": c.market})
+    out.append({"cat": "fun", "icon": "house", "col": Color(0.55, 0.85, 0.45), "name": "Село Бусаево", "pos": c.village_center})
+    out.append({"cat": "fun", "icon": "star", "col": Color(1.0, 0.75, 0.3), "name": "Город Пятигорск (через мост)", "pos": c.py_center})
+    if c.village_park != Vector3.ZERO:
+        out.append({"cat": "fun", "icon": "pin", "col": Color(0.55, 0.85, 0.45), "name": "Бусаево: парк имени Гагарина", "pos": c.village_park})
     out.append({"cat": "shops", "icon": "cart", "col": gold, "name": "Общий рынок", "pos": c.market})
     for pk: Dictionary in c.pickups:
         out.append({"cat": "shops", "icon": "cart", "name": String(pk["name"]).capitalize(), "pos": pk["pos"]})
@@ -2174,7 +2198,7 @@ func _nav_places() -> Array:
             "fire": ["service", "shield"], "kgb": ["police", "shield"]}
     for fid: String in c.faction_sites:
         var site: Dictionary = c.faction_sites[fid]
-        var ci: Array = cats.get(fid, ["other", "dots"])
+        var ci: Array = cats.get(FactionData.base(fid), ["other", "dots"])
         var fcol: Color = FactionData.get_faction(fid)["color"]
         var gang := FactionData.is_gang(fid)
         if gang:
@@ -2188,7 +2212,7 @@ func _nav_places() -> Array:
     for p: Vector3 in c.service_stations:
         out.append({"cat": "service", "icon": "wrench", "name": "СТО — ремонт и тюнинг", "pos": p})
     out.append({"cat": "fun", "icon": "star", "name": "Центральная площадь", "pos": Vector3(0, 0, 0)})
-    out.append({"cat": "fun", "icon": "star", "name": "Лес за городом", "pos": Vector3(-270, 0, -270)})
+    out.append({"cat": "fun", "icon": "star", "name": "Лес за городом", "pos": Vector3(-356, 0, -356)})
     for p: Vector3 in c.bus_stops:
         out.append({"cat": "other", "icon": "dots", "name": "Остановка", "pos": p})
     for car in _cars:
@@ -2299,7 +2323,7 @@ func _market_cloth(slot: String, i: int, price: int) -> void:
         Sfx.play("click")
     look[slot] = i
     _preview_look = look.duplicate()
-    _player.set_look(Clothes.colors(look), Clothes.textures(look))
+    _apply_look()
     _hud.show_toast("Обновка надета!")
     _save_game()
 
@@ -2728,6 +2752,7 @@ func _faint() -> void:
         _player.set_active(true)
     _interior = ""
     _home_inside = -1
+    _podezd = -1
     var site: Dictionary = _city.faction_sites.get("hospital", {})
     var spot: Vector3 = site.get("out", PLAYER_SPAWN)
     _player.global_position = spot + Vector3(0, 0.3, 0)
@@ -2750,7 +2775,7 @@ func _faint() -> void:
 
 
 func _open_treatment() -> void:
-    var no_charge := faction == "hospital"
+    var no_charge := FactionData.base(faction) == "hospital"
     var price := 0 if no_charge else TREAT_PRICE
     if health >= 100.0:
         _open_dialog("Регистратура", "Здоровье: 100 / 100. Лечение не нужно.", [["Закрыть", _dialog.close]])
@@ -2937,7 +2962,7 @@ func _update_law(delta: float, focus: Vector3) -> void:
         _hud.show_toast("Розыск снижен: ★%d" % wanted if wanted > 0 else "Розыск снят")
         return
     _arrest_cd -= delta
-    if _arrest_cd > 0.0 or _interior != "" or _home_inside >= 0 or faction == "police" or faction == "kgb":
+    if _arrest_cd > 0.0 or _interior != "" or _home_inside >= 0 or _podezd >= 0 or FactionData.base(faction) == "police" or faction == "kgb":
         return
     _arrest_cd = 25.0
     var near_station: bool = focus.distance_to(_city.faction_sites["police"]["door"]) < 150.0
@@ -3081,7 +3106,7 @@ func _open_taxi() -> void:
     if _driving:
         _hud.show_toast("Ты за рулём — такси не нужно")
         return
-    if jail_left > 0.0 or _interior != "" or _home_inside >= 0:
+    if jail_left > 0.0 or _interior != "" or _home_inside >= 0 or _podezd >= 0:
         _hud.show_toast("Выйди на улицу, чтобы вызвать такси")
         return
     _touch.blocked = true
@@ -3632,7 +3657,7 @@ func _update_weather(delta: float, focus: Vector3) -> void:
     _snow = move_toward(_snow, 1.0 if snowing else 0.0, delta / (60.0 if snowing else 120.0))
     _city.set_weather(_wet, _snow)
     CarScript.grip = lerpf(1.0, 0.72, _wet) * lerpf(1.0, 0.6, _snow)
-    var inside := _interior != "" or _home_inside >= 0
+    var inside := _interior != "" or _home_inside >= 0 or _podezd >= 0
     var top := focus + Vector3(0, 16, 0)
     _rain_fx.emitting = raining and not inside
     _snow_fx.emitting = snowing and not inside
@@ -3759,7 +3784,7 @@ func _update_weapons(delta: float) -> void:
         _tracer.visible = _tracer_t > 0.0
     if _flash:
         _flash.visible = _tracer_t > 0.02
-    if _driving != null or _interior != "":
+    if _driving != null or _interior != "" or _podezd >= 0 or _home_inside >= 0:
         _touch.weapon_text = ""
         return
     if not weapon_id in _weapons_now():    # уволили, понизили — оружие сдаём
@@ -3780,7 +3805,7 @@ func _attack() -> void:
     var dir: Vector3 = _player.aim_direction()
     var origin: Vector3 = _player.global_position + Vector3(0, 1.3, 0)
     var hit_pos := _peds.hit(origin, dir, float(info["range"]), 35.0 if melee else 8.0)
-    var lawful: bool = (faction == "police" or faction == "kgb") and _duty.active
+    var lawful: bool = (FactionData.base(faction) == "police" or faction == "kgb") and _duty.active
     if melee:
         if hit_pos != Vector3.INF:
             Sfx.play("hit", -2.0)
@@ -3833,7 +3858,17 @@ var _was_night := false
 var _last_hour := -1
 
 
+var _in_city := ""
+
+
 func _update_chat_events(delta: float) -> void:
+    if _player != null:
+        var fx := _focus().x
+        var city_now := "pyat" if fx < CityBuilder.RIVER_X0 else ("kazan" if fx > CityBuilder.RIVER_X1 else _in_city)
+        if city_now != _in_city:
+            if _in_city != "":
+                _hud.chat("Добро пожаловать в %s!" % ("Пятигорск" if city_now == "pyat" else "Казань"), "info")
+            _in_city = city_now
     var hh := int(minutes) / 60
     _hud.chat_time_text = "[%02d:%02d]" % [hh, int(minutes) % 60]
     var night_now := _night_k > 0.5
@@ -3853,3 +3888,107 @@ func _update_chat_events(delta: float) -> void:
     if _news_t <= 0.0:
         _news_t = randf_range(120.0, 220.0)
         _hud.chat(String(NEWS[randi() % NEWS.size()]), "news")
+
+
+
+# ---------------------------------------------------------------- подъезд
+
+func _enter_podezd(i: int) -> void:
+    if _city.podezd.is_empty():
+        return
+    _podezd = i
+    _player.global_position = _city.podezd["spawn"]
+    _player.velocity = Vector3.ZERO
+    _player.set_camera_yaw(0.0)
+    Sfx.play("door")
+
+
+func _exit_podezd() -> void:
+    var i := _podezd
+    _podezd = -1
+    if i < 0 or i >= _city.entrances.size():
+        _player.global_position = PLAYER_SPAWN
+        return
+    var en: Dictionary = _city.entrances[i]
+    var out: Vector3 = en["out"]
+    var door: Vector3 = en["pos"]
+    var dir := out - door
+    _player.global_position = out + Vector3(0, 0.3, 0)
+    _player.velocity = Vector3.ZERO
+    _player.set_camera_yaw(atan2(-dir.x, -dir.z))
+    Sfx.play("door")
+
+
+## Дверь квартиры на площадке: своя — заходим, продаётся — подсказка, чужая — заперто.
+func _podezd_flat() -> void:
+    if _podezd < 0:
+        return
+    var door: Vector3 = _city.entrances[_podezd]["pos"]
+    var idx := -1
+    for i in _city.homes.size():
+        var hp: Vector3 = _city.homes[i]["pos"]
+        if String(_city.homes[i]["kind"]) == "flat" and hp.distance_to(door) < 3.0:
+            idx = i
+            break
+    if idx >= 0 and idx == home:
+        _podezd = -1
+        _enter_home(idx)
+    elif idx >= 0:
+        Sfx.play("error")
+        _hud.show_toast("Квартира продаётся — купить можно у подъезда (табличка «ДОМ») или через Навигатор")
+    else:
+        Sfx.play("error")
+        _hud.show_toast("Заперто. Здесь живут соседи")
+
+
+
+# ---------------------------------------------------------------- форма фракций (дресс-код)
+
+var _last_uniform := "?"
+
+
+## Форма надета: у ОПГ — всегда, у госслужб — на смене и в своём здании.
+func _uniform_key() -> String:
+    if faction == "" or _player == null:
+        return ""
+    var on := FactionData.is_gang(faction) or _duty.active or _interior == faction
+    return "%s:%d" % [faction, faction_rank] if on else ""
+
+
+func _apply_look() -> void:
+    if _player == null:
+        return
+    _last_uniform = _uniform_key()
+    var u := {} if _last_uniform == "" else FactionData.uniform(faction, faction_rank)
+    if u.is_empty():
+        _player.set_look(Clothes.colors(look), Clothes.textures(look))
+        return
+    var cols := Clothes.colors(look)
+    var tex := Clothes.textures(look)
+    for slot: String in ["jacket", "pants", "shoes"]:
+        cols[slot] = Color(1, 1, 1)
+        tex[slot] = String(u.get(slot, tex[slot]))
+    var style: Array[String] = []
+    if u.get("short", false):
+        style.append("short")
+    for flag: String in ["lampas", "tape", "vest"]:
+        if u.get(flag, false):
+            style.append(flag)
+    if u.get("badge", false):
+        style.append("badge:" + FactionData.base(faction))
+    tex["jacket_style"] = ",".join(PackedStringArray(style))
+    _player.set_look(cols, tex)
+
+
+
+## Автомат с газировкой: 3 ₽ — стакан газировки с сиропом.
+func _drink_soda() -> void:
+    if hunger >= 99.0:
+        _hud.show_toast("Не хочется пить")
+        return
+    if not _pay(3, "Газировка"):
+        return
+    hunger = minf(100.0, hunger + 6.0)
+    health = minf(100.0, health + 1.0)
+    Sfx.play("eat")
+    _hud.show_toast("Газировка с сиропом за 3 ₽. Освежает! +6 сытости", "money")
