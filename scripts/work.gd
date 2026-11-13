@@ -70,10 +70,15 @@ func start(job_kind: String) -> void:
             _new_tree()
             message.emit("Лесоруб: руби деревья и носи брёвна на лесопилку")
         "exam":
-            _route = EXAM_ROUTE.duplicate()
-            _time_left = 240.0
+            # маршрут от автошколы (автодром и внешнее кольцо), если она построена
+            var from_school: bool = city != null and not (city.exam_route as Array).is_empty()
+            _route = (city.exam_route as Array).duplicate() if from_school else EXAM_ROUTE.duplicate()
+            _time_left = 300.0 if from_school else 240.0
             _penalties = 0
-            vehicle_needed.emit(exam_vehicle, Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(-18, 0.7, 30)))
+            var spawn := Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(-18, 0.7, 30))
+            if from_school:
+                spawn = city.exam_spawn
+            vehicle_needed.emit(exam_vehicle, spawn)
             message.emit("Экзамен! Проедь по меткам, не быстрее %d км/ч" % int(EXAM_SPEED_LIMIT))
             _show_route_point()
 
