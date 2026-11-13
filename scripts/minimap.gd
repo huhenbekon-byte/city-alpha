@@ -16,6 +16,7 @@ var cars: Array = []
 var has_gps := false
 var gps_target := Vector3.ZERO
 var points: Array = []   # [[Vector3, Color], ...] — банкоматы, АЗС, работы
+var health := 1.0         # красная часть кольца — здоровье игрока
 var turf: Array = []     # [[Rect2, Color], ...] — территории ОПГ (видны членам ОПГ)
 
 var _circle := PackedVector2Array()
@@ -36,10 +37,12 @@ func _draw() -> void:
         _circle.append(c + Vector2(cos(a), sin(a)) * R)
     _clip = Rect2(c - Vector2(R, R), Vector2(R, R) * 2.0)
 
-    draw_circle(c, R, Color(0.95, 0.95, 0.94))            # пустырь
+    draw_circle(c, R, Color(0.55, 0.74, 0.88))            # море
     if city:
-        var ext: float = city.extent
-        _wrect(Rect2(-ext, -ext, ext * 2.0, ext * 2.0), Color(0.80, 0.80, 0.82), c, s)  # дороги
+        for isl: Rect2 in city.map_land:
+            _wrect(isl, Color(0.95, 0.95, 0.94), c, s)     # острова
+        for r: Rect2 in city.map_roads:
+            _wrect(r, Color(0.80, 0.80, 0.82), c, s)       # дороги и мосты
         for r: Rect2 in city.block_rects:
             _wrect(r, Color(0.93, 0.95, 0.91), c, s)
         for t: Array in turf:
@@ -89,10 +92,11 @@ func _draw() -> void:
     drop.append(tip)
     draw_polyline(drop, Color(0, 0, 0), 3.0, true)
 
-    # Кольцо: серая левая половина, красная правая.
     var rr := R + RING * 0.5
-    draw_arc(c, rr, PI * 0.5, PI * 1.5, 48, Color(0.55, 0.55, 0.58), RING, true)
-    draw_arc(c, rr, -PI * 0.5, PI * 0.5, 48, Color(0.95, 0.05, 0.05), RING, true)
+    # Кольцо: серое, красная часть справа — здоровье (полное — половина круга).
+    draw_arc(c, rr, 0.0, TAU, 72, Color(0.55, 0.55, 0.58), RING, true)
+    if health > 0.01:
+        draw_arc(c, rr, -PI * 0.5, -PI * 0.5 + PI * health, 48, Color(0.95, 0.05, 0.05), RING, true)
     draw_arc(c, R + RING, 0.0, TAU, 96, Color(0, 0, 0, 0.8), 1.5, true)
     draw_arc(c, R, 0.0, TAU, 96, Color(0, 0, 0, 0.6), 1.5, true)
 

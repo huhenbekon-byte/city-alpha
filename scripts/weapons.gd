@@ -5,7 +5,8 @@ const FactionData := preload("res://scripts/faction_data.gd")
 ## Милиция и КГБ — табельное, ОПГ — своё (выдаётся по рангу).
 
 const LIST := {
-    "fist": {"name": "Кулак", "short": "КУЛАК", "model": "", "damage": 15, "range": 1.7, "rate": 0.55},
+    "fist": {"name": "Кулак", "short": "КУЛАК", "model": "", "damage": 15, "range": 1.7, "rate": 0.55, "melee": true},
+    "bat": {"name": "Бита", "short": "БИТА", "model": "", "damage": 26, "range": 2.2, "rate": 0.7, "melee": true},
     "pm": {"name": "Пистолет Макарова", "short": "ПМ", "model": "pistol", "damage": 34, "range": 40.0, "rate": 0.35,
             "muzzle": Vector3(0.16, 0.05, 0.0)},
     "nagant": {"name": "Револьвер «Наган»", "short": "НАГАН", "model": "revolver", "damage": 40, "range": 35.0, "rate": 0.5,
@@ -25,11 +26,16 @@ const PISTOL_PRICE := 12000
 const FACTION_GUNS := {
     "police": [["pm", 1], ["aks", 3]],
     "kgb": [["pm", 1], ["aks", 2]],
-    "tyap": [["nagant", 1], ["obrez", 2], ["ak", 4]],
-    "universam": [["nagant", 1], ["obrez", 2], ["ak", 4]],
-    "solnce": [["nagant", 1], ["obrez", 2], ["ak", 4]],
-    "kavkaz": [["nagant", 1], ["obrez", 2], ["ak", 4]],
+    "tyap": [["bat", 1], ["nagant", 1], ["obrez", 2], ["ak", 4]],
+    "universam": [["bat", 1], ["nagant", 1], ["obrez", 2], ["ak", 4]],
+    "solnce": [["bat", 1], ["nagant", 1], ["obrez", 2], ["ak", 4]],
+    "kavkaz": [["bat", 1], ["nagant", 1], ["obrez", 2], ["ak", 4]],
 }
+
+
+## Холодное (кулак, бита) — бьём, а не стреляем.
+static func is_melee(id: String) -> bool:
+    return bool(info(id).get("melee", false))
 
 
 static func info(id: String) -> Dictionary:

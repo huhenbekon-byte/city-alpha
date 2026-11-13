@@ -14,10 +14,10 @@ const FONT_PATH := "res://fonts/menu_bold.ttf"
 const PLAY_RECT := Rect2(540, 375, 600, 200)
 const GOLD := Color(0.95, 0.74, 0.33)
 
+## Сервера на экране выбора.
 const SERVERS := [
     {"name": "1 СЕРВЕР", "info": "Казань · Пятигорск · Бусаево"},
 ]
-
 var _font: Font = null
 var _page_main: Control
 var _page_servers: Control
@@ -201,8 +201,8 @@ func _build_servers() -> void:
     row.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
     row.offset_left = -700
     row.offset_right = 700
-    row.offset_top = -40
-    row.offset_bottom = 140
+    row.offset_top = -110
+    row.offset_bottom = 70
     for i in SERVERS.size():
         var sv: Dictionary = SERVERS[i]
         var card := VBoxContainer.new()
@@ -227,7 +227,11 @@ func _build_servers() -> void:
         info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
         card.add_child(info)
 
-    # Назад — круглая кнопка слева внизу
+    _build_back()
+
+
+## Назад — круглая кнопка слева внизу
+func _build_back() -> void:
     var back := Button.new()
     back.text = "‹"
     back.focus_mode = Control.FOCUS_NONE
@@ -256,8 +260,6 @@ func _on_server(i: int) -> void:
     _show("loading")
     server_chosen.emit(i)
 
-
-# ---------------------------------------------------------------- загрузка
 
 func _build_loading() -> void:
     _page_loading = Control.new()

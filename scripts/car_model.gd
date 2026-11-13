@@ -200,6 +200,192 @@ static func _moto_parts(paint: Color, tail: Material) -> Array:
     return p
 
 
+# ---------------------------------------------------------------- мопед «Вятка» (прокат у вокзала)
+## Мотороллер в духе «Вятки ВП-150»: обтекаемый кузов, широкий щит для ног, круглая фара на руле.
+## Двухцветный: основной цвет + кремовые щит, крылья и полоса. Вперёд +Z, земля y=0.
+const SCOOTER_R := 0.22          # маленькие колёса
+const SCOOTER_Z := 0.62          # колёса спереди/сзади от центра
+const SCOOTER_SEAT := Vector3(0, 0.84, -0.40)   # где сидит водитель (таз)
+
+
+static func _ell(parts: Array, r: Vector3, pos: Vector3, mat: Material, tilt := 0.0, segs := 16) -> void:
+    var m := SphereMesh.new()
+    m.radius = 1.0
+    m.height = 2.0
+    m.radial_segments = segs
+    m.rings = maxi(segs / 2, 6)
+    var b := Basis(Vector3.RIGHT, tilt) * Basis.from_scale(r)
+    parts.append([m, Transform3D(b, pos), mat])
+
+
+static func _cyl(parts: Array, r: float, a: Vector3, b: Vector3, mat: Material, segs := 12) -> void:
+    var d := b - a
+    var m := CylinderMesh.new()
+    m.top_radius = r
+    m.bottom_radius = r
+    m.height = d.length()
+    m.radial_segments = segs
+    m.rings = 1
+    var y := d.normalized()
+    var x := y.cross(Vector3.FORWARD if absf(y.dot(Vector3.FORWARD)) < 0.9 else Vector3.RIGHT).normalized()
+    var z := x.cross(y)
+    parts.append([m, Transform3D(Basis(x, y, z), (a + b) * 0.5), mat])
+
+
+static func _scooter_parts(paint: Color, tail: Material) -> Array:
+    var body := _mat("scoot_" + paint.to_html(), paint, 0.28, 0.25)
+    var cream := _mat("scoot_cream", Color(0.93, 0.89, 0.78), 0.32, 0.15)
+    var dark := _mat("dark", Color(0.07, 0.07, 0.08), 0.7)
+    var rubber := _mat("scoot_rubber", Color(0.12, 0.12, 0.12), 0.9)
+    var seat := _mat("scoot_seat", Color(0.28, 0.16, 0.10), 0.55)
+    var chrome := _mat("chrome", Color(0.72, 0.72, 0.75), 0.25, 0.9)
+    var head := _mat("head", Color(1.0, 0.96, 0.85), 0.2, 0.0, 0.6)
+    var p := []
+    # задний обтекатель над мотором — главный «пузатый» объём
+    _ell(p, Vector3(0.27, 0.25, 0.50), Vector3(0, 0.52, -0.38), body, 0.08, 20)
+    _ell(p, Vector3(0.25, 0.16, 0.46), Vector3(0, 0.40, -0.36), body, 0.0, 16)
+    # хромированная полоса по бортам обтекателя и решётка вентиляции
+    for sx: float in [-1.0, 1.0]:
+        _bx(p, Vector3(0.02, 0.025, 0.46), Vector3(0.266 * sx, 0.52, -0.38), chrome)
+        for k in 3:
+            _bx(p, Vector3(0.012, 0.012, 0.14), Vector3(0.262 * sx, 0.44 - k * 0.035, -0.50), chrome)
+    # сиденье: длинное, двухместное, коричневое с кантом
+    _ell(p, Vector3(0.17, 0.07, 0.42), Vector3(0, 0.78, -0.30), seat, 0.0, 14)
+    _bx(p, Vector3(0.30, 0.04, 0.70), Vector3(0, 0.735, -0.30), dark)
+    _bx(p, Vector3(0.36, 0.03, 0.06), Vector3(0, 0.80, -0.78), chrome)   # поручень пассажира
+    # пол-площадка для ног
+    _bx(p, Vector3(0.36, 0.07, 0.62), Vector3(0, 0.27, 0.12), body)
+    for i in 5:
+        _bx(p, Vector3(0.30, 0.012, 0.03), Vector3(0, 0.31, -0.10 + i * 0.11), rubber)   # резиновые полосы
+    # щит для ног (выгнутый), кремовый, с хромированной окантовкой
+    _ell(p, Vector3(0.30, 0.42, 0.06), Vector3(0, 0.62, 0.45), cream, -0.22, 20)
+    _ell(p, Vector3(0.315, 0.435, 0.05), Vector3(0, 0.62, 0.42), body, -0.22, 20)   # изнанка щита и кант
+    # переднее крыло над колесом
+    _ell(p, Vector3(0.085, 0.10, 0.25), Vector3(0, SCOOTER_R + 0.09, SCOOTER_Z + 0.02), cream, 0.0, 14)
+    # рулевая колонка и «голова» руля с фарой
+    _cyl(p, 0.045, Vector3(0, 0.30, SCOOTER_Z - 0.04), Vector3(0, 1.00, 0.50), body)
+    _ell(p, Vector3(0.18, 0.09, 0.12), Vector3(0, 1.02, 0.50), body, 0.0, 14)
+    _cyl(p, 0.075, Vector3(0, 1.03, 0.56), Vector3(0, 1.03, 0.63), chrome, 16)    # ободок фары
+    _cyl(p, 0.062, Vector3(0, 1.03, 0.62), Vector3(0, 1.03, 0.635), head, 16)     # фара
+    _cyl(p, 0.016, Vector3(-0.36, 1.02, 0.47), Vector3(0.36, 1.02, 0.47), chrome) # руль
+    for sx: float in [-1.0, 1.0]:
+        _cyl(p, 0.022, Vector3(0.28 * sx, 1.02, 0.47), Vector3(0.40 * sx, 1.02, 0.47), rubber)   # ручки
+        _cyl(p, 0.008, Vector3(0.22 * sx, 1.04, 0.47), Vector3(0.27 * sx, 1.15, 0.45), chrome)   # зеркала
+        _ell(p, Vector3(0.045, 0.032, 0.012), Vector3(0.28 * sx, 1.17, 0.45), chrome)
+    # задний фонарь и номер
+    _ell(p, Vector3(0.06, 0.04, 0.03), Vector3(0, 0.62, -0.87), tail, 0.0, 10)
+    _bx(p, Vector3(0.18, 0.10, 0.01), Vector3(0, 0.48, -0.86), _mat("plate_w", Color(0.92, 0.92, 0.9), 0.6))
+    # выхлоп справа снизу, подножка
+    _cyl(p, 0.035, Vector3(0.16, 0.20, -0.30), Vector3(0.16, 0.24, -0.70), chrome)
+    return p
+
+
+## Готовая модель мотороллера (models/cars/vespa.gltf): узлы Body, Wheel_F, Wheel_R, материал Paint красится.
+## Нет файла — мопед строится из простых фигур (_scooter_parts).
+const VESPA_PATH := "res://models/cars/vespa.gltf"
+
+
+static func _vespa() -> Dictionary:
+    if _shared.has("vespa"):
+        return _shared["vespa"]
+    var out := {}
+    if ResourceLoader.exists(VESPA_PATH):
+        var ps = load(VESPA_PATH)
+        if ps is PackedScene:
+            var root: Node = (ps as PackedScene).instantiate()
+            for n: Node in root.find_children("*", "MeshInstance3D", true, false):
+                var mi := n as MeshInstance3D
+                out[String(mi.name)] = mi.mesh
+                out[String(mi.name) + "_pos"] = _rel(mi, root).origin
+            root.free()
+    if not (out.has("Body") and out.has("Wheel_F") and out.has("Wheel_R")):
+        out = {}
+    _shared["vespa"] = out
+    return out
+
+
+## Кузов мотороллера нужного цвета: копия меша, у поверхности Paint — свой материал.
+static func _vespa_body(paint: Color) -> ArrayMesh:
+    var key := "vespa_body_" + paint.to_html()
+    if _shared.has(key):
+        return _shared[key]
+    var src: Mesh = _vespa()["Body"]
+    var out := ArrayMesh.new()
+    for i in src.get_surface_count():
+        out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, src.surface_get_arrays(i))
+        var m := src.surface_get_material(i)
+        if _role(m) == "Paint":
+            m = paint_material(m, paint)
+        out.surface_set_material(i, m)
+    _shared[key] = out
+    return out
+
+
+## Колесо мотороллера: шина, хромированный колпак. Ось вдоль X. У модели — своё переднее/заднее.
+static func scooter_wheel_mesh(front := true) -> Mesh:
+    var v := _vespa()
+    if not v.is_empty():
+        return v["Wheel_F" if front else "Wheel_R"]
+    if _shared.has("scooter_wheel"):
+        return _shared["scooter_wheel"]
+    var tire := _mat("tire", Color(0.08, 0.08, 0.08), 0.9)
+    var chrome := _mat("chrome", Color(0.72, 0.72, 0.75), 0.25, 0.9)
+    var p := []
+    var ax := Transform3D(Basis(Vector3(0, 0, 1), PI * 0.5), Vector3.ZERO)
+    var tm := CylinderMesh.new()
+    tm.top_radius = SCOOTER_R
+    tm.bottom_radius = SCOOTER_R
+    tm.height = 0.11
+    tm.radial_segments = 18
+    tm.rings = 1
+    p.append([tm, ax, tire])
+    var rm := CylinderMesh.new()
+    rm.top_radius = 0.12
+    rm.bottom_radius = 0.12
+    rm.height = 0.12
+    rm.radial_segments = 14
+    rm.rings = 1
+    p.append([rm, ax, chrome])
+    var sp := BoxMesh.new()      # тёмная полоса — видно вращение
+    sp.size = Vector3(0.125, 0.03, 0.2)
+    p.append([sp, Transform3D(), tire])
+    var m := _merge(p)
+    _shared["scooter_wheel"] = m
+    return m
+
+
+## Кузов мопеда без колёс (для ездящего).
+static func scooter_mesh(paint: Color, tail: Material) -> ArrayMesh:
+    if not _vespa().is_empty():
+        return _vespa_body(paint)
+    return _merge(_scooter_parts(paint, tail))
+
+
+## Стоящий мопед целиком (с колёсами) — для витрины проката.
+static func scooter_parked_mesh(paint: Color) -> ArrayMesh:
+    var v := _vespa()
+    if not v.is_empty():
+        var vp := []
+        var body := _vespa_body(paint)
+        for nm: String in ["Body", "Wheel_F", "Wheel_R"]:
+            var msh: Mesh = body if nm == "Body" else v[nm]
+            for si in msh.get_surface_count():
+                var one := ArrayMesh.new()
+                one.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, msh.surface_get_arrays(si))
+                vp.append([one, Transform3D(Basis(), v[nm + "_pos"]), msh.surface_get_material(si)])
+        return _merge(vp)
+    var tail := _mat("tail_static", Color(0.55, 0.04, 0.04), 0.3, 0.0, 0.3)
+    var parts := _scooter_parts(paint, tail)
+    var wm := scooter_wheel_mesh()
+    # колесо — готовый меш с двумя материалами: добавляем его поверхности по отдельности
+    for z: float in [SCOOTER_Z, -SCOOTER_Z]:
+        for si in wm.get_surface_count():
+            var one := ArrayMesh.new()
+            one.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, wm.surface_get_arrays(si))
+            parts.append([one, Transform3D(Basis(), Vector3(0, SCOOTER_R, z)), wm.surface_get_material(si)])
+    return _merge(parts)
+
+
 ## Общий материал стёкол (чтобы машина могла заменить его на тонировку).
 static func glass_material() -> StandardMaterial3D:
     return _mat("glass", Color(0.09, 0.12, 0.16), 0.05, 0.6)

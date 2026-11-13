@@ -8,7 +8,7 @@ signal honk(pos: Vector3)
 const CityBuilder := preload("res://scripts/city_builder.gd")
 const CarModel := preload("res://scripts/car_model.gd")
 
-const COUNT := 14
+const COUNT := 22
 const LANE := 3.5          # смещение полосы от оси дороги
 const CRUISE := 11.0       # м/с (~40 км/ч)
 const TURN_SPEED := 6.0
@@ -44,19 +44,45 @@ func setup() -> void:
         body.add_child(mi)
         add_child(body)
 
-        # Старт: случайный перекрёсток и направление, где-то посреди квартала.
-        var lines: Array = city.road_lines
-        var inter := Vector3(lines[_rng.randi() % lines.size()], 0.0, lines[_rng.randi() % lines.size()])
-        var dir := _random_dir(inter, Vector3.ZERO)
-        var a := {"body": body, "dir": dir, "inter": inter, "speed": CRUISE,
-                "t": _rng.randf(), "seg": {}, "blocked": 0.0, "ghost": 0.0,
-                "pos": Vector3.ZERO, "fwd": dir}
-        _start_straight(a, inter, dir)
-        var seg: Dictionary = a["seg"]
-        var p0: Vector3 = seg["p0"]
-        var p2: Vector3 = seg["p2"]
-        a["pos"] = p0.lerp(p2, float(a["t"]))
+        var a := {"body": body, "dir": Vector3.ZERO, "inter": Vector3.ZERO, "speed": CRUISE,
+                "t": 0.0, "seg": {}, "blocked": 0.0, "ghost": 0.0,
+                "pos": Vector3.ZERO, "fwd": Vector3.FORWARD, "org": Vector3.ZERO, "ext": _ext}
+        _place(a, false)
         _agents.append(a)
+
+
+## Город, где точка: [центр, половина размера, оси дорог (от центра)]. Казань или Пятигорск.
+func _city_at(p: Vector3) -> Array:
+    if p.x < CityBuilder.RIVER_X0:
+        var lines: Array = []
+        for k: int in range(-CityBuilder.PY_GRID - 1, CityBuilder.PY_GRID + 1):
+            lines.append((k + 0.5) * CityBuilder.PITCH)
+        return [CityBuilder.PY_ORG, (CityBuilder.PY_GRID + 0.5) * CityBuilder.PITCH + 1.0, lines]
+    return [Vector3.ZERO, _ext, city.road_lines]
+
+
+## Поставить машину на перекрёсток недалеко от игрока (в его городе), но не прямо перед ним.
+func _place(a: Dictionary, away := true) -> void:
+    var cd := _city_at(focus)
+    var org: Vector3 = cd[0]
+    var lines: Array = cd[2]
+    var inter := Vector3.ZERO
+    for tries in 12:
+        inter = org + Vector3(lines[_rng.randi() % lines.size()], 0.0, lines[_rng.randi() % lines.size()])
+        var d := inter.distance_to(focus)
+        if d < 260.0 and (not away or d > 110.0):
+            break
+    a["org"] = org
+    a["ext"] = cd[1]
+    var dir := _random_dir(inter, Vector3.ZERO, a)
+    _start_straight(a, inter, dir)
+    a["t"] = _rng.randf()
+    var seg: Dictionary = a["seg"]
+    var p0: Vector3 = seg["p0"]
+    var p2: Vector3 = seg["p2"]
+    a["pos"] = p0.lerp(p2, float(a["t"]))
+    a["fwd"] = dir
+    a["far"] = 0.0
 
 
 func _physics_process(delta: float) -> void:
@@ -85,7 +111,11 @@ func _physics_process(delta: float) -> void:
         else:
             a["blocked"] = 0.0
 
-        var want := 0.0 if blocked else (TURN_SPEED if seg["turn"] else CRUISE)
+        var panic: float = a.get("panic", 0.0)
+        if panic > 0.0:
+            a["panic"] = panic - delta
+        var cruise := CRUISE * (1.6 if panic > 0.0 else 1.0)   # стрельба рядом — водители давят на газ
+        var want := 0.0 if blocked else (TURN_SPEED * (1.3 if panic > 0.0 else 1.0) if seg["turn"] else cruise)
         var speed: float = a["speed"]
         speed = move_toward(speed, want, (10.0 if want < speed else 3.5) * delta)
         a["speed"] = speed
@@ -110,7 +140,22 @@ func _physics_process(delta: float) -> void:
 
         var body: AnimatableBody3D = a["body"]
         body.global_transform = Transform3D(Basis(Vector3.UP, atan2(fwd.x, fwd.z)), pos)
-        body.visible = pos.distance_to(focus) < 220.0
+        var dist := pos.distance_to(focus)
+        body.visible = dist < 220.0
+        # уехала далеко от игрока (или игрок в другом городе) — машина «появляется» рядом с ним
+        a["far"] = float(a.get("far", 0.0)) + delta if dist > 300.0 else 0.0
+        if float(a["far"]) > 3.0:
+            _place(a)
+
+
+## Паника: выстрелы рядом — машины в радиусе разгоняются и сигналят.
+func panic(from: Vector3, radius: float) -> void:
+    for a: Dictionary in _agents:
+        var pos: Vector3 = a["pos"]
+        if pos.distance_to(from) < radius:
+            if float(a.get("panic", 0.0)) <= 0.0 and _rng.randf() < 0.5:
+                honk.emit(pos)
+            a["panic"] = 8.0
 
 
 ## 0 — путь свободен, 1 — мешает игрок или его машина, 2 — другой бот.
@@ -152,7 +197,7 @@ func _next_segment(a: Dictionary) -> void:
         _start_straight(a, inter, dir)
         return
     # Подъехали к перекрёстку — выбираем, куда дальше.
-    var d2 := _random_dir(inter, dir)
+    var d2 := _random_dir(inter, dir, a)
     var p0 := _entry_point(inter, dir)
     var p2 := _exit_point(inter, d2)
     var p1 := (p0 + p2) * 0.5
@@ -165,14 +210,16 @@ func _next_segment(a: Dictionary) -> void:
 
 ## Случайное направление с перекрёстка: прямо (чаще), налево, направо —
 ## только туда, где город продолжается. Разворотов нет.
-func _random_dir(inter: Vector3, dir: Vector3) -> Vector3:
+func _random_dir(inter: Vector3, dir: Vector3, a: Dictionary) -> Vector3:
+    var org: Vector3 = a.get("org", Vector3.ZERO)
+    var ext: float = a.get("ext", _ext)
     var options := []
     var all: Array = [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)]
     for d: Vector3 in all:
         if dir != Vector3.ZERO and d == -dir:
             continue
-        var n := inter + d * CityBuilder.PITCH
-        if absf(n.x) > _ext or absf(n.z) > _ext:
+        var n := inter + d * CityBuilder.PITCH - org
+        if absf(n.x) > ext or absf(n.z) > ext:
             continue
         options.append(d)
         if d == dir:

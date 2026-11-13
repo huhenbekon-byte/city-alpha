@@ -5,8 +5,9 @@ extends Node3D
 
 const CityBuilder := preload("res://scripts/city_builder.gd")
 const BodyMesh := preload("res://scripts/body_mesh.gd")
+const Poses := preload("res://scripts/poses.gd")
 
-const COUNT := 36
+const COUNT := 44
 const WALK := 34.0          # середина тротуара от центра квартала
 const SPEED := 1.4
 const SHIRTS := [
@@ -95,13 +96,35 @@ func _process(delta: float) -> void:
         var to := goal - pos
         to.y = 0.0
         var dir := to.normalized() if to.length() > 0.01 else Vector3.FORWARD
+        var fear: float = p["fear"]
+        if fear > 0.0:
+            p["fear"] = fear - delta
         var stop := false
-        if player and player.visible:
+        if player and player.visible and fear <= 0.0:
             var rel := player.global_position - pos
             stop = rel.dot(dir) > 0.0 and rel.dot(dir) < 1.8 and Vector2(rel.x, rel.z).length() < 1.8
+        # машина игрока летит прямо на него — отскакивает в сторону
+        if float(p["dodge_t"]) <= 0.0:
+            for car in cars:
+                if car.driven and absf(car.speed_kmh()) > 18.0:
+                    var cv: Vector3 = car.linear_velocity
+                    var rel_c: Vector3 = pos - car.global_position
+                    rel_c.y = 0.0
+                    var along := rel_c.dot(cv.normalized())
+                    if along > 0.0 and along < 9.0:
+                        var side := Vector3(-cv.z, 0, cv.x).normalized()
+                        var off := rel_c.dot(side)
+                        if absf(off) < 1.8 and _rng.randf() < 0.75:
+                            p["dodge"] = side * (signf(off) if absf(off) > 0.05 else 1.0) * 4.0
+                            p["dodge_t"] = 0.55
+                            p["fear"] = maxf(fear, 3.0)
+        if float(p["dodge_t"]) > 0.0:
+            p["dodge_t"] = float(p["dodge_t"]) - delta
+            pos += (p["dodge"] as Vector3) * delta
+            stop = true
 
         if not stop:
-            var step: float = SPEED * float(p["speed_k"]) * delta
+            var step: float = SPEED * float(p["speed_k"]) * (2.7 if fear > 0.0 else 1.0) * delta
             if to.length() <= step:
                 pos = goal
                 p["idx"] = (int(p["idx"]) + 1) % 4
@@ -111,7 +134,7 @@ func _process(delta: float) -> void:
         p["pos"] = pos
 
         var far := pos.distance_to(focus)
-        if far > 300.0:          # игрок уехал в другой город — прохожие «переселяются» к нему
+        if far > 260.0:          # игрок ушёл далеко или уехал в другой город — прохожие «переселяются» к нему
             _place_random(p)
             continue
         var near := far < 70.0
@@ -124,10 +147,12 @@ func _process(delta: float) -> void:
                 root.position = pos
                 root.rotation.y = atan2(dir.x, dir.z)
                 var want := String(p["idle"]) if stop else String(p["walk"])
+                if fear > 0.0 and not stop and String(p["run"]) != "":
+                    want = String(p["run"])
                 if want != "" and String(p.get("anim_state", "")) != want and anim_p.has_animation(want):
                     anim_p.play(want, 0.25)
                     p["anim_state"] = want
-                anim_p.speed_scale = 1.0 if stop else SPEED * float(p["speed_k"]) / 1.5
+                anim_p.speed_scale = 1.0 if stop else (SPEED * float(p["speed_k"]) * 2.7 / 4.0 if fear > 0.0 else SPEED * float(p["speed_k"]) / 1.5)
             continue
         if near:
             root.position = pos
@@ -144,7 +169,11 @@ func _place_random(p: Dictionary) -> void:
     var in_py := focus.x < CityBuilder.RIVER_X0
     var g := CityBuilder.PY_GRID if in_py else CityBuilder.GRID
     var org := CityBuilder.PY_ORG if in_py else Vector3.ZERO
-    var c := org + Vector3(_rng.randi_range(-g, g) * CityBuilder.PITCH, 0.0, _rng.randi_range(-g, g) * CityBuilder.PITCH)
+    # квартал рядом с игроком (±2 квартала) — людно там, где он ходит
+    var fi := clampi(roundi((focus.x - org.x) / CityBuilder.PITCH), -g, g)
+    var fj := clampi(roundi((focus.z - org.z) / CityBuilder.PITCH), -g, g)
+    var c := org + Vector3(clampi(fi + _rng.randi_range(-2, 2), -g, g) * CityBuilder.PITCH, 0.0,
+            clampi(fj + _rng.randi_range(-2, 2), -g, g) * CityBuilder.PITCH)
     var y := CityBuilder.SIDE_H
     var corners := [c + Vector3(-WALK, y, -WALK), c + Vector3(WALK, y, -WALK),
             c + Vector3(WALK, y, WALK), c + Vector3(-WALK, y, WALK)]
@@ -322,6 +351,10 @@ func _make_ped_3d() -> Dictionary:
         for an: String in [walk_a, idle_a]:
             if an != "":
                 ap.get_animation(an).loop_mode = Animation.LOOP_LINEAR
+        # спина ровнее (как у игрока): у женской модели свои анимации — правим один раз
+        var sks := model.find_children("*", "Skeleton3D", true, false)
+        if walk_a != "" and not sks.is_empty() and (sks[0] as Skeleton3D).find_bone("spine_01") >= 0:
+            Poses.fix_lean(ap, sks[0] as Skeleton3D, walk_a, 0.35)
         if walk_a != "":
             ap.play(walk_a)
             ap.seek(_rng.randf() * 1.0, true)
@@ -378,8 +411,29 @@ func _make_ped_3d() -> Dictionary:
         elif nm.contains("superhero") or nm.contains("body"):
             mesh_i.material_override = mat
     return {"root": root, "legs": [], "pos": Vector3.ZERO, "corners": [], "idx": 0, "anim": ap, "anim_state": walk_a,
-            "walk": walk_a, "idle": idle_a, "die": die_a,
-            "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0}
+            "walk": walk_a, "idle": idle_a, "die": die_a, "run": _find_anim(ap, "jog"),
+            "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0, "fear": 0.0, "dodge": Vector3.ZERO,
+            "dodge_t": 0.0}
+
+
+## Испуг: стрельба или драка рядом — прохожие в радиусе убегают от этого места.
+func scare(from: Vector3, radius: float) -> void:
+    for p: Dictionary in _peds:
+        if p["down"]:
+            continue
+        var pos: Vector3 = p["pos"]
+        if pos.distance_to(from) > radius:
+            continue
+        var was: float = p["fear"]
+        p["fear"] = _rng.randf_range(5.0, 9.0)
+        if was > 0.0:
+            continue
+        # бежать по тротуару от опасности: если путь ведёт к ней — развернуться
+        var corners: Array = p["corners"]
+        var goal: Vector3 = corners[int(p["idx"])]
+        if (goal - pos).dot(from - pos) > 0.0:
+            corners.reverse()
+            p["idx"] = (3 - int(p["idx"]) + 1) % 4
 
 
 ## Анимация, имя которой начинается с base (без учёта регистра); точное совпадение — в приоритете.

@@ -1,29 +1,41 @@
 extends Node
-## Музыка: тема главного меню и радио в машине (6 станций). Глобальный Music.
-## Радио «живое»: включаешь станцию — играет с того места, где она сейчас в эфире.
+## Музыка: темы главного меню, радио в машине (11 станций) и саундтрек погони.
+## Глобальный Music. Радио «живое»: включаешь станцию — играет с того места, где она сейчас в эфире.
+## Новые треки сочинены и синтезированы скриптом tools/audio/gen_music.py.
 
 const STATIONS := [
+    {"name": "Маяк — вечерний эфир", "file": "radio_mayak"},
+    {"name": "Эстрада 80-х", "file": "radio_estrada"},
+    {"name": "Дворовая гитара", "file": "radio_dvor"},
+    {"name": "Юность — рок-клуб", "file": "radio_rock"},
+    {"name": "Дискотека 80-х", "file": "radio_disco"},
+    {"name": "Духовой оркестр в парке", "file": "radio_march"},
+    {"name": "Ресторан «Кавказ»", "file": "radio_kavkaz"},
+    {"name": "Ретро Волна", "file": "radio_retro"},
     {"name": "Ночной драйв FM", "file": "radio_synthwave"},
     {"name": "Район FM", "file": "radio_phonk"},
     {"name": "Лоу-фай 101", "file": "radio_lofi"},
-    {"name": "Ретро Волна", "file": "radio_retro"},
-    {"name": "Эстрада 80-х", "file": "radio_estrada"},
-    {"name": "Маяк — вечерний эфир", "file": "radio_mayak"},
 ]
+const MENU_THEMES := ["menu2", "menu"]
 
 var volume := 0.6          # 0..1, из настроек
 var station := 0           # текущая станция, -1 — радио выключено
 var _streams := {}
 var _player: AudioStreamPlayer
-var _mode := ""            # "menu" / "radio" / ""
+var _mode := ""            # "menu" / "radio" / "score" / ""
+var _score := ""
 var _target := 0.0         # громкость, к которой плавно идём (0..1)
 var _level := 0.0
+var _menu_i := 0
 
 
 func _ready() -> void:
     process_mode = Node.PROCESS_MODE_ALWAYS   # играет и на паузе (в меню)
     _player = AudioStreamPlayer.new()
+    if AudioServer.get_bus_index("Music") != -1:
+        _player.bus = "Music"
     add_child(_player)
+    _menu_i = randi() % MENU_THEMES.size()
 
 
 func _stream(file: String) -> AudioStream:
@@ -51,9 +63,12 @@ func _start(file: String, live: bool) -> void:
     _target = 1.0
 
 
+## Тема меню: при каждом заходе в меню — следующая из двух.
 func play_menu() -> void:
+    if _mode != "menu":
+        _menu_i = (_menu_i + 1) % MENU_THEMES.size()
     _mode = "menu"
-    _start("menu", false)
+    _start(String(MENU_THEMES[_menu_i]), false)
 
 
 func play_radio() -> void:
@@ -64,14 +79,33 @@ func play_radio() -> void:
     _start(String(STATIONS[station]["file"]), true)
 
 
+## Саундтрек ситуации (например, "score_chase" при розыске). Радио в машине важнее.
+func play_score(file: String) -> void:
+    if _mode == "radio" or (_mode == "score" and _score == file):
+        return
+    _mode = "score"
+    _score = file
+    _start(file, false)
+
+
+func stop_score() -> void:
+    if _mode == "score":
+        stop()
+
+
 ## Плавно выключить (вышли из машины, начали игру).
 func stop() -> void:
     _mode = ""
+    _score = ""
     _target = 0.0
 
 
 func is_radio() -> bool:
     return _mode == "radio"
+
+
+func is_score() -> bool:
+    return _mode == "score"
 
 
 ## Следующая станция (после последней — «выкл»). Возвращает название для подсказки.
@@ -91,5 +125,9 @@ func _process(delta: float) -> void:
         if _player.playing:
             _player.stop()
         return
-    var base := 0.55 if _mode == "radio" else 0.7
+    var base := 0.7
+    if _mode == "radio":
+        base = 0.55
+    elif _mode == "score":
+        base = 0.45
     _player.volume_db = linear_to_db(maxf(0.0001, _level * volume * base))

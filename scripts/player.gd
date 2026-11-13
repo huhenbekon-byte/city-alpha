@@ -64,9 +64,12 @@ var _spawn := Vector3.ZERO
 
 
 func _ready() -> void:
+    add_to_group("player")
     _spawn = global_position
     floor_snap_length = 0.3
     floor_max_angle = deg_to_rad(50.0)  # чтобы заходить на бордюр
+    floor_constant_speed = true         # на подъёме и спуске скорость та же
+    floor_block_on_wall = true
 
     var shape := CapsuleShape3D.new()
     shape.radius = 0.32
@@ -256,23 +259,55 @@ func look(relative: Vector2) -> void:
 
 # ---------------------------------------------------------------- движение
 
+## Прыжок «как в хороших играх»: можно прыгнуть чуть позже края (coyote time) и нажать чуть раньше
+## приземления (буфер); вниз падает быстрее, чем взлетает; отпустил кнопку — прыжок ниже.
+const COYOTE := 0.12
+const JUMP_BUFFER := 0.15
+const FALL_GRAVITY := 1.6
+var _coyote := 0.0
+var _jump_buf := 0.0
+var _down_until := 0.0      # сбит машиной — лежит и встаёт
+
+
 func _physics_process(delta: float) -> void:
+    _coyote = COYOTE if is_on_floor() else _coyote - delta
+    _jump_buf = JUMP_BUFFER if Input.is_action_just_pressed("jump") else _jump_buf - delta
     if not is_on_floor():
-        velocity.y -= _gravity * delta
-    elif Input.is_action_just_pressed("jump"):
+        var g := _gravity * (FALL_GRAVITY if velocity.y < 0.0 else 1.0)
+        if velocity.y > 0.0 and not Input.is_action_pressed("jump"):
+            g *= 1.8                       # кнопку отпустили — прыжок ниже
+        velocity.y -= g * delta
+    if _jump_buf > 0.0 and _coyote > 0.0 and _time >= _down_until and seated == "":
         velocity.y = jump_velocity
+        _jump_buf = 0.0
+        _coyote = 0.0
+    if _time < _down_until:   # лежит после удара машиной
+        velocity.x = move_toward(velocity.x, 0.0, 8.0 * delta)
+        velocity.z = move_toward(velocity.z, 0.0, 8.0 * delta)
+        move_and_slide()
+        return
 
     var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
     var running := Input.is_action_pressed("sprint")
+    var mag := 1.0
     if touch and touch.joy_vector.length() > 0.05:
         input = touch.joy_vector
         running = input.length() > 0.85  # джойстик до упора = бег
+        mag = clampf(input.length() / 0.85, 0.35, 1.0)   # чуть наклонил — идёт медленно
     input = input.limit_length(1.0)
+    if _consume_until > _time or emote != "":
+        if input.length() > 0.3:
+            _end_consume()
+            emote = ""
 
-    var dir := Vector3(input.x, 0.0, input.y).rotated(Vector3.UP, _cam_yaw.rotation.y)
-    var speed := run_speed if running else walk_speed
+    var dir := Vector3(input.x, 0.0, input.y).normalized().rotated(Vector3.UP, _cam_yaw.rotation.y) if input.length() > 0.01 else Vector3.ZERO
+    var speed := run_speed if running else walk_speed * mag
     var target := Vector2(dir.x, dir.z) * speed
-    var accel := acceleration if is_on_floor() else air_control
+    # разгон мягче, остановка и разворот — резче (не «катается на льду»)
+    var accel := air_control
+    if is_on_floor():
+        var cur := Vector2(velocity.x, velocity.z)
+        accel = acceleration * (1.5 if target.length() < 0.1 or cur.dot(target) < 0.0 else 1.0)
     var hv := Vector2(velocity.x, velocity.z).move_toward(target, accel * delta)
     velocity.x = hv.x
     velocity.z = hv.y
@@ -281,8 +316,15 @@ func _physics_process(delta: float) -> void:
 
     var hs := Vector2(velocity.x, velocity.z).length()
     var grounded := is_on_floor()
+    if not grounded:
+        _fall_v = minf(_fall_v, velocity.y)
     if grounded and not _was_on_floor:
         stepped.emit(true)  # приземлился
+        if _fall_v < -3.0 and _anim and _anim_map.has("land") and seated == "":
+            _anim.play(_anim_map["land"], 0.05)
+            _anim.speed_scale = 1.0 if _fall_v < -6.0 else 1.5
+            _action_until = _time + (0.3 if _fall_v < -6.0 else 0.2)
+        _fall_v = 0.0
     _was_on_floor = grounded
     if grounded and hs > 0.5:
         _step_acc += hs * delta
@@ -352,6 +394,28 @@ func _setup_model() -> void:
     for key in ["idle", "walk", "run", "jog", "jump", "drive", "sit"]:
         if _anim_map.has(key):
             _anim.get_animation(_anim_map[key]).loop_mode = Animation.LOOP_LINEAR
+    # анимации из кода (poses.gd): жесты, стойка, удар ногой, приземление, еда и питьё;
+    # ходьба и бег — с выпрямленной спиной (в исходных анимациях сильный наклон вперёд)
+    var sks := m.find_children("*", "Skeleton3D", true, false)
+    if not sks.is_empty():
+        var sk := sks[0] as Skeleton3D
+        if sk.find_bone("spine_01") >= 0:
+            Poses.install(_anim, sk)
+            for key in ["walk", "run", "jog"]:
+                if _anim_map.has(key):
+                    Poses.fix_lean(_anim, sk, _anim_map[key], 0.35)
+        for pk: Array in [["squat", "Pose_Squat"], ["salute", "Pose_Salute"], ["rest", "Pose_Rest"], ["guard", "Pose_Guard"],
+                ["land", "Anim_Land"], ["kick", "Anim_Kick"], ["eat", "Anim_Eat"], ["drink", "Anim_Drink"]]:
+            if _anim.has_animation(pk[1]):
+                _anim_map[pk[0]] = pk[1]
+    for an in _anim.get_animation_list():
+        var low := String(an).to_lower()
+        if low.begins_with("hit_chest") and not _anim_map.has("hit"):
+            _anim_map["hit"] = String(an)
+        if low.begins_with("pistol_aim") and not _anim_map.has("aim"):
+            _anim_map["aim"] = String(an)
+    if _anim_map.has("aim"):
+        _anim.get_animation(_anim_map["aim"]).loop_mode = Animation.LOOP_LINEAR
 
 
 ## Сменить персонажа (скин фракции): path — .gltf со скелетом и анимациями как у основного,
@@ -372,6 +436,7 @@ func set_skin(path: String) -> bool:
         _gun.queue_free()
         _gun = null
     _gun_holder = null
+    _bat = null
     armed = false
     if _model:
         _model.queue_free()
@@ -382,7 +447,21 @@ func set_skin(path: String) -> bool:
     _hair_mat = null
     model_scene = ps
     _custom_skin = want != CHARACTER_PATH
+    _cap = null
+    _cap_kind = ""
     _setup_model()
+    set_cap(_cap_name, _cap_col)
+    return true
+
+
+## Жест: "squat" — на корточки, "salute" — отдать честь, "rest" — руки за спину. Сбрасывается, если пойти.
+var emote := ""
+
+
+func play_emote(key: String) -> bool:
+    if not _anim_map.has(key) or seated != "":
+        return false
+    emote = key
     return true
 
 
@@ -390,22 +469,179 @@ func _animate_model() -> void:
     if _time < _action_until:
         return
     var hspeed := Vector2(velocity.x, velocity.z).length()
+    if _time < _consume_until:
+        return
+    if _prop != null:
+        _end_consume()
+    if emote != "":
+        if hspeed > 0.2 or not is_on_floor() or armed:
+            emote = ""
+        else:
+            var en: String = _anim_map[emote]
+            if _anim.current_animation != en:
+                _anim.play(en, 0.35)
+            _anim.speed_scale = 1.0
+            return
     var want := "pistol_idle" if armed and _anim_map.has("pistol_idle") else "idle"
+    if armed and _time < _aim_until and _anim_map.has("aim"):
+        want = "aim"                       # после выстрела ещё держит пистолет на прицеле
+    elif not armed and _time < _guard_until and _anim_map.has("guard"):
+        want = "guard"                     # после драки — в боевой стойке
     var rate := 1.0
+    var blend := 0.2
     if not is_on_floor() and _anim_map.has("jump"):
         want = "jump"
-    elif hspeed > walk_speed + 0.8 and _anim_map.has("run"):
-        want = "run"
-        rate = clampf(hspeed / 6.0, 0.7, 1.4)
+        rate = 0.8
+    elif hspeed > walk_speed + 0.8 and (_anim_map.has("jog") or _anim_map.has("run")):
+        # бег: «Jog» (ровная спина, естественный шаг), скорость ног — по скорости движения
+        want = "jog" if _anim_map.has("jog") else "run"
+        rate = clampf(hspeed / 4.4, 0.85, 1.45)
+        if hspeed > run_speed + 1.5 and _anim_map.has("run"):
+            want = "run"
+            rate = clampf(hspeed / 7.0, 0.8, 1.3)
     elif hspeed > 0.2 and _anim_map.has("walk"):
         want = "walk"
-        rate = clampf(hspeed / 1.5, 0.6, 1.7)   # анимация шагает ~1.5 м/с
+        rate = clampf(hspeed / 1.45, 0.55, 1.7)   # анимация шагает ~1.45 м/с — ноги не «скользят»
+        blend = 0.25
     if not _anim_map.has(want):
         return
     var anim_name: String = _anim_map[want]
     if _anim.current_animation != anim_name:
-        _anim.play(anim_name, 0.2)
+        _anim.play(anim_name, blend)
     _anim.speed_scale = rate
+
+
+# ---------------------------------------------------------------- драка, стрельба, еда
+
+var _fall_v := 0.0
+var _combo := 0
+var _combo_t := -10.0
+var _guard_until := 0.0
+var _aim_until := 0.0
+var _consume_until := 0.0
+var _prop: Node3D = null
+
+
+## Сбила машина: отлетает, падает и через пару секунд встаёт.
+func knockdown(push: Vector3) -> void:
+    if _time < _down_until or seated != "":
+        return
+    _end_consume()
+    emote = ""
+    velocity = push + Vector3(0, 3.5, 0)
+    _down_until = _time + 2.0
+    _action_until = _down_until
+    if _anim:
+        for an in _anim.get_animation_list():
+            if String(an).to_lower().begins_with("death"):
+                _anim.play(an, 0.05)
+                _anim.speed_scale = 1.8
+                break
+    get_tree().create_timer(1.6).timeout.connect(func() -> void:
+        if _anim and _anim_map.has("land"):
+            _anim.play(_anim_map["land"], 0.3)
+            _anim.speed_scale = 0.7)
+
+
+func is_down() -> bool:
+    return _time < _down_until
+
+
+## Получил удар — дёрнуться (если не занят другим действием).
+func play_hit() -> void:
+    if _anim == null or not _anim_map.has("hit") or seated != "" or _time < _action_until:
+        return
+    _anim.play(_anim_map["hit"], 0.05)
+    _anim.speed_scale = 1.4
+    _action_until = _time + 0.35
+    _guard_until = _time + 3.0
+
+
+## Съесть или выпить: рука ко рту, в руке — пирожок или стакан. Пошёл — перестал есть.
+func play_consume(drink: bool) -> void:
+    var key := "drink" if drink else "eat"
+    if _anim == null or not _anim_map.has(key) or seated != "" or armed:
+        return
+    emote = ""
+    _anim.play(_anim_map[key], 0.2)
+    _anim.speed_scale = 1.0
+    _consume_until = _time + _anim.get_animation(_anim_map[key]).length
+    _attach_prop(drink)
+
+
+func _end_consume() -> void:
+    _consume_until = 0.0
+    if _prop and is_instance_valid(_prop):
+        _prop.queue_free()
+    _prop = null
+
+
+func _attach_prop(drink: bool) -> void:
+    _end_consume_prop_only()
+    if _model == null:
+        return
+    var sks := _model.find_children("*", "Skeleton3D", true, false)
+    if sks.is_empty():
+        return
+    var sk := sks[0] as Skeleton3D
+    var hb := sk.find_bone("hand_r")
+    if hb < 0:
+        return
+    var att := BoneAttachment3D.new()
+    att.bone_name = "hand_r"
+    sk.add_child(att)
+    _prop = att
+    # к ладони: вдоль кисти к среднему пальцу и чуть внутрь
+    var fingers := Vector3(0, 0.1, 0)
+    var mid := sk.find_bone("middle_01_r")
+    if mid >= 0:
+        fingers = sk.get_bone_rest(mid).origin
+    var palm := fingers * 0.75
+    var mi := MeshInstance3D.new()
+    var m := StandardMaterial3D.new()
+    if drink:
+        var cyl := CylinderMesh.new()
+        cyl.top_radius = 0.042
+        cyl.bottom_radius = 0.037
+        cyl.height = 0.13
+        cyl.radial_segments = 12
+        mi.mesh = cyl
+        m.albedo_color = Color(0.75, 0.85, 0.9, 0.6)
+        m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+        m.roughness = 0.05
+        var tea := MeshInstance3D.new()
+        var tc := CylinderMesh.new()
+        tc.top_radius = 0.03
+        tc.bottom_radius = 0.027
+        tc.height = 0.07
+        tea.mesh = tc
+        var tm := StandardMaterial3D.new()
+        tm.albedo_color = Color(0.55, 0.3, 0.1)
+        tea.material_override = tm
+        tea.position.y = -0.015
+        mi.add_child(tea)
+    else:
+        var sph := SphereMesh.new()
+        sph.radius = 0.06
+        sph.height = 0.12
+        mi.mesh = sph
+        mi.scale = Vector3(1.0, 0.7, 1.7)
+        m.albedo_color = Color(0.78, 0.52, 0.22)
+        m.roughness = 0.8
+    mi.material_override = m
+    var holder := Node3D.new()
+    holder.position = palm
+    att.add_child(holder)
+    holder.add_child(mi)
+    # стакан стоит вертикально в мире, пирожок — поперёк ладони
+    holder.global_basis = Basis()
+    mi.position = Vector3.ZERO
+
+
+func _end_consume_prop_only() -> void:
+    if _prop and is_instance_valid(_prop):
+        _prop.queue_free()
+    _prop = null
 
 
 ## Материалы для персонажа Quaternius: тело с одеждой по маске, волосы, брови.
@@ -650,6 +886,67 @@ func set_weapon(path: String, muzzle := Vector3.ZERO) -> void:
     _gun_muzzle = muzzle
 
 
+## Бита в правой руке (ОПГ): простая деревянная модель с обмоткой на рукояти.
+var _bat: Node3D = null
+
+
+func set_bat(on: bool) -> void:
+    if _bat:
+        _bat.queue_free()
+        _bat = null
+    if not on or _model == null:
+        return
+    if _gun_holder == null:
+        var skels := _model.find_children("*", "Skeleton3D", true, false)
+        if skels.is_empty():
+            return
+        var sk := skels[0] as Skeleton3D
+        if sk.find_bone("hand_r") < 0:
+            return
+        _gun_holder = BoneAttachment3D.new()
+        _gun_holder.bone_name = "hand_r"
+        sk.add_child(_gun_holder)
+    _bat = Node3D.new()
+    _bat.name = "Bat"
+    var wood := StandardMaterial3D.new()
+    wood.albedo_color = Color(0.78, 0.6, 0.38)
+    wood.roughness = 0.55
+    var tape := StandardMaterial3D.new()
+    tape.albedo_color = Color(0.12, 0.08, 0.06)
+    var body := CylinderMesh.new()
+    body.top_radius = 0.036
+    body.bottom_radius = 0.015
+    body.height = 0.78
+    body.radial_segments = 12
+    var b := MeshInstance3D.new()
+    b.mesh = body
+    b.material_override = wood
+    b.position = Vector3(0, 0.32, 0)
+    _bat.add_child(b)
+    var grip := CylinderMesh.new()
+    grip.top_radius = 0.018
+    grip.bottom_radius = 0.017
+    grip.height = 0.16
+    grip.radial_segments = 10
+    var g := MeshInstance3D.new()
+    g.mesh = grip
+    g.material_override = tape
+    g.position = Vector3(0, 0.0, 0)
+    _bat.add_child(g)
+    var knob := CylinderMesh.new()
+    knob.top_radius = 0.026
+    knob.bottom_radius = 0.026
+    knob.height = 0.02
+    var kn := MeshInstance3D.new()
+    kn.mesh = knob
+    kn.material_override = wood
+    kn.position = Vector3(0, -0.085, 0)
+    _bat.add_child(kn)
+    # рукоять в кулаке, бита смотрит вверх-назад, как на плече
+    _bat.transform = Transform3D(Basis.from_euler(Vector3(deg_to_rad(155.0), 0.0, 0.0)), Vector3(0.0, 0.07, 0.02))
+    _gun_holder.add_child(_bat)
+
+
 ## Где дуло (для вспышки и трассера). Без оружия — перед грудью.
 func muzzle_position() -> Vector3:
     if _gun and _gun.is_inside_tree():
@@ -669,15 +966,30 @@ func attack(melee: bool) -> void:
     _visual.rotation.y = _cam_yaw.rotation.y
     if _anim == null:
         return
+    _end_consume()
+    emote = ""
     var key := "shoot"
+    var dur := 0.3
     if melee:
-        _punch_flip = not _punch_flip
-        key = "punch2" if _punch_flip else "punch1"
+        # серия: джеб — кросс — удар ногой; пауза больше секунды — серия сначала
+        _combo = _combo + 1 if _time - _combo_t < 1.0 else 0
+        _combo_t = _time
+        key = ["punch1", "punch2", "kick"][_combo % 3]
+        if not _anim_map.has(key):
+            key = "punch2" if _combo % 2 == 1 else "punch1"
+        dur = 0.6 if key == "kick" else 0.42
+        _guard_until = _time + 3.0
+        if is_on_floor():   # шаг вперёд вместе с ударом
+            var f := aim_direction()
+            velocity.x += f.x * 2.2
+            velocity.z += f.z * 2.2
+    else:
+        _aim_until = _time + 1.5
     if not _anim_map.has(key):
         return
-    _anim.play(_anim_map[key], 0.08)
-    _anim.speed_scale = 1.6 if melee else 1.4
-    _action_until = _time + (0.45 if melee else 0.3)
+    _anim.play(_anim_map[key], 0.06)
+    _anim.speed_scale = 1.0 if key == "kick" else (1.6 if melee else 1.4)
+    _action_until = _time + dur
 
 
 
@@ -789,3 +1101,54 @@ func _process_seated() -> void:
             input = touch.joy_vector
         if input.length() > 0.3 or Input.is_action_just_pressed("jump"):
             set_seated("")
+
+
+# ---------------------------------------------------------------- головной убор
+
+var _cap: Node3D = null
+var _cap_kind := ""
+var _cap_name := ""
+var _cap_col := Color(0, 0, 0, 0)
+const Hats := preload("res://scripts/hats.gd")
+const Poses := preload("res://scripts/poses.gd")
+
+
+## Головной убор (см. hats.gd): "militia", "kgb", "petushok", "fire_helmet"... или "" — без него.
+## col — цвет для шапок, у которых он свой (петушок, кепка).
+func set_cap(kind: String, col := Color(0, 0, 0, 0)) -> void:
+    var key := kind + col.to_html()
+    if key == _cap_kind and (kind == "" or (_cap != null and is_instance_valid(_cap))):
+        return
+    _cap_kind = key
+    _cap_name = kind
+    _cap_col = col
+    if _cap and is_instance_valid(_cap):
+        _cap.queue_free()
+    _cap = null
+    _set_hair_visible(true)
+    if kind == "" or _model == null or _custom_skin:
+        return
+    var skels := _model.find_children("*", "Skeleton3D", true, false)
+    if skels.is_empty():
+        return
+    var sk := skels[0] as Skeleton3D
+    if sk.find_bone("Head") < 0:
+        return
+    var att := BoneAttachment3D.new()
+    att.bone_name = "Head"
+    sk.add_child(att)
+    _cap = att
+    var hat := Hats.build(kind, col)
+    hat.position = Vector3(0, 0.16, 0.008)   # от кости головы до низа околыша (по модели персонажа)
+    att.add_child(hat)
+    if Hats.covers_hair(kind):
+        _set_hair_visible(false)
+
+
+func _set_hair_visible(on: bool) -> void:
+    if _model == null:
+        return
+    for mi: Node in _model.find_children("*", "MeshInstance3D", true, false):
+        var nm := String(mi.name).to_lower()
+        if nm.contains("hair") and not nm.contains("hairalt"):
+            (mi as MeshInstance3D).visible = on

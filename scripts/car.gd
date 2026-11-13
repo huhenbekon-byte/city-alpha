@@ -14,6 +14,8 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var kind := "car"   # "car", "bus", "truck", "moto"
 ## Готовая 3D-модель из models/cars ("vaz2106", "sedan", "uaz452"...). Пусто — своя модель из кода.
 @export var model_id := ""
+## Мопед «Вятка» (kind = "moto"): свой кузов, маленькие колёса, игрок сидит на нём сам.
+@export var scooter := false
 @export var car_name := "Классика"
 @export var price := 8000
 ## Фракционная раскраска: надпись и полоса по бортам, мигалки на крыше.
@@ -22,6 +24,18 @@ const CarModel := preload("res://scripts/car_model.gd")
 @export var has_lights := false
 @export var light_a := Color(1.0, 0.12, 0.10)
 @export var light_b := Color(0.15, 0.35, 1.0)
+
+## Коробка передач (автомат): верх каждой передачи — доля от макс. скорости, тяга — у низких передач больше.
+const GEAR_TOPS := [0.2, 0.38, 0.58, 0.8, 1.0]
+const GEAR_PULL := [1.25, 1.05, 0.9, 0.76, 0.64]
+const SHIFT_TIME := 0.22
+var gear := 1                  # 1..5, 0 — нейтраль, -1 — задний ход
+var rpm01 := 0.0               # обороты 0..1 (для звука и тахометра)
+var _shift_t := 0.0
+var _prev_vel := Vector3.ZERO
+var _body_base := Transform3D()
+var _body_tilt := Vector2.ZERO  # крен и «клевок» кузова (визуально)
+var shake := 0.0               # тряска камеры после удара (main.gd ставит)
 
 ## Сцепление с дорогой у всех машин (дождь, снег — меньше). Задаёт main.gd.
 static var grip := 1.0
@@ -55,6 +69,10 @@ var _last_pos := Vector3.ZERO
 var _price_label: Label3D
 var _headlight: SpotLight3D
 var _night := false
+var lights_override := -1      # -1 — фары по времени суток, 0 — выключены, 1 — включены
+var locked := false            # двери закрыты на замок
+var hand_on := false           # ручник (для лампы на спидометре)
+var braking := false
 
 ## TouchControls (задаёт main.gd). Пусто — только клавиатура.
 var touch = null
@@ -80,14 +98,17 @@ var _audio: AudioStreamPlayer
 var _playback: AudioStreamGeneratorPlayback
 var _phase := 0.0
 var _filt := 0.0
+var _filt2 := 0.0
+var _sub := 0.0
 var _rpm := 0.0
+var _eng_rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
     center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
     match kind:
         "moto":
-            mass = 260.0
+            mass = 260.0 if not scooter else 180.0
             center_of_mass = Vector3(0, 0.15, 0)
             tank = 15.0
             fuel = minf(fuel, tank)
@@ -112,10 +133,20 @@ func _ready() -> void:
         _setup_model()
     else:
         _body_mi = MeshInstance3D.new()
-        _body_mi.mesh = CarModel.body_mesh(paint, _tail_mat, kind)
+        _body_mi.mesh = CarModel.scooter_mesh(paint, _tail_mat) if scooter else CarModel.body_mesh(paint, _tail_mat, kind)
         add_child(_body_mi)
-        for spot: Array in CarModel.wheel_spots(kind):
-            _add_wheel(spot[0], spot[1])
+        if scooter:
+            # физически 4 колеса рядом (не падает), видно одно узкое спереди и одно сзади
+            for x: float in [0.07, -0.07]:
+                for z: float in [CarModel.SCOOTER_Z, -CarModel.SCOOTER_Z]:
+                    _add_wheel(Vector3(x, CarModel.SCOOTER_R + 0.12, z), z > 0.0, CarModel.scooter_wheel_mesh(z > 0.0) if x > 0.0 else null, CarModel.SCOOTER_R)
+                    if x > 0.0:
+                        _wheel_mis[-1].position.x = -x
+                    else:
+                        _wheel_mis[-1].visible = false
+        else:
+            for spot: Array in CarModel.wheel_spots(kind):
+                _add_wheel(spot[0], spot[1])
 
     _build_livery()
     if kind == "car":
@@ -136,7 +167,7 @@ func _ready() -> void:
             l.rotation.y = 0.0 if sz > 0.0 else PI
             add_child(l)
             _plates.append(l)
-    if kind == "moto":
+    if kind == "moto" and not scooter:
         _build_rider()
     apply_tuning()
     _setup_camera()
@@ -166,7 +197,18 @@ func _ready() -> void:
 
 func set_night(on: bool) -> void:
     _night = on
-    _headlight.visible = on and driven
+    _headlight.visible = lights_on() and driven
+
+
+## Фары: сами включаются ночью, кнопкой на спидометре — вручную.
+func lights_on() -> bool:
+    return _night if lights_override < 0 else lights_override == 1
+
+
+func toggle_lights() -> bool:
+    lights_override = 0 if lights_on() else 1
+    _headlight.visible = lights_on() and driven
+    return lights_on()
 
 
 ## Некупленная машина спрятана и выключена (её «нет в городе»).
@@ -187,7 +229,7 @@ func _add_wheel(pos: Vector3, front: bool, model_wheel: Mesh = null, model_r := 
     w.use_as_steering = front
     # легковые — полный привод (стабильнее на поворотах, не уходит в занос от газа)
     w.use_as_traction = (not front) or kind == "car"
-    var r := model_r if model_wheel != null else CarModel.wheel_radius(kind)
+    var r := model_r if model_r > 0.0 else CarModel.wheel_radius(kind)
     w.wheel_radius = r
     w.wheel_rest_length = 0.12
     w.suspension_travel = 0.16
@@ -200,7 +242,7 @@ func _add_wheel(pos: Vector3, front: bool, model_wheel: Mesh = null, model_r := 
     add_child(w)
     _all_wheels.append(w)
     var mi := MeshInstance3D.new()
-    if model_wheel != null:
+    if model_wheel != null or scooter:
         mi.mesh = model_wheel
         mi.basis = model_basis   # правые колёса — то же колесо, развёрнутое на 180°
     else:
@@ -227,7 +269,7 @@ func set_driven(on: bool) -> void:
         _camera.make_current()
         _audio.play()
         _playback = _audio.get_stream_playback()
-        _headlight.visible = _night
+        _headlight.visible = lights_on()
     else:
         engine_force = 0.0
         steering = 0.0
@@ -306,14 +348,14 @@ func _physics_process(delta: float) -> void:
         if fwd_speed < -1.0:
             brk = brake_force * throttle
         elif kmh < max_speed_kmh * (0.55 if condition < 30.0 else 1.0):
-            eng = max_engine_force * throttle
+            eng = max_engine_force * throttle * _gear_pull(kmh)
     elif throttle < -0.05:
         if fwd_speed > 1.0:
             brk = brake_force * -throttle
         elif kmh < reverse_speed_kmh:
             eng = max_engine_force * 0.6 * throttle  # задний ход
     else:
-        brk = 1.0                      # торможение двигателем
+        brk = 0.3                      # торможение двигателем (мягкое — машина катится)
 
     # Бензин тратится с пройденным расстоянием; пустой бак — мотор не тянет.
     var moved := global_position.distance_to(_last_pos)
@@ -329,6 +371,14 @@ func _physics_process(delta: float) -> void:
         if kmh < 20.0 and absf(steering) > 0.3:
             eng *= 0.7                   # «антипробуксовка» в крутом повороте с места
 
+    # сопротивление воздуха и качению: машина катится и плавно замедляется, а не «упирается» в предел
+    var v := linear_velocity
+    if v.length() > 1.0:
+        var drag := (0.35 if kind == "car" else (0.6 if kind == "moto" else 0.9)) * v.length() + 6.0
+        apply_central_force(-v.normalized() * drag * v.length() * mass * 0.0012)
+    # ABS: на скорости тормоз не блокирует колёса — руль слушается
+    if brk > 2.0 and kmh > 15.0:
+        brk = minf(brk, brake_force * (0.55 + 0.45 * absf(sin(Time.get_ticks_msec() * 0.025))))
     engine_force = eng
     brake = brk
     for w in _all_wheels:
@@ -355,6 +405,9 @@ func _physics_process(delta: float) -> void:
         _stabilize(basis_now, fwd_speed, hand, delta)
 
     _tail_mat.emission_energy_multiplier = 2.5 if (driven and brk > 2.0) else 0.3
+    hand_on = hand
+    braking = driven and brk > 2.0
+    _update_body_tilt(delta, basis_now)
     _update_fx(hand, kmh, throttle, absf(linear_velocity.dot(basis_now.x)))
 
     # Перевернулась — через 1.5 с ставим на колёса.
@@ -393,13 +446,51 @@ func _stabilize(b: Basis, fwd_speed: float, hand: bool, _delta: float) -> void:
     apply_central_force(-up * mass * minf(v * v * 0.004, 6.0))
     # 3. Боковое сцепление: гасим занос (кроме ручника)
     if not hand:
+        # шины держат, пока занос небольшой; сильный занос — сцепление падает, машину «несёт»
         var lat := linear_velocity.dot(side)
-        apply_central_force(-side * lat * mass * 2.2)
+        var k_lat := 2.4 if absf(lat) < 3.5 else lerpf(2.4, 1.1, clampf((absf(lat) - 3.5) / 5.0, 0.0, 1.0))
+        apply_central_force(-side * lat * mass * k_lat * grip)
     # 4. Поворот не быстрее, чем позволяет скорость (не крутится на месте)
     var max_yaw := 0.25 + v * (0.32 if not hand else 0.6)
     var yaw := angular_velocity.dot(up)
     if absf(yaw) > max_yaw:
         angular_velocity -= up * (yaw - signf(yaw) * max_yaw)
+
+
+## Тяга на текущей передаче: автомат переключает по скорости, на переключение — короткий провал тяги.
+func _gear_pull(kmh: float) -> float:
+    var frac := kmh / maxf(max_speed_kmh, 1.0)
+    var g := clampi(gear, 1, GEAR_TOPS.size())
+    # вверх — у верха передачи, вниз — заметно ниже (без «дребезга» на границе)
+    if g < GEAR_TOPS.size() and frac > float(GEAR_TOPS[g - 1]) * 0.97:
+        g += 1
+    elif g > 1 and frac < float(GEAR_TOPS[g - 2]) * 0.8:
+        g -= 1
+    if g != gear and gear > 0:
+        _shift_t = SHIFT_TIME
+    gear = g
+    var lo: float = 0.0 if g == 1 else float(GEAR_TOPS[g - 2]) * 0.8
+    var hi: float = GEAR_TOPS[g - 1]
+    rpm01 = clampf((frac - lo) / maxf(hi - lo, 0.01), 0.0, 1.0)
+    if _shift_t > 0.0:
+        return 0.2
+    # «кривая момента»: внизу передачи чуть слабее, к середине — пик, к отсечке — спад
+    return float(GEAR_PULL[g - 1]) * (0.85 + 0.3 * sin(PI * (0.25 + rpm01 * 0.6)))
+
+
+## Кузов кренится в повороте и «клюёт» при торможении (только картинка, физика не меняется).
+func _update_body_tilt(delta: float, b: Basis) -> void:
+    _shift_t = maxf(0.0, _shift_t - delta)
+    var acc := (linear_velocity - _prev_vel) / maxf(delta, 0.001)
+    _prev_vel = linear_velocity
+    if _body_mi == null or kind == "moto":
+        return
+    if _body_base == Transform3D():
+        _body_base = _body_mi.transform
+    var lat := clampf(acc.dot(b.x) * 0.006, -0.04, 0.04)
+    var lon := clampf(-acc.dot(b.z) * 0.004, -0.035, 0.035)
+    _body_tilt = _body_tilt.lerp(Vector2(lat, lon), 1.0 - exp(-6.0 * delta))
+    _body_mi.transform = _body_base * Transform3D(Basis.from_euler(Vector3(_body_tilt.y, 0, -_body_tilt.x)), Vector3.ZERO)
 
 
 func _put_upright() -> void:
@@ -452,6 +543,9 @@ func _process(delta: float) -> void:
     if _playback:
         _fill_engine_sound()
     _cam_yaw.global_position = global_position + Vector3(0, _cam_h(), 0)
+    if shake > 0.0:   # тряска после удара
+        shake = maxf(0.0, shake - delta * 1.6)
+        _cam_yaw.global_position += Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * shake * 0.25
     _look_timer -= delta
     # Если игрок не крутит камеру — она плавно встаёт за машину.
     if _look_timer <= 0.0 and linear_velocity.length() > 1.0:
@@ -474,22 +568,37 @@ func _setup_audio() -> void:
 func _fill_engine_sound() -> void:
     var kmh := absf(speed_kmh())
     # Имитация передач: обороты растут внутри передачи и падают при «переключении».
-    var in_gear := fmod(kmh, 32.0) / 32.0 if kmh > 3.0 else 0.0
+    var in_gear := rpm01 if kmh > 3.0 else 0.0
     var target := 0.12 + in_gear * 0.75 + (0.12 if absf(engine_force) > 0.0 else 0.0)
+    if _shift_t > 0.0:
+        target *= 0.7
     _rpm = lerpf(_rpm, target, 0.08)
-    var inc := (30.0 + _rpm * 100.0) / MIX_RATE
-    var amp := 0.16 + _rpm * 0.14 + (0.06 if absf(engine_force) > 0.0 else 0.0)
+    # Мотор: вспышки в цилиндрах (импульс с быстрым спадом) → два мягких фильтра.
+    # Высота тона ниже, чем раньше, верх срезан — урчит, а не пищит.
+    var small := kind == "moto" or scooter
+    var fire := (34.0 + _rpm * 120.0) if small else (24.0 + _rpm * 110.0)
+    if kind == "truck" or kind == "bus":
+        fire *= 0.75
+    var eng_load := 1.0 if absf(engine_force) > 0.0 else 0.55
+    var cut := (380.0 + _rpm * 900.0 * eng_load) * (1.15 if small else 1.0)
+    var k := clampf(TAU * cut / MIX_RATE, 0.01, 0.9)
+    var inc := fire / MIX_RATE
+    var amp := (0.22 + _rpm * 0.15) * (0.8 + 0.2 * eng_load)
     var n := _playback.get_frames_available()
     if n <= 0:
         return
     var buf := PackedVector2Array()
     buf.resize(n)
     for i in n:
-        _phase = fmod(_phase + inc, 1.0)
-        var saw := _phase * 2.0 - 1.0
-        var pulse := 1.0 if _phase < 0.3 else -0.45
-        _filt += ((saw * 0.5 + pulse * 0.5) * amp - _filt) * 0.22  # мягкий фильтр
-        buf[i] = Vector2(_filt, _filt)
+        _phase += inc
+        if _phase >= 1.0:
+            _phase -= 1.0
+        var pulse := exp(-_phase * 7.0) * 2.0 - 0.285 + _eng_rng.randf_range(-0.12, 0.12) * eng_load
+        _filt += (pulse - _filt) * k
+        _filt2 += (_filt - _filt2) * k
+        _sub += (sin(_phase * TAU) - _sub) * 0.5
+        var v := (_filt2 * 0.8 + _sub * 0.35) * amp
+        buf[i] = Vector2(v, v)
     _playback.push_buffer(buf)
 
 
@@ -670,6 +779,8 @@ func apply_tuning() -> void:
         custom.roughness = 0.25
         custom.cull_mode = BaseMaterial3D.CULL_DISABLED
     for mi in _wheel_mis:
+        if mi.mesh == null:
+            continue
         for i in mi.mesh.get_surface_count():
             var wm := mi.mesh.surface_get_material(i)
             if wm == rim or (wm and String(wm.resource_name) in ["Rim", "M_Grey"]):
@@ -799,6 +910,8 @@ var _seat_cache: Array = []
 ## Где сидит водитель (таз, в координатах машины) и во сколько уменьшить фигуру,
 ## чтобы голова не торчала из крыши. Только легковые (у мотоцикла свой седок).
 func driver_seat() -> Array:
+    if scooter:
+        return [CarModel.SCOOTER_SEAT, 1.0]
     if kind != "car" or _body_mi == null or _body_mi.mesh == null:
         return []
     if not _seat_cache.is_empty():

@@ -20,6 +20,7 @@ const APPS := [
     ["taxi", "Такси", "car", Color(0.95, 0.75, 0.1)],
     ["car", "Моя машина", "key", Color(0.35, 0.38, 0.45)],
     ["biz", "Бизнес", "money", Color(0.6, 0.45, 0.1)],
+    ["emote", "Жесты", "people", Color(0.55, 0.3, 0.6)],
     ["menu", "Меню", "gear", Color(0.3, 0.3, 0.33)],
 ]
 const MinimapScript := preload("res://scripts/minimap.gd")
@@ -119,6 +120,7 @@ func set_vitals(health: float, hunger: float) -> void:
         _health = h
         _hunger = f
         queue_redraw()
+        minimap.health = clampf(health / 100.0, 0.0, 1.0)
 
 
 ## Значок погоды у часов: "sun", "cloud", "rain", "snow".
@@ -281,6 +283,11 @@ func _build_chat() -> void:
     _chat_panel.add_child(close)
 
 
+## Кнопка с микрофоном: открыть / закрыть историю чата.
+func toggle_chat_history() -> void:
+    _toggle_chat_history()
+
+
 func _toggle_chat_history() -> void:
     _chat_panel.visible = not _chat_panel.visible
     if _chat_panel.visible:
@@ -344,8 +351,8 @@ func _build_phone() -> void:
     _phone.anchor_right = 0.5
     _phone.anchor_top = 0.5
     _phone.anchor_bottom = 0.5
-    _phone.offset_left = -190.0
-    _phone.offset_right = 190.0
+    _phone.offset_left = -232.0
+    _phone.offset_right = 232.0
     _phone.offset_top = -350.0
     _phone.offset_bottom = 350.0
 
@@ -367,13 +374,13 @@ func _build_phone() -> void:
     box.add_child(spacer)
 
     var grid := GridContainer.new()
-    grid.columns = 3
-    grid.add_theme_constant_override("h_separation", 10)
+    grid.columns = 4
+    grid.add_theme_constant_override("h_separation", 8)
     grid.add_theme_constant_override("v_separation", 10)
     box.add_child(grid)
     for app: Array in APPS:
         var b := Button.new()
-        b.custom_minimum_size = Vector2(102, 96)
+        b.custom_minimum_size = Vector2(96, 96)
         b.focus_mode = Control.FOCUS_NONE
         b.flat = true
         b.draw.connect(_draw_app.bind(b, app))
@@ -387,7 +394,7 @@ func _build_phone() -> void:
 
 func _draw_app(b: Button, app: Array) -> void:
     var col: Color = app[3]
-    var r := Rect2(Vector2(19, 2), Vector2(64, 64))
+    var r := Rect2(Vector2((b.size.x - 64.0) * 0.5, 2), Vector2(64, 64))
     Icons.panel(b, r, col.darkened(0.25) if b.is_pressed() else col, 16)
     Icons.draw(b, String(app[2]), r.get_center(), 40, Color.WHITE)
     var font := ThemeDB.fallback_font
@@ -395,9 +402,9 @@ func _draw_app(b: Button, app: Array) -> void:
     var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
     b.draw_string(font, Vector2((b.size.x - w) * 0.5, 88), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
     if String(app[0]) == "sms" and _sms_badge > 0:
-        b.draw_circle(Vector2(82, 6), 11, Color(0.9, 0.15, 0.15))
+        b.draw_circle(Vector2(r.end.x, 6), 11, Color(0.9, 0.15, 0.15))
         var n := str(mini(_sms_badge, 9))
-        b.draw_string(font, Vector2(77, 12), n, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+        b.draw_string(font, Vector2(r.end.x - 5, 12), n, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
 
 
 func _on_app(id: String) -> void:
