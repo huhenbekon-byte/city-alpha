@@ -1129,9 +1129,9 @@ func _define_batches() -> void:
     _batch("bush", _sphere_mesh(0.7, 1.0), _nature("foliage_bush", Color.WHITE, 1.2, true), 80.0)
     # Готовые модели: остановочный павильон и бензоколонка (models/props)
     for pk: String in ["bus_stop", "gas_station", "militia"]:
-        var pm := _nature_mesh(pk, "props")
-        if pm:
-            _batch("pr_" + pk, pm, null, 180.0, true)
+        var prm := _nature_mesh(pk, "props")
+        if prm:
+            _batch("pr_" + pk, prm, null, 180.0, true)
             _props_ok[pk] = true
     for hk: String in ["lg_section", "lg_tower", "lg_five"]:
         var hm := _nature_mesh(hk, "houses")
