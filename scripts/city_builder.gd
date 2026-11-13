@@ -307,9 +307,15 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
         if (pyat and (style == "brick" or hh % 2 == 0)) or (not pyat and style == "brick" and hh % 3 == 0):
             mat = _stalin_mats[hh % _stalin_mats.size()]
 
-    _solid(Vector3(sx, h, sz), base + Vector3(0, h * 0.5, 0), mat)
+    # Панельки и высотки — готовые модели серии 1ЛГ-600А (models/houses), если есть.
+    var use_model := not _stalin_mats.has(mat) and _house_model(base, sx, sz, h, floors, style)
+    if use_model:
+        _collider(Vector3(sx, h, sz), base + Vector3(0, h * 0.5, 0))
+    else:
+        _solid(Vector3(sx, h, sz), base + Vector3(0, h * 0.5, 0), mat)
     _deco(Vector3(sx + 0.2, 0.7, sz + 0.2), base + Vector3(0, 0.35, 0), _m["plinth"])
-    _deco(Vector3(sx + 0.3, 0.45, sz + 0.3), base + Vector3(0, h + 0.2, 0), _m["roof"])
+    if not use_model:
+        _deco(Vector3(sx + 0.3, 0.45, sz + 0.3), base + Vector3(0, h + 0.2, 0), _m["roof"])
     _occupy(base, sx, sz)
     building_rects.append(Rect2(base.x - sx * 0.5, base.z - sz * 0.5, sx, sz))
     for wn: Vector3 in [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)]:
@@ -339,7 +345,9 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
             for f: int in range(1, floors):
                 var y := f * FLOOR_H + 0.52
                 var pos := Vector3(u, y, base.z + n.z * out) if facade_x else Vector3(base.x + n.x * out, y, u)
-                _balcony(pos, n, rng.randf())
+                var br := rng.randf()   # rng тратим всегда — чтобы планировка города не менялась
+                if not use_model:       # у моделей свои балконы и лоджии
+                    _balcony(pos, n, br)
 
     # Лозунг на крыше: красные буквы на металлической раме (у части высоких домов)
     if floors >= 9 and int(absf(base.x * 3.0 + base.z * 5.0)) % 4 == 1:
@@ -364,7 +372,7 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
         add_child(sl)
 
     # Советская мозаика на глухом торце (у каждого третьего высокого панельного дома)
-    if style == "panel" and floors >= 9 and int(absf(base.x * 7.0 + base.z * 13.0)) % 3 == 0:
+    if style == "panel" and not use_model and floors >= 9 and int(absf(base.x * 7.0 + base.z * 13.0)) % 3 == 0:
         var en := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
         if int(absf(base.x + base.z)) % 2 == 0:
             en = -en
@@ -401,6 +409,30 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
         if e == 0:   # одна квартира на продажу в каждом доме — у первого подъезда
             var price := 35000 if style == "brick" else (75000 if style == "tower" else (60000 if floors >= 12 else 50000))
             _add_home(p + entrance * 1.7 + Vector3(0, SIDE_H, 0), p + entrance * 0.9 + Vector3(0, 3.3, 0), "flat", price)
+
+
+## Готовая модель панельки: высотка — целиком, длинный дом — из секций по ~28 м, 5-этажка — целиком.
+## Модель растягивается точно под размер дома (коллизия и подъезды остаются прежними).
+func _house_model(base: Vector3, sx: float, sz: float, h: float, floors: int, style: String) -> bool:
+    var along_x := sx >= sz
+    var flen := sx if along_x else sz
+    var fdep := sz if along_x else sx
+    var yaw := 0.0 if along_x else PI * 0.5
+    var axis := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
+    if style == "tower" and _props_ok.has("lg_tower"):
+        _put("hs_lg_tower", base, yaw, Color.WHITE, Vector3(flen / 18.71, h / 45.83, fdep / 17.88))
+        return true
+    if style == "panel" and floors >= 9 and _props_ok.has("lg_section"):
+        var n := maxi(1, roundi(flen / 28.08))
+        var seg := flen / n
+        for i in n:
+            var c := base + axis * (-flen * 0.5 + seg * (i + 0.5))
+            _put("hs_lg_section", c, yaw, Color.WHITE, Vector3(seg / 28.08, h / 29.63, fdep / 11.88))
+        return true
+    if style == "panel" and floors <= 6 and _props_ok.has("lg_five"):
+        _put("hs_lg_five", base, yaw, Color.WHITE, Vector3(flen / 49.68, h / 13.2, fdep / 11.88))
+        return true
+    return false
 
 
 func _shop(center: Vector3, length: float, depth: float, front: Vector3, text: String) -> void:
@@ -463,11 +495,21 @@ func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color, is_pickup := 
 func _bus_stop(p: Vector3, facing: Vector3) -> void:
     var yaw := atan2(facing.x, facing.z)
     var b := Basis(Vector3.UP, yaw)
-    _deco(Vector3(4.2, 0.12, 1.9), p + b * Vector3(0, 2.6, 0.1), _m["blue"], yaw)
-    _solid(Vector3(4.0, 2.4, 0.06), p + b * Vector3(0, 1.3, -0.75), _m["glass"], yaw)
-    for sx: float in [-2.0, 2.0]:
-        _solid(Vector3(0.06, 2.4, 1.4), p + b * Vector3(sx, 1.3, -0.1), _m["glass"], yaw)
-    _bench(p + b * Vector3(0, 0, -0.4), facing)
+    if _props_ok.has("bus_stop"):
+        # готовая модель советского павильона: стенки, крыша, лавка и обрывки афиш
+        var ground := Vector3(p.x, SIDE_H, p.z)
+        _put("pr_bus_stop", ground, yaw)
+        _collider(Vector3(3.6, 2.4, 0.12), ground + b * Vector3(0, 1.2, -0.84), yaw)
+        for sx: float in [-1.78, 1.78]:
+            _collider(Vector3(0.1, 2.4, 1.7), ground + b * Vector3(sx, 1.2, 0.0), yaw)
+        _collider(Vector3(3.0, 0.47, 0.38), ground + b * Vector3(0, 0.235, -0.53), yaw)
+        benches.append([ground + b * Vector3(0, 0, -0.5), facing.normalized()])
+    else:
+        _deco(Vector3(4.2, 0.12, 1.9), p + b * Vector3(0, 2.6, 0.1), _m["blue"], yaw)
+        _solid(Vector3(4.0, 2.4, 0.06), p + b * Vector3(0, 1.3, -0.75), _m["glass"], yaw)
+        for sx: float in [-2.0, 2.0]:
+            _solid(Vector3(0.06, 2.4, 1.4), p + b * Vector3(sx, 1.3, -0.1), _m["glass"], yaw)
+        _bench(p + b * Vector3(0, 0, -0.4), facing)
     _soda(p + b * Vector3(3.1, 0, -0.3), facing)
     _solid(Vector3(0.08, 2.8, 0.08), p + b * Vector3(2.7, 1.4, 0.8), _m["metal"], yaw)
     if _signs_ok:
@@ -567,12 +609,13 @@ func _nature(tex_name: String, fallback: Color, meters: float, vc: bool) -> Stan
 var _has_foliage_tex := false
 
 
+var _props_ok := {}      # какие готовые модели есть: "bus_stop", "gas_station", "militia"
 var _nature_keys := {}   # "birch" -> ["nt_birch1", ...]
 
 
 ## Меш готового дерева из models/nature (null — модели нет, тогда дерево из кода).
-func _nature_mesh(model: String) -> Mesh:
-    var path := "res://models/nature/%s.gltf" % model
+func _nature_mesh(model: String, folder := "nature") -> Mesh:
+    var path := "res://models/%s/%s.gltf" % [folder, model]
     if not ResourceLoader.exists(path):
         return null
     var ps = load(path)
@@ -1084,6 +1127,19 @@ func _define_batches() -> void:
     _batch("crown", _sphere_mesh(2.0, 3.4), _nature("foliage_tree", Color.WHITE, 2.5, true), 200.0, true)
     _batch("birch_crown", _sphere_mesh(1.3, 4.0), _nature("foliage_birch", Color.WHITE, 2.0, true), 200.0, true)
     _batch("bush", _sphere_mesh(0.7, 1.0), _nature("foliage_bush", Color.WHITE, 1.2, true), 80.0)
+    # Готовые модели: остановочный павильон и бензоколонка (models/props)
+    for pk: String in ["bus_stop", "gas_station", "militia"]:
+        var pm := _nature_mesh(pk, "props")
+        if pm:
+            _batch("pr_" + pk, pm, null, 180.0, true)
+            _props_ok[pk] = true
+    for hk: String in ["lg_section", "lg_tower", "lg_five"]:
+        var hm := _nature_mesh(hk, "houses")
+        if hm:
+            _batch("hs_" + hk, hm, null, 900.0, true)
+            _props_ok[hk] = true
+            if hm.get_surface_count() > 0 and hm.surface_get_material(0) is StandardMaterial3D:
+                _m["house_" + hk] = hm.surface_get_material(0)   # темнеет ночью вместе с городом
     # Готовые деревья Quaternius (models/nature): по 3 варианта берёзы, лиственного дерева и ели
     for kind: String in ["birch", "tree", "pine", "bush"]:
         var found: Array[String] = []
@@ -1432,6 +1488,10 @@ func _gas_station(c: Vector3, along_x: bool) -> void:
     var perp := Vector3(-axis.z, 0, axis.x)
     var y := c.y
     _flat(c, Vector2(30, 24) if along_x else Vector2(24, 30), _m["yard_asphalt"], y + 0.012)
+    if _props_ok.has("gas_station"):
+        _gas_station_model(c, along_x)
+        _occupy(c, 30.0, 30.0)
+        return
     var red := _mat(Color(0.80, 0.12, 0.10), 0.5)
     var csz := Vector3(14.1, 0.75, 9.1) if along_x else Vector3(9.1, 0.75, 14.1)
     _deco(csz, Vector3(c.x, y + 5.12, c.z), _fit_mat("canopy_band", csz, Color(0.92, 0.92, 0.92)))
@@ -1441,7 +1501,8 @@ func _gas_station(c: Vector3, along_x: bool) -> void:
             _solid(Vector3(0.35, 5.0, 0.35), Vector3(post.x, y + 2.5, post.z), _m["white"])
     for k: float in [-3.0, 3.0]:
         var pump := c + axis * k
-        _solid(Vector3(0.8, 1.6, 0.6), Vector3(pump.x, y + 0.8, pump.z), _fit_mat("fuel_pump", Vector3(0.8, 1.6, 0.6), Color(0.8, 0.12, 0.1)), 0.0 if along_x else PI * 0.5)
+        var pyaw := 0.0 if along_x else PI * 0.5
+        _solid(Vector3(0.8, 1.6, 0.6), Vector3(pump.x, y + 0.8, pump.z), _fit_mat("fuel_pump", Vector3(0.8, 1.6, 0.6), Color(0.8, 0.12, 0.1)), pyaw)
         fuel_pumps.append(Vector3(pump.x, y, pump.z))
     for s: float in [-1.0, 1.0]:
         _label("АЗС", Vector3(c.x, y + 5.2, c.z) + perp * (4.62 * s), perp * s, 120, Color(0.85, 0.1, 0.1))
@@ -1451,6 +1512,26 @@ func _gas_station(c: Vector3, along_x: bool) -> void:
     _label("МАГАЗИН", Vector3(shop.x, y + 2.8, shop.z) + perp * (2.56 if along_x else 2.56), perp, 48, Color(0.2, 0.2, 0.2))
     building_rects.append(Rect2(shop.x - 4.0, shop.z - 4.0, 8.0, 8.0))
     _occupy(c, 30.0, 30.0)
+
+
+## Готовая советская АЗС целиком (models/props/gas_station): навес на 6 столбах, три островка,
+## колонки и будка «БЕНЗИН». Машины заезжают между островками вдоль дороги.
+func _gas_station_model(c: Vector3, along_x: bool) -> void:
+    var yaw := 0.0 if along_x else PI * 0.5   # островки модели идут вдоль её оси x
+    var b := Basis(Vector3.UP, yaw)
+    var g := Vector3(c.x, c.y, c.z)
+    _put("pr_gas_station", g, yaw)
+    for px: float in [-3.6, 3.45]:
+        for pz: float in [-3.55, 3.47, 10.92]:
+            _collider(Vector3(0.45, 5.0, 0.45), g + b * Vector3(px, 2.6, pz), yaw)
+    for pump: Vector3 in [Vector3(1.61, 0, 3.58), Vector3(-1.73, 0, 10.95)]:
+        _collider(Vector3(1.0, 2.1, 0.9), g + b * (pump + Vector3(0, 1.05, 0)), yaw)
+        fuel_pumps.append(g + b * pump)
+    # будка: вход и вывеска со стороны -x модели
+    var kiosk := g + b * Vector3(-0.17, 0, -9.77)
+    _collider(Vector3(3.45, 3.5, 5.0), kiosk + Vector3(0, 1.75, 0), yaw)
+    gas_shops.append(g + b * Vector3(-2.9, 0, -9.8))
+    building_rects.append(Rect2(kiosk.x - 2.6, kiosk.z - 2.6, 5.2, 5.2))
 
 
 ## За городом: две АЗС на трассах, лес с лесопилкой, точки для дальнобоя.
@@ -1695,6 +1776,13 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
         gd.metallic = 0.3
         gdoor = gd
     _deco(Vector3(2.8, 2.9, 0.1), _fp(0, -3.98) + Vector3(0, 1.5, 0), gdoor, yaw)
+    if fk == "police" and _props_ok.has("militia"):
+        # постовые милиционеры со свистком у входа
+        for sx: float in [-3.2, 3.2]:
+            var gp := _fp(sx, -2.4)
+            gp.y = SIDE_H
+            _put("pr_militia", gp, atan2(_ff.x, _ff.z))
+            _collider(Vector3(0.6, 1.8, 0.5), gp + Vector3(0, 0.9, 0))
     _deco(Vector3(3.1, 0.15, 0.14), _fp(0, -3.95) + Vector3(0, 3.0, 0), _m["metal"], yaw)
     _deco(Vector3(16.0, 1.5, 0.15), _fp(0, -3.95) + Vector3(0, 5.0, 0), _m["sign"], yaw)
     var title: String = f["title"]

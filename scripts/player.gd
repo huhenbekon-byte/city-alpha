@@ -81,6 +81,7 @@ func _ready() -> void:
     add_child(_visual)
     if model_scene == null and ResourceLoader.exists(CHARACTER_PATH):
         model_scene = load(CHARACTER_PATH)
+        _skin_path = CHARACTER_PATH
     if model_scene:
         _setup_model()
     else:
@@ -328,7 +329,8 @@ func _setup_model() -> void:
         push_warning("В модели нет AnimationPlayer — анимаций не будет.")
         return
     _anim = players[0] as AnimationPlayer
-    _setup_character_look(m)
+    if not _custom_skin:
+        _setup_character_look(m)
     for key: String in ANIM_NAMES:
         var want_name := String(ANIM_NAMES[key])
         if _anim.has_animation(want_name):
@@ -350,6 +352,38 @@ func _setup_model() -> void:
     for key in ["idle", "walk", "run", "jog", "jump", "drive", "sit"]:
         if _anim_map.has(key):
             _anim.get_animation(_anim_map[key]).loop_mode = Animation.LOOP_LINEAR
+
+
+## Сменить персонажа (скин фракции): path — .gltf со скелетом и анимациями как у основного,
+## "" — обычный персонаж. Возвращает true, если модель поменялась (оружие надо выдать заново).
+var _skin_path := ""
+var _custom_skin := false
+
+
+func set_skin(path: String) -> bool:
+    var want := path if path != "" and ResourceLoader.exists(path) else CHARACTER_PATH
+    if want == _skin_path or not ResourceLoader.exists(want):
+        return false
+    var ps = load(want)
+    if not (ps is PackedScene):
+        return false
+    _skin_path = want
+    if _gun:
+        _gun.queue_free()
+        _gun = null
+    _gun_holder = null
+    armed = false
+    if _model:
+        _model.queue_free()
+    _model = null
+    _anim = null
+    _anim_map.clear()
+    _body_sh = null
+    _hair_mat = null
+    model_scene = ps
+    _custom_skin = want != CHARACTER_PATH
+    _setup_model()
+    return true
 
 
 func _animate_model() -> void:

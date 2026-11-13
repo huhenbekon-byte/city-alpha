@@ -20,6 +20,7 @@ const DialogScript := preload("res://scripts/dialog.gd")
 const WorkScript := preload("res://scripts/work.gd")
 const FactionData := preload("res://scripts/faction_data.gd")
 const FactionMenuScript := preload("res://scripts/faction_menu.gd")
+const StartScreenScript := preload("res://scripts/start_screen.gd")
 const DutyScript := preload("res://scripts/duty.gd")
 const CarScript := preload("res://scripts/car.gd")
 
@@ -28,6 +29,8 @@ const SAVE_PATH := "user://save.cfg"
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
 ## Машины на Общем рынке: название, цена, цвет, макс. скорость, мощность.
+## Свой персонаж для ОПГ «Тяп-Ляп» (те же анимации, перенесены на его скелет).
+const TYAP_SKIN := "res://models/character/tyap.gltf"
 const CAR_MODELS := [
     {"name": "Шестёрка", "price": 8000, "color": Color(0.92, 0.92, 0.90), "speed": 110.0, "force": 4300.0, "model": "vaz2106"},
     {"name": "Комфорт", "price": 15000, "color": Color(0.15, 0.22, 0.45), "speed": 125.0, "force": 5000.0, "model": "sedan"},
@@ -35,6 +38,10 @@ const CAR_MODELS := [
     {"name": "Люкс", "price": 45000, "color": Color(0.10, 0.10, 0.11), "speed": 175.0, "force": 7400.0, "model": "coupe"},
     {"name": "Мотоцикл", "price": 12000, "color": Color(0.75, 0.10, 0.10), "speed": 150.0, "force": 1500.0, "kind": "moto"},
     {"name": "Внедорожник", "price": 60000, "color": Color(0.12, 0.14, 0.12), "speed": 165.0, "force": 8200.0, "model": "suv"},
+    # новые — только в конец: сохранения хранят машины по номеру в списке
+    {"name": "Нива", "price": 22000, "color": Color(0.82, 0.78, 0.62), "speed": 130.0, "force": 6200.0, "model": "niva"},
+    {"name": "Волга ГАЗ-3102", "price": 38000, "color": Color(0.85, 0.85, 0.83), "speed": 160.0, "force": 7000.0, "model": "volga"},
+    {"name": "УАЗ «Аварийка» 04", "price": 26000, "color": Color(0.95, 0.80, 0.25), "speed": 110.0, "force": 6000.0, "model": "uaz_gas"},
 ]
 ## Тюнинг на СТО
 const PAINTS := [["Белый", Color(0.92, 0.92, 0.90)], ["Чёрный", Color(0.06, 0.06, 0.07)], ["Красный", Color(0.65, 0.06, 0.08)],
@@ -260,39 +267,43 @@ var _light_timer := 0.0
 var _save_timer := 0.0
 
 
-## Сначала показываем экран загрузки, потом строим город (это занимает пару секунд).
+## Стартовый экран: меню → выбор сервера → загрузка. Город строится после выбора сервера,
+## потом сразу начинается игра (без второго меню).
+var _start: StartScreenScript
+
+
 func _ready() -> void:
     set_process(false)
-    var load_layer := CanvasLayer.new()
-    load_layer.layer = 30
-    add_child(load_layer)
-    var bg := ColorRect.new()
-    bg.color = Color(0.02, 0.02, 0.03)
-    load_layer.add_child(bg)
-    bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    if ResourceLoader.exists("res://textures/loading.jpg"):
-        var pic := TextureRect.new()
-        pic.texture = load("res://textures/loading.jpg")
-        pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-        pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-        load_layer.add_child(pic)
-        pic.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    var lbl := Label.new()
-    lbl.text = "Загрузка города..."
-    var ls := LabelSettings.new()
-    ls.font_size = 34
-    ls.outline_size = 10
-    ls.outline_color = Color(0, 0, 0, 0.8)
-    lbl.label_settings = ls
-    load_layer.add_child(lbl)
-    lbl.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-    lbl.position.y -= 90.0
-    lbl.position.x -= 150.0
+    var layer := CanvasLayer.new()
+    layer.layer = 30
+    add_child(layer)
+    _start = StartScreenScript.new()
+    layer.add_child(_start)
+    _start.server_chosen.connect(_on_server_chosen.bind(layer))
+    Music.volume = _start_music_volume()
+    Music.play_menu()
+
+
+func _start_music_volume() -> float:
+    var cfg := ConfigFile.new()
+    var steps := [0.0, 0.25, 0.5, 0.75, 1.0]
+    var idx := 2
+    if cfg.load("user://settings.cfg") == OK:
+        idx = int(cfg.get_value("settings", "music", 2))
+    return float(steps[clampi(idx, 0, steps.size() - 1)])
+
+
+func _on_server_chosen(_index: int, layer: CanvasLayer) -> void:
+    await _start.progress(35.0, "Подключение к серверу...", 0.7)
+    await _start.progress(45.0, "Загрузка города...", 0.2)
     await get_tree().process_frame
     await get_tree().process_frame
     _setup()
-    load_layer.queue_free()
+    await _start.progress(100.0, "Добро пожаловать!", 0.4)
+    layer.queue_free()
+    _start = null
     set_process(true)
+    _on_play()
 
 
 func _setup() -> void:
@@ -333,7 +344,6 @@ func _setup() -> void:
     _hud.chat("Добро пожаловать в City Alpha! Коснись чата, чтобы открыть историю сообщений.", "info")
     if faction != "":
         _hud.chat("Ты во фракции «%s», ранг: %s." % [_faction_name(), FactionData.rank_name(faction_rank, faction)], "faction")
-    _open_menu()
 
 
 func _process(delta: float) -> void:
@@ -1095,7 +1105,7 @@ func _closer_to_focus(a: Vector3, b: Vector3) -> bool:
 
 ## Стоянка у рынка: сюда доставляют купленные машины.
 func _car_spawn(i: int) -> Transform3D:
-    var xs := [-16.0, -10.0, 10.0, 16.0, -4.0, 4.0]
+    var xs := [-16.0, -10.0, 10.0, 16.0, -4.0, 4.0, -22.0, 22.0, -28.0]
     return Transform3D(Basis(), Vector3(xs[i % xs.size()], 0.6, 20.0))
 
 
@@ -4012,6 +4022,12 @@ func _apply_look() -> void:
     if _player == null:
         return
     _last_uniform = _uniform_key()
+    # ОПГ «Тяп-Ляп» — свой персонаж (мужчина в пальто и кепке), у остальных — обычный
+    var skin := TYAP_SKIN if FactionData.base(faction) == "tyap" else ""
+    if _player.set_skin(skin):
+        _equip_weapon()
+    if skin != "":
+        return
     var u := {} if _last_uniform == "" else FactionData.uniform(faction, faction_rank)
     if u.is_empty():
         _player.set_look(Clothes.colors(look), Clothes.textures(look))

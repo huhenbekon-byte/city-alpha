@@ -426,6 +426,10 @@ const MODELS := {
     "taxi": "res://models/cars/taxi.gltf",
     "cop": "res://models/cars/cop.gltf",
     "uaz452": "res://models/cars/uaz452.gltf",     # УАЗ-452 «буханка» (OpenGameArt)
+    "vaz2101_mil": "res://models/cars/vaz2101_mil.gltf",   # ВАЗ-2101 «Милиция» (раскраска в модели)
+    "niva": "res://models/cars/niva.gltf",         # ВАЗ-2121 «Нива»
+    "volga": "res://models/cars/volga.gltf",       # ГАЗ-3102 «Волга»
+    "uaz_gas": "res://models/cars/uaz_gas.gltf",   # УАЗ-452 «Аварийная газовая служба 04»
 }
 
 static var _model_scenes := {}
