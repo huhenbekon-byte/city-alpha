@@ -1244,6 +1244,9 @@ func _spawn_player() -> void:
     _player = PlayerScene.instantiate()
     _player.position = _spawn_pos()   # после входа в игру — всегда на вокзале
     add_child(_player)
+    _player.touch = _touch            # джойстик на телефоне управляет игроком
+    _apply_look()
+    _player.stepped.connect(_on_step)  # звук шагов
     _player.set_camera_yaw(0.0)
     var peter = NpcScript.new()
     peter.position = _city.peter_pos
@@ -1256,10 +1259,6 @@ func _spawn_player() -> void:
 ## Где появляется игрок: площадь у вокзала.
 func _spawn_pos() -> Vector3:
     return _city.station_spawn if _city != null else PLAYER_SPAWN
-    _player.touch = _touch
-    _apply_look()
-    _player.stepped.connect(_on_step)
-    _player.set_camera_yaw(float(_loaded.get("player_yaw", PI)))
     _equip_weapon.call_deferred()
 
 
