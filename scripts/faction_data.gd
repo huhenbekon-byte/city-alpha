@@ -22,14 +22,18 @@ const LIST := [
         "wall": Color(0.90, 0.84, 0.72), "vehicles": [
             {"name": "Служебная", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 1, "speed": 140.0, "force": 5600.0, "model": "vaz2106"},
             {"name": "Автобус мэрии", "kind": "bus", "paint": Color(0.92, 0.92, 0.90), "livery": "МЭРИЯ", "livery_col": Color(0.15, 0.25, 0.55), "rank": 2, "speed": 90.0, "force": 18000.0},
+            {"name": "«Волга» мэрии", "kind": "car", "paint": Color(0.05, 0.05, 0.06), "rank": 3, "speed": 165.0, "force": 7200.0, "model": "volga"},
             {"name": "Представительская", "kind": "car", "paint": Color(0.10, 0.14, 0.28), "rank": 5, "speed": 170.0, "force": 7400.0, "model": "suv"},
         ]},
     {"id": "police", "emblem": "police", "city": "kazan", "name": "Главная милиция", "title": "ГЛАВНАЯ МИЛИЦИЯ", "color": Color(0.20, 0.35, 0.75),
         "wall": Color(0.70, 0.76, 0.84), "vehicles": [
-            {"name": "ППС", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "livery": "МИЛИЦИЯ", "livery_col": Color(0.10, 0.22, 0.65), "lights": true, "rank": 1, "speed": 150.0, "force": 6000.0, "model": "vaz2106"},
-            {"name": "ДПС", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "ДПС", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 2, "speed": 170.0, "force": 7000.0, "model": "cop"},
+            {"name": "ППС «Копейка»", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "lights": true, "rank": 1, "speed": 140.0, "force": 5600.0, "model": "vaz2101_mil"},
+            {"name": "ППС «Нива»", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "livery": "МИЛИЦИЯ", "livery_col": Color(0.10, 0.22, 0.65), "lights": true, "rank": 2, "speed": 135.0, "force": 6400.0, "model": "niva"},
+            {"name": "ДПС", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "ДПС", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 3, "speed": 170.0, "force": 7000.0, "model": "cop"},
             {"name": "Автозак", "kind": "truck", "paint": Color(0.40, 0.45, 0.55), "livery": "МИЛИЦИЯ", "livery_col": Color(0.95, 0.95, 0.95), "lights": true, "rank": 3, "speed": 100.0, "force": 22000.0},
-            {"name": "Начальник отдела", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 5, "speed": 170.0, "force": 7400.0, "model": "sedan"},
+            {"name": "Оперативный УАЗ", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "livery": "МИЛИЦИЯ", "livery_col": Color(0.10, 0.22, 0.65), "lights": true, "rank": 4, "speed": 115.0, "force": 5200.0, "model": "uaz452"},
+            {"name": "Волга ГАИ", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "МИЛИЦИЯ", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 5, "speed": 165.0, "force": 7200.0, "model": "volga"},
+            {"name": "Волга начальника", "kind": "car", "paint": Color(0.05, 0.05, 0.06), "rank": 6, "speed": 170.0, "force": 7600.0, "model": "volga"},
         ]},
     {"id": "hospital", "emblem": "hospital", "city": "kazan", "name": "Главная больница", "title": "ГЛАВНАЯ БОЛЬНИЦА", "color": Color(0.85, 0.15, 0.15),
         "wall": Color(0.86, 0.93, 0.90), "vehicles": [
@@ -46,6 +50,7 @@ const LIST := [
         "wall": Color(0.48, 0.40, 0.32), "vehicles": [
             {"name": "Оперативная", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 1, "speed": 160.0, "force": 6400.0, "model": "vaz2106"},
             {"name": "Наружка", "kind": "car", "paint": Color(0.35, 0.37, 0.38), "rank": 2, "speed": 160.0, "force": 6400.0, "model": "sedan"},
+            {"name": "Чёрная «Волга»", "kind": "car", "paint": Color(0.04, 0.04, 0.05), "rank": 3, "speed": 170.0, "force": 7400.0, "model": "volga"},
             {"name": "Спецгруппа", "kind": "bus", "paint": Color(0.18, 0.20, 0.22), "rank": 4, "speed": 95.0, "force": 19000.0},
             {"name": "Руководство", "kind": "car", "paint": Color(0.06, 0.06, 0.07), "rank": 5, "speed": 180.0, "force": 7800.0, "model": "suv"},
         ]},
@@ -79,9 +84,13 @@ const LIST := [
         ]},
     {"id": "police_p", "base": "police", "emblem": "police", "city": "pyat", "name": "Милиция Пятигорска", "title": "МИЛИЦИЯ ПЯТИГОРСКА",
         "color": Color(0.25, 0.45, 0.85), "wall": Color(0.74, 0.78, 0.84), "vehicles": [
-            {"name": "ППС", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "livery": "МИЛИЦИЯ", "livery_col": Color(0.10, 0.22, 0.65), "lights": true, "rank": 1, "speed": 150.0, "force": 6000.0, "model": "vaz2106"},
-            {"name": "ДПС", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "ДПС", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 2, "speed": 170.0, "force": 7000.0, "model": "cop"},
-            {"name": "Начальник отдела", "kind": "car", "paint": Color(0.08, 0.08, 0.09), "rank": 5, "speed": 170.0, "force": 7400.0, "model": "sedan"},
+            {"name": "ППС «Копейка»", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "lights": true, "rank": 1, "speed": 140.0, "force": 5600.0, "model": "vaz2101_mil"},
+            {"name": "ППС «Нива»", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "livery": "МИЛИЦИЯ", "livery_col": Color(0.10, 0.22, 0.65), "lights": true, "rank": 2, "speed": 135.0, "force": 6400.0, "model": "niva"},
+            {"name": "ДПС", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "ДПС", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 3, "speed": 170.0, "force": 7000.0, "model": "cop"},
+            {"name": "Автозак", "kind": "truck", "paint": Color(0.40, 0.45, 0.55), "livery": "МИЛИЦИЯ", "livery_col": Color(0.95, 0.95, 0.95), "lights": true, "rank": 3, "speed": 100.0, "force": 22000.0},
+            {"name": "Оперативный УАЗ", "kind": "car", "paint": Color(0.95, 0.78, 0.12), "livery": "МИЛИЦИЯ", "livery_col": Color(0.10, 0.22, 0.65), "lights": true, "rank": 4, "speed": 115.0, "force": 5200.0, "model": "uaz452"},
+            {"name": "Волга ГАИ", "kind": "car", "paint": Color(0.93, 0.93, 0.92), "livery": "МИЛИЦИЯ", "livery_col": Color(0.15, 0.30, 0.70), "lights": true, "rank": 5, "speed": 165.0, "force": 7200.0, "model": "volga"},
+            {"name": "Волга начальника", "kind": "car", "paint": Color(0.05, 0.05, 0.06), "rank": 6, "speed": 170.0, "force": 7600.0, "model": "volga"},
         ]},
     {"id": "hospital_p", "base": "hospital", "emblem": "hospital", "city": "pyat", "name": "Больница Пятигорска", "title": "БОЛЬНИЦА ПЯТИГОРСКА",
         "color": Color(0.85, 0.20, 0.20), "wall": Color(0.88, 0.92, 0.86), "vehicles": [

@@ -6,6 +6,7 @@ signal play_pressed
 signal reset_pressed
 signal quit_pressed
 signal settings_changed
+signal settings_closed     # закрыли настройки, открытые со стартового экрана
 
 const SETTINGS_PATH := "user://settings.cfg"
 const QUALITY_NAMES := ["Низкое", "Среднее", "Высокое"]
@@ -28,6 +29,8 @@ var _view_btn: Button
 var _fps_btn: Button
 var _volume_btn: Button
 var _music_btn: Button
+var _settings_only := false   # открыты только настройки (шестерёнка на стартовом экране)
+var _dim: ColorRect
 
 
 func _ready() -> void:
@@ -45,10 +48,10 @@ func _ready() -> void:
     add_child(_bg_image)
     _bg_image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-    var bg := ColorRect.new()
-    bg.color = Color(0.03, 0.04, 0.07, 0.55)
-    add_child(bg)
-    bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    _dim = ColorRect.new()
+    _dim.color = Color(0.03, 0.04, 0.07, 0.55)
+    add_child(_dim)
+    _dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
     var center := CenterContainer.new()
     add_child(center)
@@ -127,7 +130,23 @@ func _show_settings() -> void:
     _settings_box.visible = true
 
 
+## Только настройки поверх стартового экрана; «Назад» закрывает их.
+func open_settings_only() -> void:
+    _settings_only = true
+    visible = true
+    _bg_image.visible = false
+    _dim.color = Color(0.02, 0.03, 0.06, 0.85)
+    _subtitle.text = "Настройки"
+    _show_settings()
+
+
 func _show_main() -> void:
+    if _settings_only:
+        _settings_only = false
+        _dim.color = Color(0.03, 0.04, 0.07, 0.55)
+        visible = false
+        settings_closed.emit()
+        return
     _settings_box.visible = false
     _main_box.visible = true
 
