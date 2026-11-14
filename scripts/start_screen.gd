@@ -472,16 +472,38 @@ func ask_login() -> Array:
     var try_auth := func(mode: String) -> void:
         if busy[0]:
             return
-        if not Net.online:
-            err.text = "Нет связи с сервером"
-            return
         busy[0] = true
-        err.text = "Подождите..."
         err.label_settings.font_color = Color(1, 1, 1, 0.7)
         Sfx.play("click")
+        # связь могла оборваться, пока игрок вводил ник (сервер перезапускался, сеть) — подключаемся заново
+        if not Net.is_open():
+            err.text = "Подключаюсь к серверу..."
+            if not await Net.join(Net.host_text):
+                busy[0] = false
+                Sfx.play("error")
+                err.text = "Сервер не отвечает. Проверь интернет и нажми ещё раз (или «Играть офлайн»)."
+                err.label_settings.font_color = Color(1.0, 0.45, 0.35)
+                return
+        err.text = "Подождите..."
+        var got := [null]
+        var on_res := func(ok: bool, msg: String, nk: String, save: String) -> void:
+            got[0] = [ok, msg, nk, save]
+        Net.auth_result.connect(on_res)
         Net.auth(mode, nick.text.strip_edges(), pw.text, sex[0])
-        var r: Array = await Net.auth_result
+        var waited := 0.0
+        while got[0] == null and waited < 20.0 and Net.is_open():   # ответ, обрыв связи или 20 с тишины
+            await get_tree().create_timer(0.25).timeout
+            waited += 0.25
+        if Net.auth_result.is_connected(on_res):
+            Net.auth_result.disconnect(on_res)
         busy[0] = false
+        if got[0] == null:
+            Sfx.play("error")
+            err.text = ("Связь с сервером прервалась — нажми ещё раз" if not Net.is_open()
+                    else "Сервер не ответил — нажми ещё раз через несколько секунд")
+            err.label_settings.font_color = Color(1.0, 0.45, 0.35)
+            return
+        var r: Array = got[0]
         if bool(r[0]):
             var c2 := ConfigFile.new()
             c2.load("user://settings.cfg")

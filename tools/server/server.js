@@ -74,7 +74,8 @@ async function dbGet(path) {
     for (const k of parts) { if (node == null || typeof node !== 'object') return null; node = node[k]; }
     return node === undefined ? null : JSON.parse(JSON.stringify(node));
   }
-  const r = await fetch(`${FB_URL}/${path}.json?auth=${FB_SECRET}`);
+  // без ответа базы 10 с — ошибка (игрок увидит сообщение, а не вечное «Подождите...»)
+  const r = await fetch(`${FB_URL}/${path}.json?auth=${FB_SECRET}`, { signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error('firebase get ' + r.status);
   return await r.json();
 }
@@ -87,7 +88,7 @@ async function dbPatch(path, obj) {
     return;
   }
   const r = await fetch(`${FB_URL}/${path}.json?auth=${FB_SECRET}`,
-    { method: 'PATCH', body: JSON.stringify(obj), headers: { 'Content-Type': 'application/json' } });
+    { method: 'PATCH', body: JSON.stringify(obj), headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error('firebase patch ' + r.status);
 }
 
@@ -217,6 +218,7 @@ async function onAuth(p, m) {
   }
   if (pass.length < 4 || pass.length > 64) return send(p, { t: 'auth_err', msg: 'Пароль: от 4 до 64 символов' });
   const key = accKey(nick);
+  log(`${m.mode === 'register' ? 'регистрация' : 'вход'}: запрос ${nick}`);
   p.authBusy = true;
   try {
     let acc = await dbGet('accounts/' + key);
@@ -243,8 +245,8 @@ async function onAuth(p, m) {
     }
     login(p, key, acc, nick);
   } catch (e) {
-    log('ошибка базы: ' + e.message);
-    send(p, { t: 'auth_err', msg: 'Сервер базы не отвечает, попробуй позже' });
+    log('ошибка базы при входе: ' + e.message);
+    send(p, { t: 'auth_err', msg: /40[13]/.test(e.message) ? 'Сервер не может открыть базу (проверь FIREBASE_SECRET на Render)' : 'База данных не отвечает, попробуй ещё раз' });
   } finally {
     p.authBusy = false;
   }

@@ -168,6 +168,11 @@ func _reconnect() -> void:
     reconnect_failed.emit("Сервер недоступен")
 
 
+## Сокет открыт прямо сейчас (online может отставать на кадр от обрыва).
+func is_open() -> bool:
+    return online and _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN
+
+
 ## Вход или регистрация. Ответ — сигнал auth_result.
 func auth(mode: String, nick_text: String, password: String, sex := "m") -> void:
     _send({"t": "auth", "mode": mode, "nick": nick_text, "pass": password, "sex": sex})
