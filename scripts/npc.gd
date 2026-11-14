@@ -2,8 +2,8 @@ extends Node3D
 ## Неигровой персонаж города: Петер у вокзала, тётя Галя в кассе, таксист, пассажиры с чемоданами.
 ## Настройки задаются до add_child. Издалека (> 70 м) прячется и не анимируется — бережём FPS.
 
-const CHAR_PATH := "res://models/character/character.gltf"
-const FEMALE_PATH := "res://models/character/female.gltf"
+var CHAR_PATH: String = preload("res://scripts/outfits.gd").male_model()
+var FEMALE_PATH: String = preload("res://scripts/outfits.gd").female_model()
 const CHAR_DIR := "res://models/character/"
 
 var npc_name := "ПЕТЕР"        # пусто — без подписи
@@ -23,6 +23,7 @@ var name_y := 2.12
 var hat := ""                  # головной убор (см. hats.gd): "petushok", "militia"...
 var hat_col := Color(0, 0, 0, 0)
 var name_col := Color(1.0, 0.95, 0.8)
+var _name_l: Label3D
 var remote := false            # другой игрок по сети: анимации задаёт main.gd через play_anim()
 const Hats := preload("res://scripts/hats.gd")
 const Poses := preload("res://scripts/poses.gd")
@@ -57,7 +58,7 @@ func _ready() -> void:
             var players := m.find_children("*", "AnimationPlayer", true, false)
             if not players.is_empty():
                 _ap = players[0] as AnimationPlayer
-                if (anim.begins_with("pose_") or anim.begins_with("anim_") or remote) and not female:
+                if (anim.begins_with("pose_") or anim.begins_with("anim_") or remote) and (not female or FEMALE_PATH.ends_with("human_f.gltf")):
                     var sks := m.find_children("*", "Skeleton3D", true, false)
                     if not sks.is_empty():
                         Poses.install(_ap, sks[0] as Skeleton3D)
@@ -80,7 +81,7 @@ func _ready() -> void:
                         att.bone_name = "Head"
                         sk.add_child(att)
                         var h := Hats.build(hat, hat_col)
-                        h.position = Vector3(0, 0.16, 0.008)
+                        preload("res://scripts/outfits.gd").place_hat(h, female)
                         att.add_child(h)
                         break
     if suitcase:
@@ -96,6 +97,7 @@ func _ready() -> void:
         add_child(sc)
 
     var name_l := Label3D.new()
+    _name_l = name_l
     name_l.text = npc_name
     name_l.visible = npc_name != ""
     name_l.font_size = 64
@@ -180,9 +182,10 @@ func _dress(m: Node) -> void:
         return
     var mat := ShaderMaterial.new()
     mat.shader = load("res://shaders/character.gdshader")
-    mat.set_shader_parameter("body_tex", _tex(CHAR_DIR + ("female_light.png" if female else "body_light.png")))
-    mat.set_shader_parameter("mask_tex", _tex(CHAR_DIR + ("female_mask.png" if female else "body_mask.png")))
-    mat.set_shader_parameter("sleeve_tex", _tex(CHAR_DIR + ("female_sleeve.png" if female else "sleeve_mask.png")))
+    if female:
+        preload("res://scripts/outfits.gd").setup_female(mat, hair_color)
+    else:
+        preload("res://scripts/outfits.gd").setup_male(mat, hair_color)
     mat.set_shader_parameter("jacket_tex", _tex("res://textures/%s.png" % jacket))
     mat.set_shader_parameter("pants_tex", _tex("res://textures/%s.png" % pants))
     mat.set_shader_parameter("shoes_tex", _tex("res://textures/%s.png" % shoes))
@@ -191,6 +194,7 @@ func _dress(m: Node) -> void:
     mat.set_shader_parameter("long_sleeves", 0.0 if short_sleeves else 1.0)
     mat.set_shader_parameter("print_on", 0.0)
     mat.set_shader_parameter("skin_tint", Vector3(1.0, 0.97, 0.95))
+    preload("res://scripts/outfits.gd").apply(mat, jacket, pants, shoes, Color.WHITE, female)
     var hair := StandardMaterial3D.new()
     hair.albedo_color = hair_color
     var ht := _tex(CHAR_DIR + ("hair2_gray.png" if female else "hair_gray.png"))
@@ -229,3 +233,11 @@ func play_anim(anim_name: String, speed: float) -> void:
             a.loop_mode = Animation.LOOP_LINEAR
         _ap.play(anim_name, 0.2)
     _ap.speed_scale = clampf(speed, 0.0, 3.0)
+
+
+## Подпись над головой (сетевой игрок: ник, фракция, розыск).
+func set_label(text: String, col: Color) -> void:
+    if _name_l:
+        _name_l.text = text
+        _name_l.modulate = col
+        _name_l.visible = text != ""

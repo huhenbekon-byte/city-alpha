@@ -25,19 +25,41 @@ uniform vec3 jacket_col : source_color = vec3(0.09, 0.42, 0.52);
 uniform vec3 pants_col : source_color = vec3(0.17, 0.24, 0.38);
 uniform vec3 shoes_col : source_color = vec3(0.96, 0.96, 0.96);
 uniform vec3 skin_tint = vec3(1.0);
+// готовая форма, запечённая в развёртку (scripts/outfits.gd): верх — куртка, низ — штаны и обувь
+uniform sampler2D outfit_top : source_color, filter_linear_mipmap;
+uniform sampler2D outfit_bottom : source_color, filter_linear_mipmap;
+uniform float outfit_top_on = 0.0;
+uniform float outfit_bottom_on = 0.0;
+uniform float outfit_shoes_on = 0.0;
+uniform vec4 outfit_tint = vec4(1.0, 1.0, 1.0, 0.0);   // перекраска (спортивные костюмы), a — сила
 uniform float cloth_scale = 8.0;
+uniform vec2 cloth_aspect = vec2(1.0);      // развёртка 2:1 (новая модель) — ткань без растяжения
+uniform vec3 hair_col : source_color = vec3(0.18, 0.13, 0.09);
+uniform float hair_on = 0.0;                // перекраска волос (канал A маски, новая модель)
 
 void fragment() {
 	vec3 base = texture(body_tex, UV).rgb;
-	vec3 m = texture(mask_tex, UV).rgb;
+	vec4 mk = texture(mask_tex, UV);
+	vec3 m = mk.rgb;
+	base = mix(base, vec3(dot(base, vec3(0.333))) * hair_col * 2.4, mk.a * hair_on);
 	m.r *= 1.0 - texture(sleeve_tex, UV).r * (1.0 - long_sleeves);
 	// складки и объём одежды берём из яркости кожи под ней
 	float shade = clamp(dot(base, vec3(0.333)) / 0.55, 0.65, 1.2);
 	shade = mix(1.0, shade, 0.6);
-	vec2 cuv = UV * cloth_scale;
+	vec2 cuv = UV * cloth_scale * cloth_aspect;
 	vec3 jacket = texture(jacket_tex, cuv).rgb * jacket_col * shade;
 	vec3 pants = texture(pants_tex, cuv).rgb * pants_col * shade;
 	vec3 shoes = texture(shoes_tex, cuv).rgb * shoes_col * shade;
+	// готовый образ (весь персонаж: лицо, кожа, одежда): складки уже нарисованы, освещение — слабее
+	float oshade = mix(1.0, shade, 0.35);
+	vec4 ot = texture(outfit_top, UV);
+	vec4 ob = texture(outfit_bottom, UV);
+	base = mix(base, ot.rgb, outfit_top_on);
+	vec3 otc = mix(ot.rgb, vec3(dot(ot.rgb, vec3(0.333))) * outfit_tint.rgb * 2.6, outfit_tint.a);
+	vec3 obc = mix(ob.rgb, vec3(dot(ob.rgb, vec3(0.333))) * outfit_tint.rgb * 2.6, outfit_tint.a);
+	jacket = mix(jacket, otc * oshade, ot.a * outfit_top_on);
+	pants = mix(pants, obc * oshade, ob.a * outfit_bottom_on);
+	shoes = mix(shoes, ob.rgb * oshade, ob.a * outfit_shoes_on);
 	vec3 col = base * skin_tint;
 	col = mix(col, pants, m.g);
 	float vm = texture(vest_mask, UV).r * vest_on;

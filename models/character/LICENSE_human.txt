@@ -1,0 +1,11 @@
+Реалистичная мужская модель персонажа (models/character/human.gltf, human.bin)
+
+Основа: "Human Male/Female Basemesh (Rigged)"
+Автор: Niclas — https://sketchfab.com/niclas.schoepe
+Источник: https://sketchfab.com/3d-models/human-malefemale-basemesh-rigged-96fa14a5a3f0413e98b605e3f65e447c
+Лицензия: Creative Commons Attribution 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/
+
+Изменения (tools/models/human_build.py): взята мужская сетка с глазами, скелет перенесён на кости
+Quaternius (имена и оси как у старой модели, чтобы работали анимации игры), поза приведена к T-позе,
+рост 1,78 м, новая развёртка без наложений; текстуры (лица и форма) сделаны из раскладок автора игры
+(tools/outfits/human_textures.py). Анимации — Quaternius Universal Animation Library (CC0).

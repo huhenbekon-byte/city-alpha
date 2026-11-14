@@ -37,6 +37,9 @@ const SIDE_H := 0.08     # высота тротуара (низкая — пе�
 const WALK := 4.0        # ширина тротуара
 const FLOOR_H := 2.8     # высота этажа
 const CELL := 3.0        # шаг окон по фасаду
+## Модели 1ЛГ-600А (models/houses/lg_*): весь дом в одной картинке 2048 — вблизи мыло. Вместо них —
+## коробка с фасадом из модуля «панель с окном» (textures/facade_panel.png, facade_tower.png), чётко с любого расстояния.
+const USE_LG_MODELS := false
 
 const PARKED_COLORS := [
     Color(0.92, 0.92, 0.90), Color(0.45, 0.06, 0.10), Color(0.12, 0.30, 0.22),
@@ -461,7 +464,7 @@ func _house_model(base: Vector3, sx: float, sz: float, h: float, floors: int, st
     var fdep := sz if along_x else sx
     var yaw := 0.0 if along_x else PI * 0.5
     var axis := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
-    if style == "tower" and _props_ok.has("lg_tower"):
+    if style == "tower" and USE_LG_MODELS and _props_ok.has("lg_tower"):
         _put("hs_lg_tower", base, yaw, Color.WHITE, Vector3(flen / 18.71, h / 45.83, fdep / 17.88))
         return true
     # 10-этажка с синей мозаикой (фасад-картинка на коробке) — у части высоких панелек, секциями по ~21 м.
@@ -481,7 +484,7 @@ func _house_model(base: Vector3, sx: float, sz: float, h: float, floors: int, st
                 _model_doors.append(cu + sgn * (f - 0.5) * sg)
         _model_kind = "dester"
         return true
-    if style == "panel" and floors >= 9 and _props_ok.has("lg_section"):
+    if style == "panel" and floors >= 9 and USE_LG_MODELS and _props_ok.has("lg_section"):
         var n := maxi(1, roundi(flen / 28.08))
         var seg := flen / n
         for i in n:
@@ -502,7 +505,7 @@ func _house_model(base: Vector3, sx: float, sz: float, h: float, floors: int, st
         for i in nk:
             _put("hs_khrush5", base + axis * (-flen * 0.5 + sk * (i + 0.5)), yaw + PI * 0.5, Color.WHITE, Vector3(fdep / 5.5, h / 6.55, sk / 13.28))
         return true
-    if style == "panel" and floors <= 6 and _props_ok.has("lg_five"):
+    if style == "panel" and floors <= 6 and USE_LG_MODELS and _props_ok.has("lg_five"):
         _put("hs_lg_five", base, yaw, Color.WHITE, Vector3(flen / 49.68, h / 13.2, fdep / 11.88))
         return true
     return false
@@ -766,7 +769,51 @@ func _nature_mesh(model: String, folder := "nature") -> Mesh:
         found = (n as MeshInstance3D).mesh
         break
     root.free()
+    if found and folder == "nature":
+        _retexture_tree(found, model)
     return found
+
+
+## Деревья Quaternius одноцветные (без развёртки) — кладём кору и листву картинкой по объёму (triplanar).
+func _retexture_tree(mesh: Mesh, model: String) -> void:
+    var birch := model.begins_with("birch")
+    for i in mesh.get_surface_count():
+        var old: Material = mesh.surface_get_material(i)
+        var nm := String(old.resource_name) if old else ""
+        var tex := ""
+        var tint := Color.WHITE
+        var meters := 1.0
+        match nm:
+            "White":
+                tex = "bark_birch"
+                meters = 0.35
+            "Wood":
+                tex = "bark_tree"
+                meters = 0.35
+                tint = Color(0.85, 0.82, 0.78)
+            "Green":
+                tex = "foliage_bush" if model.begins_with("bush") else ("foliage_birch" if birch else "foliage_tree")
+                meters = 0.45
+                tint = Color(1.0, 1.0, 0.95)
+            "DarkGreen":
+                tex = "foliage_birch" if birch else "foliage_tree"
+                meters = 0.45
+                tint = Color(0.78, 0.82, 0.74)
+        if tex == "":
+            continue
+        var t := _tex_mip("res://textures/%s.png" % tex)
+        if t == null:
+            continue
+        var m := StandardMaterial3D.new()
+        m.albedo_texture = t
+        m.albedo_color = tint
+        m.uv1_triplanar = true
+        m.uv1_scale = Vector3.ONE / meters
+        m.roughness = 0.95
+        m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+        if old is BaseMaterial3D and (old as BaseMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED:
+            m.cull_mode = BaseMaterial3D.CULL_DISABLED
+        mesh.surface_set_material(i, m)
 
 
 func _nature_key(kind: String) -> String:
@@ -960,14 +1007,15 @@ func _make_materials() -> void:
     var asphalt := _tex_mip("res://textures/ground_asphalt.png")
     if asphalt:
         _ground_tex(_m["asphalt"], asphalt, Color(0.80, 0.80, 0.82), 7.0)
-        _ground_tex(_m["yard_asphalt"], asphalt, Color(1.0, 1.0, 1.0), 7.0)
+        var yard := _tex_mip("res://textures/ground_asphalt_yard.png")   # дворы — старый асфальт с заплатами
+        _ground_tex(_m["yard_asphalt"], yard if yard else asphalt, Color(0.92, 0.92, 0.92), 9.0 if yard else 7.0)
     var tiles := _tex_mip("res://textures/ground_tiles.png")
     if tiles:
         _ground_tex(_m["sidewalk"], tiles, Color(0.68, 0.68, 0.68), 2.4)
         _ground_tex(_m["paving"], tiles, Color(0.80, 0.74, 0.66), 2.4)
     # Остальные поверхности из textures/ (если файла нет — остаётся просто цвет)
     var surfaces := [
-        ["grass", "ground_grass", Color(0.9, 0.95, 0.85), 4.0],
+        ["grass", "ground_grass", Color(0.95, 0.95, 0.92), 6.0],
         ["soil", "ground_soil", Color(1, 1, 1), 1.5],
         ["sand", "ground_sand", Color(1, 1, 1), 1.5],
         ["roof", "roof_gravel", Color(0.9, 0.9, 0.9), 4.0],

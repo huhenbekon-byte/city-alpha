@@ -81,6 +81,8 @@ var braking := false
 ## TouchControls (задаёт main.gd). Пусто — только клавиатура.
 var touch = null
 var driven := false
+var watched := false           # онлайн: игрок едет пассажиром в этой (чужой) машине — камера следует за ней
+var _w_prev := Vector3.ZERO
 
 var _rear: Array[VehicleWheel3D] = []
 var _cam_yaw: Node3D
@@ -550,6 +552,8 @@ func _process(delta: float) -> void:
     if _lamp_a != null:
         _update_flashers(delta)
     if not driven:
+        if watched:
+            _follow_camera(delta)
         return
     if _playback:
         _fill_engine_sound()
@@ -751,6 +755,27 @@ func _update_flashers(delta: float) -> void:
     _lamp_a.emission_energy_multiplier = 5.0 if first and strobe else 0.2
     _lamp_b.emission_energy_multiplier = 5.0 if not first and strobe else 0.2
 
+
+
+## Пассажир: камера за машиной, которой управляет другой игрок (скорость — по смещению).
+func watch(on: bool) -> void:
+    watched = on
+    if on:
+        _w_prev = global_position
+        _cam_yaw.rotation.y = _heading_yaw() + PI
+        _cam_pitch.rotation.x = -0.22
+        _look_timer = 0.0
+        _cam_yaw.global_position = global_position + Vector3(0, _cam_h(), 0)
+        _camera.make_current()
+
+
+func _follow_camera(delta: float) -> void:
+    _cam_yaw.global_position = global_position + Vector3(0, _cam_h(), 0)
+    var v := (global_position - _w_prev) / maxf(delta, 0.001)
+    _w_prev = global_position
+    _look_timer -= delta
+    if _look_timer <= 0.0 and v.length() > 1.0:
+        _cam_yaw.rotation.y = lerp_angle(_cam_yaw.rotation.y, _heading_yaw() + PI, 1.0 - exp(-3.0 * delta))
 
 
 func _cam_h() -> float:

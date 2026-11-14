@@ -162,7 +162,7 @@ static func _gang_uniform(id: String, rank: int) -> Dictionary:
         1:
             return {"jacket": ts, "pants": ts, "shoes": "cloth_sneaker", "lampas": true, "badge": true, "cap": "petushok", "cap_col": c}
         2:
-            return {"jacket": "cloth_alyaska", "pants": ts, "shoes": "cloth_sneaker", "lampas": true, "cap": "petushok", "cap_col": c}
+            return {"jacket": "cloth_bolonya_green", "pants": ts, "shoes": "cloth_sneaker", "lampas": true, "cap": "petushok", "cap_col": c}
         3:
             return {"jacket": "velour" if id == "kavkaz" else "cloth_leather_black", "pants": "cloth_acidwash",
                     "shoes": "cloth_sneaker", "cap": "kepka", "cap_col": Color(0.12, 0.12, 0.13) if id == "kavkaz" else Color(0.32, 0.3, 0.28)}

@@ -32,6 +32,7 @@ const CarScript := preload("res://scripts/car.gd")
 
 const VERSION := "Альфа 1.0"
 const SAVE_PATH := "user://save_v2.cfg"   # новая карта (острова) — сохранения начинаются заново
+var _save_path := SAVE_PATH               # онлайн: user://acc_<ник>.cfg — копия облачного сохранения
 const START_MONEY := 5000
 const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
 ## Машины на Общем рынке: название, цена, цвет, макс. скорость, мощность.
@@ -201,6 +202,7 @@ var _interior := ""          # в каком здании игрок ("" — н�
 var health := 100.0          # здоровье 0..100
 var hunger := 100.0          # сытость 0..100 (0 — голодный, теряешь здоровье)
 var home := -1               # номер купленного жилья в _city.homes, -1 — нет
+var player_female := false   # пол персонажа: выбирается при регистрации (онлайн — хранится на сервере)
 var _home_inside := -1       # в каком жилье сейчас игрок
 var _podezd := -1            # в каком подъезде (номер двери в _city.entrances), -1 — на улице
 var _fridge_at := -9999.0    # когда последний раз ели из холодильника (игровые минуты)
@@ -354,8 +356,17 @@ func _on_server_chosen(_index: int, layer: CanvasLayer) -> void:
     var net_failed := false
     if host != "":
         await _start.progress(20.0, "Подключение к %s... (если сервер спал — до минуты)" % host, 0.3)
+        _start.show_offline_button(true)
         var ok: bool = await Net.join(host)
-        net_failed = not ok
+        _start.show_offline_button(false)
+        net_failed = not ok and not Net.cancel_join
+        if ok:
+            await _start.progress(30.0, "Вход в аккаунт", 0.2)
+            var acc: Array = await _start.ask_login()
+            if bool(acc[0]):
+                _use_account(String(acc[1]), String(acc[2]))
+            else:
+                Net.leave()
     await _start.progress(35.0, "Подключение к серверу...", 0.7)
     await _start.progress(45.0, "Загрузка города...", 0.2)
     await get_tree().process_frame
@@ -506,8 +517,12 @@ func _process(delta: float) -> void:
         _touch.interact_text = _point["text"]
     elif _driving:
         _touch.interact_text = "ВЫЙТИ"
+    elif _ride_id >= 0:
+        _touch.interact_text = "ВЫЙТИ"
     elif near:
         _touch.interact_text = "СЕСТЬ"
+    elif Net.online and _driving == null and _remote_car_near() >= 0:
+        _touch.interact_text = "ПАССАЖИР"
     else:
         _touch.interact_text = ""
 
@@ -696,7 +711,7 @@ func _on_quit() -> void:
 
 
 func _on_reset() -> void:
-    DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
+    DirAccess.remove_absolute(ProjectSettings.globalize_path(_save_path))
     cash = START_MONEY
     bank = 0
     passport_name = ""
@@ -897,6 +912,15 @@ func _has_owned_car() -> bool:
 
 
 ## Оплата: сначала наличными, остальное с карты. false — не хватает денег.
+var _earn_pending := {}
+
+
+## Заработок с указанием источника: сервер проверяет темп каждого вида дохода отдельно.
+func _earned(src: String, amount: int) -> void:
+    if amount > 0 and Net.authed:
+        _earn_pending[src] = int(_earn_pending.get(src, 0)) + amount
+
+
 func _pay(amount: int, reason := "Покупка") -> bool:
     if cash + bank < amount:
         Sfx.play("error")
@@ -986,6 +1010,7 @@ func _on_job_paid(amount: int, text: String) -> void:
         _taxi_cond = cond
     earned_total += amount
     bank += amount   # зарплата приходит на карту
+    _earned("job", amount)
     _bank_log(amount, "Зарплата: " + _job_name())
     Sfx.play("coin")
     _hud.show_toast(text + " (на карту)", "money")
@@ -1058,6 +1083,16 @@ func _on_interact() -> void:
 
 
 func _toggle_vehicle() -> void:
+    if _ride_id >= 0:
+        _leave_ride()
+        return
+    if _driving == null and Net.online:
+        var rid := _remote_car_near()
+        var own = _nearest_car()
+        if rid >= 0 and (own == null or (own as Node3D).global_position.distance_to(_player.global_position) >
+                (_remote[rid]["car"] as Node3D).global_position.distance_to(_player.global_position)):
+            _board_ride(rid)
+            return
     if _driving:
         var pos: Vector3 = _driving.get_exit_position()
         var yaw: float = _driving.get_camera_yaw()
@@ -1161,6 +1196,8 @@ func _nearest_car():
 func _on_look(relative: Vector2) -> void:
     if _driving:
         _driving.look(relative)
+    elif _ride_id >= 0 and _remote.has(_ride_id) and _remote[_ride_id]["car"] != null and is_instance_valid(_remote[_ride_id]["car"]):
+        _remote[_ride_id]["car"].look(relative)
     else:
         _player.look(relative)
 
@@ -1410,6 +1447,7 @@ func _save_game() -> void:
     cfg.set_value("player", "health", health)
     cfg.set_value("player", "hunger", hunger)
     cfg.set_value("player", "home", home)
+    cfg.set_value("player", "female", player_female)
     cfg.set_value("player", "fridge", _fridge_at)
     cfg.set_value("player", "wanted", wanted)
     cfg.set_value("player", "jail", jail_left)
@@ -1459,12 +1497,14 @@ func _save_game() -> void:
     cfg.set_value("world", "owned", owned)
     cfg.set_value("world", "day", day)
     cfg.set_value("world", "minutes", minutes)
-    cfg.save(SAVE_PATH)
+    cfg.save(_save_path)
+    if Net.authed:
+        Net.cloud_save(cfg.encode_to_text())
 
 
 func _load_game() -> void:
     var cfg := ConfigFile.new()
-    if cfg.load(SAVE_PATH) != OK:
+    if cfg.load(_save_path) != OK:
         return
     cash = int(cfg.get_value("player", "money", START_MONEY))
     bank = int(cfg.get_value("player", "bank", 0))
@@ -1491,6 +1531,7 @@ func _load_game() -> void:
     health = clampf(float(cfg.get_value("player", "health", 100.0)), 1.0, 100.0)
     hunger = clampf(float(cfg.get_value("player", "hunger", 100.0)), 0.0, 100.0)
     _loaded["home"] = int(cfg.get_value("player", "home", -1))
+    _loaded["female"] = cfg.get_value("player", "female", false) == true
     _fridge_at = float(cfg.get_value("player", "fridge", -9999.0))
     wanted = clampi(int(cfg.get_value("player", "wanted", 0)), 0, 5)
     jail_left = float(cfg.get_value("player", "jail", 0.0))
@@ -1894,6 +1935,7 @@ func _setup_points() -> void:
             _points.append({"pos": _city.faction_sites[gid]["marker"] + Vector3(3.0, 0, 0), "r": 2.0, "text": "ЗАКАЗ НА УГОН",
                     "cb": _steal_menu.bind(gid), "car": false, "gang_only": true})
     _set_home(int(_loaded.get("home", -1)))
+    _set_female(_loaded.get("female", false) == true)
     _apply_furniture()
     for p: Vector3 in _city.service_stations:
         _add_point(p, 7.0, "СТО", _open_sto, true, Color(0.3, 0.5, 1.0))
@@ -2775,6 +2817,7 @@ func _need_exp() -> int:
 func _faction_payday() -> void:
     var pay := _salary()
     bank += pay
+    _earned("pay", pay)
     _bank_log(pay, ("Доля из общака: " if FactionData.is_gang(faction) else "Зарплата: ") + _faction_name())
     faction_exp += 1
     _add_xp(10)
@@ -2998,6 +3041,8 @@ func _despawn_faction_car() -> void:
 func _open_faction_menu() -> void:
     if faction == "":
         return
+    if Net.authed:
+        Net.send_msg({"t": "roster"})
     _touch.blocked = true
     _fmenu.open_menu(_fmenu_data(), "main")
 
@@ -3238,7 +3283,9 @@ func _open_home(i: int) -> void:
     var text := "Продаётся: %s\nЦена: %s\n\nПокупка — у государства, без посредников." % [_home_kind_name(i).to_lower(),
             HudScript.format_money(int(hm["price"]))]
     var buttons := []
-    if home >= 0:
+    if Net.authed and _homes_taken.has(i):
+        text = "Здесь уже живёт другой игрок."
+    elif home >= 0:
         text += "\n\nУ тебя уже есть жильё (%s). Сначала продай его." % _home_text()
     else:
         buttons.append(["Купить за %s" % HudScript.format_money(int(hm["price"])), _buy_home.bind(i)])
@@ -3253,6 +3300,8 @@ func _buy_home(i: int) -> void:
     if not _pay(int(hm["price"]), "Покупка жилья"):
         return
     _set_home(i)
+    if Net.authed:
+        Net.send_msg({"t": "home", "i": i, "buy": true, "price": int(hm["price"])})
     _add_xp(40)
     Sfx.play("cash")
     _dialog.close()
@@ -3270,6 +3319,8 @@ func _sell_home() -> void:
     if home < 0:
         return
     var pay := int(_city.homes[home]["price"]) / 2
+    if Net.authed:
+        Net.send_msg({"t": "home", "i": home, "buy": false, "price": int(_city.homes[home]["price"])})
     bank += pay
     _bank_log(pay, "Продажа жилья")
     _set_home(-1)
@@ -3431,6 +3482,7 @@ func _toggle_duty() -> void:
 func _on_duty_paid(amount: int, text: String) -> void:
     earned_total += amount
     bank += amount
+    _earned("duty", amount)
     _bank_log(amount, "Служба: " + _faction_name())
     Sfx.play("coin")
     _hud.show_toast(text + " (на карту)", "money")
@@ -3722,6 +3774,8 @@ func _open_kiosk(i: int) -> void:
         text += "\n\nТвой бизнес. Доход: %s в час, в кассе: %s" % [HudScript.format_money(int(bz["income"])), HudScript.format_money(till)]
         buttons.append(["Забрать выручку (%s)" % HudScript.format_money(till), _biz_collect.bind(i)])
         buttons.append(["Продать за %s" % HudScript.format_money(int(bz["price"]) / 2), _biz_sell.bind(i)])
+    elif Net.authed and _biz_taken.has(i):
+        text += "\n\nВладелец бизнеса: %s" % String(_biz_taken[i])
     else:
         text += "\n\nБизнес продаётся: %s, доход ~%s в час" % [HudScript.format_money(int(bz["price"])), HudScript.format_money(int(bz["income"]))]
         buttons.append(["Купить бизнес — %s" % HudScript.format_money(int(bz["price"])), _biz_buy.bind(i)])
@@ -3767,6 +3821,8 @@ func _biz_buy(i: int) -> void:
     if not _pay(int(bz["price"]), "Покупка бизнеса"):
         return
     biz_owned[str(i)] = 0
+    if Net.authed:
+        Net.send_msg({"t": "biz", "i": i, "buy": true, "price": int(bz["price"])})
     Sfx.play("cash")
     _add_xp(50)
     _hud.show_toast("Теперь это твой бизнес: %s. Выручка копится в кассе" % bz["title"])
@@ -3782,6 +3838,7 @@ func _biz_collect(i: int) -> void:
         return
     biz_owned[str(i)] = 0
     bank += till
+    _earned("biz", till)
     _bank_log(till, "Выручка: %s" % _biz[i]["title"])
     Sfx.play("cash")
     _hud.show_toast("Выручка +%s на карту" % HudScript.format_money(till))
@@ -3793,6 +3850,9 @@ func _biz_sell(i: int) -> void:
     var bz: Dictionary = _biz[i]
     var pay := int(bz["price"]) / 2 + int(biz_owned.get(str(i), 0))
     biz_owned.erase(str(i))
+    if Net.authed:
+        Net.send_msg({"t": "refund", "amount": pay})
+        Net.send_msg({"t": "biz", "i": i, "buy": false})
     bank += pay
     _bank_log(pay, "Продажа бизнеса")
     Sfx.play("cash")
@@ -3955,9 +4015,12 @@ func _update_turf(delta: float, focus: Vector3) -> void:
                     _hud.show_toast("%s подтягивают своих! Держись ещё" % FactionData.get_faction(holder).get("name", ""))
             if float(_capt["left"]) <= 0.0:
                 turf[key] = faction
+                if Net.authed:
+                    Net.send_msg({"t": "turf", "key": key, "gid": faction})
                 _capt = {}
                 _capt_cd = 300.0
                 bank += 1500
+                _earned("reward", 1500)
                 _bank_log(1500, "Захват района")
                 faction_exp += 1
                 stats["turf"] = int(stats["turf"]) + 1
@@ -3968,7 +4031,7 @@ func _update_turf(delta: float, focus: Vector3) -> void:
                 _save_game()
     # другие банды тоже не спят: раз в 5 минут кто-то что-то отжимает
     _ai_turf_t += delta
-    if _ai_turf_t >= 300.0:
+    if _ai_turf_t >= 300.0 and not Net.authed:   # онлайн районы делят живые игроки
         _ai_turf_t = 0.0
         var keys := turf.keys()
         var ids := _gang_ids()
@@ -4113,7 +4176,7 @@ func _weather_light() -> float:
 
 func _update_weather(delta: float, focus: Vector3) -> void:
     _weather_t -= delta
-    if _weather_t <= 0.0:
+    if _weather_t <= 0.0 and not Net.authed:   # онлайн погоду задаёт сервер
         _weather_t = randf_range(300.0, 540.0)
         var r := randf()
         var next := "clear"
@@ -4192,6 +4255,7 @@ func _check_quest() -> void:
         return
     var reward := int(q[2])
     bank += reward
+    _earned("reward", reward)
     _bank_log(reward, "Задание Петера")
     quest_i += 1
     quest_active = false
@@ -4432,6 +4496,9 @@ func _attack() -> void:
     var rng_k := 1.0 + float(skills["strength"]) / 150.0 if melee else 1.0
     var cone := 35.0 + float(skills["strength"]) * 0.15 if melee else 8.0 + float(skills["shooting"]) * 0.07
     var hit_pos := _peds.hit(origin, dir, float(info["range"]) * rng_k, cone)
+    if Net.online and _net_hit(origin, dir, float(info["range"]) * rng_k, cone, melee):
+        if hit_pos == Vector3.INF:
+            hit_pos = origin + dir
     if not melee:
         skills["shooting"] = minf(100.0, float(skills["shooting"]) + 0.15)
     var lawful: bool = (FactionData.base(faction) == "police" or faction == "kgb") and _duty.active
@@ -4594,7 +4661,7 @@ func _apply_look() -> void:
         return
     _last_uniform = _uniform_key()
     # «Вор в законе» любой ОПГ — свой персонаж (мужчина в пальто и кепке), у остальных — обычный
-    var gang_top := FactionData.is_gang(faction) and faction_rank >= FactionData.GANG_SKIN_RANK
+    var gang_top := FactionData.is_gang(faction) and faction_rank >= FactionData.GANG_SKIN_RANK and not player_female
     var skin := TYAP_SKIN if gang_top else ""
     if _player.set_skin(skin):
         _equip_weapon()
@@ -4716,6 +4783,7 @@ func _spawn_station_life() -> void:
     add_child(taxi)
     _spawn_scooter_rent()
     _spawn_gang_crews()
+    _spawn_faction_staff()
     var tops := ["cloth_wool_gray", "cloth_quilted_navy", "cloth_cardigan", "cloth_check_blue", "cloth_bolonya_green",
             "cloth_sweater", "cloth_gabardine", "cloth_corduroy"]
     var bottoms := ["cloth_wool_black", "cloth_trousers_brown", "cloth_denim", "cloth_wool_gray"]
@@ -4901,16 +4969,51 @@ func _spawn_gang_crews() -> void:
             n.collide = true
             n.beard = false
             n.alt_hair = k == 2
+            n.female = k == 2   # в каждой группировке есть девушка
             n.hair_color = [Color(0.12, 0.08, 0.06), Color(0.35, 0.25, 0.15), Color(0.2, 0.15, 0.1)][k]
             n.jacket = String(u.get("jacket", "cloth_tracksuit"))
             n.pants = String(u.get("pants", "cloth_tracksuit"))
             n.shoes = String(u.get("shoes", "cloth_sneaker"))
             n.hat = String(u.get("cap", ""))
             n.hat_col = u.get("cap_col", Color(0, 0, 0, 0))
-            n.anim = "idle_talking" if k == 1 else "pose_squat"
+            n.anim = "idle_talking" if k == 1 else ("idle" if n.female else "pose_squat")
             n.name_col = Color(f["color"]).lightened(0.3)
             n.position = out + fwd * 3.0 + side * (-2.2 + k * 2.2)
             var look := (side + fwd).normalized() if k == 0 else ((-side + fwd).normalized() if k == 2 else fwd)
+            n.rotation.y = atan2(look.x, look.z)
+            add_child(n)
+
+
+## У зданий госорганизаций дежурят сотрудники в форме: мужчина и женщина (женская форма — outfit_f_*).
+func _spawn_faction_staff() -> void:
+    for f: Dictionary in FactionData.LIST:
+        if String(f.get("type", "")) == "gang" or not _city.faction_sites.has(f["id"]):
+            continue
+        var site: Dictionary = _city.faction_sites[f["id"]]
+        if not site.has("out"):
+            continue
+        var out: Vector3 = site["out"]
+        var yaw: float = float(site.get("out_yaw", 0.0))
+        var fwd := -(Basis(Vector3.UP, yaw) * Vector3(0, 0, 1))
+        var side := Vector3(fwd.z, 0, -fwd.x)
+        for k in 2:
+            var u: Dictionary = FactionData.uniform(f["id"], [3, 1][k])
+            var n = NpcScript.new()
+            n.npc_name = ""
+            n.mark = false
+            n.collide = true
+            n.beard = false
+            n.female = k == 1
+            n.hair_color = [Color(0.15, 0.1, 0.07), Color(0.32, 0.2, 0.12)][k]
+            n.jacket = String(u.get("jacket", "cloth_suit_gray"))
+            n.pants = String(u.get("pants", "cloth_suit_gray"))
+            n.shoes = String(u.get("shoes", "cloth_leather_black"))
+            n.short_sleeves = u.get("short", false) == true
+            n.hat = String(u.get("cap", ""))
+            n.hat_col = u.get("cap_col", Color(0, 0, 0, 0))
+            n.anim = "idle_talking" if k == 0 else "idle"
+            n.position = out + fwd * 2.5 + side * (3.2 if k == 0 else 4.4)
+            var look := (-side + fwd * 0.4).normalized() if k == 0 else (side + fwd * 0.4).normalized()
             n.rotation.y = atan2(look.x, look.z)
             add_child(n)
 
@@ -5353,6 +5456,7 @@ func _update_rob(delta: float, focus: Vector3) -> void:
 func _deliver_loot() -> void:
     var share := _loot * 7 / 10
     cash += share
+    _earned("crime", share)
     faction_exp += 1
     Sfx.play("levelup")
     _hud.show_toast("Общак принял добычу: тебе %s, братве %s. +1 стаж" % [HudScript.format_money(share),
@@ -5385,6 +5489,8 @@ const ORG_CAP := 50
 ## Лидер, рейтинг, дата создания и список состава. Состав — постоянные NPC
 ## (одни и те же для организации), онлайн меняется каждый игровой час.
 func _org_info() -> Dictionary:
+    if Net.authed and _net_roster.get("fid", "") == faction and faction != "":
+        return _org_info_online()
     var sd := absi(hash(faction))
     var rng := RandomNumberGenerator.new()
     rng.seed = sd
@@ -5556,6 +5662,7 @@ func _deliver_stolen() -> void:
     pay = int(pay * dmg_k)
     _toggle_vehicle()
     cash += pay
+    _earned("crime", pay)
     faction_exp += 1
     stats["steal"] = int(stats["steal"]) + 1
     _add_xp(25)
@@ -5659,6 +5766,7 @@ func _check_achievements() -> void:
             continue
         achievements.append(id)
         cash += int(a[3])
+        _earned("reward", int(a[3]))
         Sfx.play("levelup")
         _hud.show_toast("Достижение «%s»! +%s" % [a[1], HudScript.format_money(int(a[3]))])
         _sms_add("Достижения", "«%s» — %s. Награда %s." % [a[1], a[2], HudScript.format_money(int(a[3]))])
@@ -5837,6 +5945,7 @@ func _sell_fish() -> void:
         _hud.show_toast("Рыбы нет. Ловят на набережных — ищи синие метки «РЫБАЧИТЬ»")
         return
     cash += total
+    _earned("fish", total)
     Sfx.play("cash")
     _hud.show_toast("Скупщик взял весь улов: +%s" % HudScript.format_money(total))
     _save_game()
@@ -5862,6 +5971,7 @@ func _thimbles_bet(bet: int) -> void:
 func _thimbles_pick(bet: int) -> void:
     if randf() < 0.3:
         cash += bet * 2
+        _earned("casino", bet * 2)
         Sfx.play("cash")
         _open_dialog("Напёрстки", "Шарик тут! Выиграл %s.\n— Везучий! Ещё разок?" % HudScript.format_money(bet * 2),
                 [["Ещё", _thimbles_menu], ["Хватит", _dialog.close]])
@@ -5940,6 +6050,7 @@ func _cards_stand() -> void:
         _cards_finish(true, "У катáлы %d" % d)
     elif me == d:
         cash += int(_cards["bet"])
+        _earned("casino", int(_cards["bet"]))
         _open_dialog("«Очко»", "Ничья (%d на %d) — ставка возвращена." % [me, d], [["Ещё партию", _cards_menu], ["Уйти", _dialog.close]])
     else:
         _cards_finish(false, "У катáлы %d" % d)
@@ -5950,6 +6061,7 @@ func _cards_finish(win: bool, why: String) -> void:
     var text := "%s\nУ тебя: %s\n\n" % [why, _hand_text(_cards["me"])]
     if win:
         cash += bet * 2
+        _earned("casino", bet * 2)
         Sfx.play("cash")
         text += "Выиграл %s!" % HudScript.format_money(bet * 2)
     else:
@@ -6300,6 +6412,7 @@ func _update_holiday(delta: float) -> void:
             _hud.chat("Сегодня праздник — %s! Площади украшены, в 21:00 — салют в Казани и Пятигорске." % _holiday, "info")
             if faction != "":
                 bank += 1000
+                _earned("reward", 1000)
                 _hud.chat("Праздничная премия от организации: +%s на счёт" % HudScript.format_money(1000), "info")
     var m := int(minutes)
     if _holiday != "" and m >= 21 * 60 and m < 21 * 60 + 45:
@@ -6459,6 +6572,7 @@ func _race_end(win: bool, why: String) -> void:
     _clear_gps()
     if win:
         cash += bet * 2
+        _earned("race", bet * 2)
         stats["race"] = int(stats.get("race", 0)) + 1
         skills["driving"] = minf(100.0, float(skills["driving"]) + 2.0)
         Sfx.play("levelup")
@@ -6525,6 +6639,7 @@ func _drift_end() -> void:
     _drift = {}
     var prize := mini(score / 5, 15000)
     cash += prize
+    _earned("race", prize)
     var best := int(stats.get("drift_best", 0))
     var rec := ""
     if score > best:
@@ -6544,14 +6659,31 @@ func _drift_end() -> void:
 var _remote := {}
 
 
+## Аккаунт онлайн-сервера: сохранение из облака кладём в свой файл и играем из него.
+func _use_account(nick: String, save_text: String) -> void:
+    _save_path = "user://acc_%s.cfg" % nick.to_lower().md5_text().substr(0, 12)
+    if save_text != "":
+        var cfg := ConfigFile.new()
+        if cfg.parse(save_text) == OK:
+            cfg.save(_save_path)
+    elif FileAccess.file_exists(_save_path):
+        DirAccess.remove_absolute(ProjectSettings.globalize_path(_save_path))   # новый аккаунт — с нуля
+
+
 func _net_start() -> void:
+    Net.server_msg.connect(_on_server_msg)
+    _apply_profile(Net.profile)
+    _net_point = {"pos": Vector3(0, -1000, 0), "r": 2.2, "text": "ИГРОК", "cb": _open_player_menu, "car": false}
+    _points.append(_net_point)
     Net.player_joined.connect(_on_net_joined)
     Net.player_left.connect(_on_net_left)
     Net.states_received.connect(_on_net_states)
     Net.chat_received.connect(_on_net_chat)
     Net.lost.connect(_on_net_lost)
-    var nm := passport_name if passport_name != "" else ""
-    Net.hello(nm, {"look": look})
+    Net.reconnected.connect(_on_net_reconnected)
+    Net.reconnect_failed.connect(func(msg: String) -> void:
+        _hud.chat("Не удалось вернуться на сервер (%s) — играешь офлайн, прогресс сохранится на телефоне." % msg, "warn"))
+    Net.hello(Net.nick, {"look": look, "sex": "f" if player_female else "m"})
     _hud.chat("Онлайн: %s. Чат — кнопка с микрофоном, «/g текст» — написать всем." % Net.host_text, "info")
 
 
@@ -6584,8 +6716,26 @@ func _on_net_chat(pname: String, text: String, global: bool) -> void:
 func _on_net_lost() -> void:
     for id: int in _remote.keys():
         _on_net_left(id)
-    _hud.chat("Связь с сервером потеряна — играешь офлайн.", "warn")
+    if Net.kick_msg != "":
+        _hud.chat("Отключён: %s" % Net.kick_msg, "warn")
+    if _ride_id >= 0:
+        _leave_ride()
+    for id: int in _pcars.keys():
+        _clear_pcars(id)
+    if Net.reconnecting:
+        _hud.chat("Связь с сервером оборвалась — переподключаюсь...", "warn")
+    else:
+        _hud.chat("Связь с сервером потеряна — прогресс сохранится локально, перезайди в игру.", "warn")
     Sfx.play("error")
+
+
+func _on_net_reconnected() -> void:
+    _pcars_sent = ""
+    _apply_profile(Net.profile)
+    _save_game()
+    Net.hello(Net.nick, {"look": look, "sex": "f" if player_female else "m"})
+    _hud.chat("Связь восстановлена.", "info")
+    Sfx.play("notify")
 
 
 func _on_net_joined(id: int, pname: String, info: Dictionary) -> void:
@@ -6595,6 +6745,7 @@ func _on_net_joined(id: int, pname: String, info: Dictionary) -> void:
     var tex := Clothes.textures(lk)
     var n = NpcScript.new()
     n.npc_name = pname
+    n.female = String(info.get("sex", "")) == "f"
     n.remote = true
     n.collide = false
     n.mark = false
@@ -6624,6 +6775,7 @@ func _on_net_left(id: int) -> void:
         (r["car"] as Node).queue_free()
     _hud.chat("%s вышел из игры" % r["name"], "time")
     _remote.erase(id)
+    _clear_pcars(id)
 
 
 func _on_net_states(list: Array) -> void:
@@ -6637,12 +6789,38 @@ func _on_net_states(list: Array) -> void:
         r["tyaw"] = float(st[1])
         r["anim"] = String(st[2])
         r["aspeed"] = float(st[3])
+        var w := int(st[6]) if st.size() > 6 else 0
+        var fid := String(st[8]) if st.size() > 8 else ""
+        if w != int(r.get("wanted", -1)) or fid != String(r.get("fid", "?")):
+            r["wanted"] = w
+            r["fid"] = fid
+            var col := Color(0.75, 0.9, 1.0)
+            var tag := ""
+            if fid != "":
+                col = (FactionData.get_faction(fid).get("color", col) as Color).lightened(0.35)
+                tag = "\n" + String(FactionData.get_faction(fid).get("title", ""))
+            (r["npc"] as Node).set_label(String(r["name"]) + ("  " + "★".repeat(w) if w > 0 else "") + tag, col)
+        var ride := int(st[9]) if st.size() > 9 else 0
+        if ride != int(r.get("ride", 0)):
+            if ride == Net.my_id:
+                _hud.chat("%s сел к тебе в машину" % r["name"], "time")
+            elif int(r.get("ride", 0)) == Net.my_id:
+                _hud.chat("%s вышел из машины" % r["name"], "time")
+            r["ride"] = ride
         var car: Array = st[4]
         var key := "" if car.is_empty() else "%s|%s|%s" % [car[0], car[1], car[2]]
         if key != r["car_key"]:
             _remote_set_car(r, car, key)
         if not car.is_empty():
-            r["txf"] = st[5]
+            var now := Time.get_ticks_msec() / 1000.0
+            var nxf: Transform3D = st[5]
+            var dt := now - float(r.get("tt", 0.0))
+            if dt > 0.03 and dt < 1.0:   # скорость по двум последним пакетам — для предсказания
+                r["vel"] = (nxf.origin - (r["txf"] as Transform3D).origin) / dt
+            else:
+                r["vel"] = Vector3.ZERO
+            r["tt"] = now
+            r["txf"] = nxf
         if not r["seen"]:   # первый раз — сразу на место, без «прилёта» через весь город
             r["seen"] = true
             (r["npc"] as Node3D).global_position = st[0]
@@ -6659,6 +6837,12 @@ func _remote_set_car(r: Dictionary, car: Array, key: String) -> void:
     if car.is_empty():
         n.visible = true
         return
+    r["car"] = _make_remote_car(car, String(r["name"]))
+    n.visible = false
+
+
+## Копия чужой машины: без физики (её двигает сервер), с подписью над крышей.
+func _make_remote_car(car: Array, label: String, label_col := Color(0.75, 0.9, 1.0)) -> Node3D:
     var c = CarScene.instantiate()
     c.kind = String(car[0])
     c.model_id = String(car[1])
@@ -6668,16 +6852,130 @@ func _remote_set_car(r: Dictionary, car: Array, key: String) -> void:
     c.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
     add_child(c)
     var lab := Label3D.new()
-    lab.text = String(r["name"])
+    lab.text = label
     lab.font_size = 64
     lab.pixel_size = 0.005
     lab.outline_size = 12
     lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-    lab.modulate = Color(0.75, 0.9, 1.0)
+    lab.modulate = label_col
     lab.position = Vector3(0, 2.3, 0)
     c.add_child(lab)
-    r["car"] = c
-    n.visible = false
+    return c
+
+
+# ---------------------------------------------------------------- онлайн: припаркованные машины игроков
+var _pcars := {}          # id игрока -> {"name", "l": [[kind, model, paint, name, x, y, z, yaw]...], "nodes": [...]}
+var _pcars_sent := ""
+var _pcars_t := 0.0
+
+
+func _my_parked_cars() -> Array:
+    var out := []
+    for car in _cars:
+        if car == null or not is_instance_valid(car) or not car.owned or not car.visible or car == _driving:
+            continue
+        var p: Vector3 = car.global_position
+        var f: Vector3 = car.global_transform.basis.z
+        out.append([String(car.kind), String(car.model_id), (car.paint as Color).to_html(false), String(car.car_name),
+                snappedf(p.x, 0.1), snappedf(p.y, 0.1), snappedf(p.z, 0.1), snappedf(atan2(f.x, f.z), 0.05)])
+        if out.size() >= 6:
+            break
+    return out
+
+
+func _update_pcars(delta: float) -> void:
+    _pcars_t += delta
+    if _pcars_t < 1.0:
+        return
+    _pcars_t = 0.0
+    var mine := _my_parked_cars()
+    var js := JSON.stringify(mine)
+    if js != _pcars_sent:
+        _pcars_sent = js
+        Net.send_msg({"t": "pcars", "l": mine})
+    # чужие стоящие машины — только рядом (на телефоне не держим весь город)
+    var me: Vector3 = _player.global_position
+    for id: int in _pcars:
+        var e: Dictionary = _pcars[id]
+        var l: Array = e["l"]
+        var nodes: Array = e["nodes"]
+        for i in l.size():
+            var a: Array = l[i]
+            var pos := Vector3(float(a[4]), float(a[5]), float(a[6]))
+            var d := pos.distance_to(me)
+            if nodes[i] == null and d < 220.0:
+                var c := _make_remote_car(a, "Машина: %s" % e["name"], Color(0.85, 0.85, 0.85))
+                c.global_transform = Transform3D(Basis(Vector3.UP, float(a[7])), pos)
+                nodes[i] = c
+            elif nodes[i] != null and d > 260.0:
+                (nodes[i] as Node).queue_free()
+                nodes[i] = null
+
+
+func _set_pcars(id: int, l: Variant) -> void:
+    _clear_pcars(id)
+    if not l is Array or (l as Array).is_empty():
+        return
+    var ok := []
+    for a: Variant in l:
+        if a is Array and (a as Array).size() >= 8:
+            ok.append(a)
+    var nm := String(_remote[id]["name"]) if _remote.has(id) else "игрок"
+    var nodes := []
+    nodes.resize(ok.size())
+    _pcars[id] = {"name": nm, "l": ok, "nodes": nodes}
+    _pcars_t = 1.0
+
+
+func _clear_pcars(id: int) -> void:
+    if not _pcars.has(id):
+        return
+    for c: Variant in _pcars[id]["nodes"]:
+        if c != null and is_instance_valid(c):
+            (c as Node).queue_free()
+    _pcars.erase(id)
+
+
+# ---------------------------------------------------------------- онлайн: пассажир в машине другого игрока
+var _ride_id := -1
+
+
+func _remote_car_near() -> int:
+    if _player == null or jail_left > 0.0 or _player.seated != "":
+        return -1
+    var best := -1
+    var bd := 3.6
+    for id: int in _remote:
+        var c = _remote[id]["car"]
+        if c == null or not is_instance_valid(c):
+            continue
+        var d: float = (c as Node3D).global_position.distance_to(_player.global_position)
+        if d < bd:
+            bd = d
+            best = id
+    return best
+
+
+func _board_ride(id: int) -> void:
+    var c = _remote[id]["car"]
+    _ride_id = id
+    _player.set_active(false)
+    c.watch(true)
+    Sfx.play("car_door", -6.0, randf_range(0.95, 1.05))
+    _hud.show_toast("Ты пассажир у %s. «ВЫЙТИ» — выйти из машины" % _remote[id]["name"])
+
+
+func _leave_ride() -> void:
+    var id := _ride_id
+    _ride_id = -1
+    var pos: Vector3 = _player.global_position
+    if _remote.has(id) and _remote[id]["car"] != null and is_instance_valid(_remote[id]["car"]):
+        var c = _remote[id]["car"]
+        c.watch(false)
+        pos = c.get_exit_position()
+    _player.global_position = pos
+    _player.set_active(true)
+    Sfx.play("car_door", -6.0, randf_range(0.95, 1.05))
 
 
 func _update_online(delta: float) -> void:
@@ -6695,7 +6993,17 @@ func _update_online(delta: float) -> void:
         an = String(_player._anim.current_animation)
         asp = _player._anim.speed_scale
     var yaw: float = _player._visual.global_rotation.y if _player._visual else 0.0
-    Net.send_state(delta, [_player.global_position, yaw, an, asp, car, xf])
+    var my_pos: Vector3 = _player.global_position
+    if _ride_id >= 0:
+        if not _remote.has(_ride_id) or _remote[_ride_id]["car"] == null or not is_instance_valid(_remote[_ride_id]["car"]):
+            _leave_ride()
+        else:
+            my_pos = (_remote[_ride_id]["car"] as Node3D).global_position
+            _player.global_position = my_pos + Vector3.UP * 0.3
+    Net.send_state(delta, [my_pos, yaw, an, asp, car, xf, wanted, int(health), maxi(_ride_id, 0)])
+    if Net.authed:
+        _net_sync(delta)
+        _update_pcars(delta)
     # другие игроки — плавно к последним данным
     var k := 1.0 - exp(-10.0 * delta)
     for id: int in _remote:
@@ -6703,9 +7011,18 @@ func _update_online(delta: float) -> void:
         if not r["seen"]:
             continue
         var n: Node3D = r["npc"]
+        if int(r.get("ride", 0)) > 0:   # едет пассажиром — его не видно, он в машине
+            n.visible = false
+            continue
         if r["car"] != null and is_instance_valid(r["car"]):
             var c: Node3D = r["car"]
-            c.global_transform = c.global_transform.interpolate_with(r["txf"], k)
+            var txf: Transform3D = r["txf"]
+            var ahead := clampf(Time.get_ticks_msec() / 1000.0 - float(r.get("tt", 0.0)), 0.0, 0.3)
+            txf.origin += (r.get("vel", Vector3.ZERO) as Vector3) * ahead   # предсказание до следующего пакета
+            if c.global_position.distance_to(txf.origin) > 25.0:
+                c.global_transform = txf
+            else:
+                c.global_transform = c.global_transform.interpolate_with(txf, k)
             n.global_position = c.global_position
             continue
         if not n.visible:
@@ -6718,3 +7035,331 @@ func _update_online(delta: float) -> void:
         n.rotation.y = lerp_angle(n.rotation.y, float(r["tyaw"]), k)
         if r.has("anim"):
             n.play_anim(String(r["anim"]), float(r["aspeed"]))
+
+
+
+# ================================================================ онлайн: сервер — главный
+
+var _money_ver := 0
+var _sent_cash := -1
+var _sent_bank := -1
+var _sent_fid := "?"
+var _sent_rank := -1
+var _sync_t := 0.0
+var _net_admin := 0
+var _net_leader := false
+var _homes_taken := {}
+var _biz_taken := {}             # номер бизнеса -> ник владельца (чужие)
+var _net_roster := {}
+var _net_point := {}
+var _net_target := -1
+
+
+func _apply_profile(prof: Dictionary) -> void:
+    if prof.is_empty():
+        return
+    _money_ver = int(prof.get("ver", 0))
+    if prof.get("cash") != null:
+        cash = int(prof["cash"])
+        bank = int(prof.get("bank", 0))
+    _sent_cash = cash
+    _sent_bank = bank
+    _net_admin = int(prof.get("admin", 0))
+    _net_leader = prof.get("leader", false) == true
+    var fid := String(prof.get("faction", ""))
+    var rk := int(prof.get("rank", 0))
+    if fid != faction or (fid != "" and _clamp_rank(fid, rk) != faction_rank):
+        _apply_faction(fid, rk)
+    _sent_fid = faction
+    _sent_rank = faction_rank
+    var sx := String(prof.get("sex", ""))
+    if sx != "":
+        _set_female(sx == "f")
+    var h := int(prof.get("home", -1))
+    if h != home and h < _city.homes.size():
+        _set_home(h)
+    if _net_admin > 0:
+        _hud.chat("У тебя админка %d уровня. /help admin — команды." % _net_admin, "warn")
+
+
+## Пол персонажа: модель игрока и одежда заново.
+func _set_female(on: bool) -> void:
+    if on == player_female and _player != null and _player.female == on:
+        return
+    player_female = on
+    if _player:
+        _player.set_female(on)
+        _equip_weapon()
+        _apply_look()
+
+
+func _clamp_rank(fid: String, rk: int) -> int:
+    return clampi(rk, 1, FactionData.ranks(fid).size()) if fid != "" else 0
+
+
+func _apply_faction(fid: String, rk: int) -> void:
+    if fid == "":
+        if faction != "":
+            _duty.stop()
+            _hud.minimap.turf = []
+            _fmenu.close_menu()
+            _despawn_faction_car()
+            _set_faction("", 0)
+    elif fid != faction:
+        _set_faction(fid, _clamp_rank(fid, rk))
+    else:
+        faction_rank = _clamp_rank(fid, rk)
+    _apply_look()
+    _hud.profile.set_faction_visible(faction != "")
+
+
+func _net_sync(delta: float) -> void:
+    _sync_t += delta
+    if _sync_t < 1.5:
+        return
+    _sync_t = 0.0
+    if cash != _sent_cash or bank != _sent_bank:
+        _sent_cash = cash
+        _sent_bank = bank
+        Net.send_msg({"t": "money", "cash": cash, "bank": bank, "ver": _money_ver, "src": _earn_pending})
+        _earn_pending = {}
+    if faction != _sent_fid or faction_rank != _sent_rank:
+        _sent_fid = faction
+        _sent_rank = faction_rank
+        Net.send_msg({"t": "faction", "fid": faction, "rank": faction_rank})
+    # кто из игроков рядом — для кнопки «ИГРОК»
+    _net_target = -1
+    var best := 2.6
+    if _driving == null:
+        for id: int in _remote:
+            var r: Dictionary = _remote[id]
+            if r["car"] != null or not r["seen"] or int(r.get("ride", 0)) > 0:
+                continue
+            var d := (r["npc"] as Node3D).global_position.distance_to(_player.global_position)
+            if d < best:
+                best = d
+                _net_target = id
+    if not _net_point.is_empty():
+        _net_point["pos"] = (_remote[_net_target]["npc"] as Node3D).global_position if _net_target >= 0 else Vector3(0, -1000, 0)
+        _net_point["text"] = String(_remote[_net_target]["name"]).to_upper() if _net_target >= 0 else "ИГРОК"
+
+
+func _on_server_msg(m: Dictionary) -> void:
+    match String(m.get("t", "")):
+        "chat":
+            var n := String(m.get("n", ""))
+            var x := String(m.get("x", ""))
+            var k := String(m.get("k", "say"))
+            var kind := {"say": "say", "shout": "shout", "faction": "faction", "pm": "sms", "admin": "warn",
+                    "me": "news", "info": "info"}.get(k, "info") as String
+            var line := x if n == "" else "%s: %s" % [n, x]
+            if k == "shout":
+                line = "[всем] " + line
+            elif k == "faction" and n != "":
+                line = "[рация] " + line
+            for part: String in line.split("\n"):
+                _hud.chat(part, kind)
+            if k == "pm" or k == "admin":
+                Sfx.play("notify")
+        "money_set":
+            cash = int(m.get("cash", cash))
+            bank = int(m.get("bank", bank))
+            _money_ver = int(m.get("ver", _money_ver))
+            _sent_cash = cash
+            _sent_bank = bank
+            var msg := String(m.get("msg", ""))
+            if msg != "":
+                _hud.show_toast(msg, "money")
+                Sfx.play("cash")
+            _save_game()
+        "faction_set":
+            _net_leader = m.get("leader", false) == true
+            _apply_faction(String(m.get("fid", "")), int(m.get("rank", 0)))
+            _sent_fid = faction
+            _sent_rank = faction_rank
+            var fmsg := String(m.get("msg", ""))
+            if fmsg != "":
+                _hud.show_toast(fmsg)
+                _hud.chat(fmsg, "faction")
+            _save_game()
+        "prof":
+            var pr: Dictionary = m.get("prof", {})
+            _net_admin = int(pr.get("admin", _net_admin))
+            _hud.chat("Уровень админки: %d" % _net_admin, "warn")
+        "act":
+            _on_net_act(m)
+        "ask":
+            var aid := int(m.get("id", 0))
+            _open_dialog("Предложение", String(m.get("text", "")),
+                    [["Да", func() -> void:
+                        _dialog.close()
+                        Net.send_msg({"t": "answer", "id": aid, "ok": true})],
+                    ["Нет", func() -> void:
+                        _dialog.close()
+                        Net.send_msg({"t": "answer", "id": aid, "ok": false})]])
+            Sfx.play("notify")
+        "turf":
+            var mp: Dictionary = m.get("map", {})
+            for key: String in mp:
+                if turf.has(key):
+                    turf[key] = String(mp[key])
+            _refresh_turf()
+        "homes":
+            _homes_taken = {}
+            for i: Variant in m.get("taken", []):
+                _homes_taken[int(i)] = true
+        "homes_upd":
+            if m.get("taken", false) == true:
+                _homes_taken[int(m.get("i", -1))] = true
+            else:
+                _homes_taken.erase(int(m.get("i", -1)))
+        "pcars":
+            _set_pcars(int(m.get("id", 0)), m.get("l", []))
+        "bizs":
+            _biz_taken = {}
+            var mp: Dictionary = m.get("map", {}) if m.get("map", {}) is Dictionary else {}
+            for k: String in mp:
+                _biz_taken[int(k)] = String(mp[k])
+            for k: String in biz_owned.keys():   # свои бизнесы из сохранения — оформить на сервере
+                Net.send_msg({"t": "biz", "i": int(k), "buy": true, "claim": true})
+        "biz_upd":
+            if String(m.get("n", "")) != "":
+                _biz_taken[int(m.get("i", -1))] = String(m["n"])
+            else:
+                _biz_taken.erase(int(m.get("i", -1)))
+        "biz_res":
+            var bi := int(m.get("i", -1))
+            if m.get("ok", true) != true and biz_owned.has(str(bi)) and bi < _biz.size():
+                biz_owned.erase(str(bi))
+                if m.get("claim", false) == true:   # из старого сохранения: бизнес уже чужой
+                    _hud.show_toast(String(m.get("msg", "Бизнес занят")))
+                else:
+                    bank += int(_biz[bi]["price"])
+                    _bank_log(int(_biz[bi]["price"]), "Возврат: бизнес занят")
+                    _hud.show_toast(String(m.get("msg", "Бизнес занят")) + " — деньги вернули на карту")
+                _save_game()
+        "home_res":
+            if m.get("ok", true) != true and home == int(m.get("i", -2)):
+                var price := int(_city.homes[home]["price"])
+                _set_home(-1)
+                bank += price
+                _hud.show_toast(String(m.get("msg", "Жильё занято")) + " — деньги вернули на карту")
+                _homes_taken[int(m.get("i", -1))] = true
+        "world":
+            minutes = float(m.get("min", minutes))
+            day = int(m.get("day", day))
+            var w := String(m.get("weather", weather))
+            if w != weather and WEATHER_NAMES.has(w):
+                weather = w
+                _hud.show_toast("Погода: %s" % WEATHER_NAMES[weather], "weather")
+                _update_daylight()
+        "roster":
+            _net_roster = m
+            if _fmenu and _fmenu.visible:
+                _fmenu.set_data(_fmenu_data())
+        "tp":
+            if _driving:
+                _toggle_vehicle()
+            _player.global_position = Vector3(float(m.get("x", 0)), float(m.get("y", 1)), float(m.get("z", 0)))
+            _player.velocity = Vector3.ZERO
+            _hud.show_toast("Телепорт от администратора")
+
+
+func _on_net_act(m: Dictionary) -> void:
+    var who := String(m.get("name", ""))
+    match String(m.get("kind", "")):
+        "hit":
+            health = maxf(0.0, health - float(m.get("dmg", 5)))
+            Sfx.play("hit")
+            _hud.show_toast("%s %s тебя!" % [who, "ударил" if m.get("melee", true) == true else "подстрелил"], "warn")
+        "arrest":
+            _hud.chat("Тебя задержал сотрудник %s" % who, "warn")
+            _arrest()
+        "heal":
+            health = 100.0
+            Sfx.play("heal")
+            _hud.show_toast("%s вылечил тебя" % who)
+
+
+## Попали ли мы ударом/выстрелом в другого игрока. true — попали (сервер передаст урон).
+func _net_hit(origin: Vector3, dir: Vector3, reach: float, cone: float, melee: bool) -> bool:
+    var best := -1
+    var best_d := reach
+    for id: int in _remote:
+        var r: Dictionary = _remote[id]
+        if r["car"] != null or not r["seen"]:
+            continue
+        var to: Vector3 = (r["npc"] as Node3D).global_position + Vector3(0, 1.1, 0) - origin
+        var d := to.length()
+        if d > best_d or d < 0.1:
+            continue
+        if rad_to_deg(dir.angle_to(to)) > cone * 0.5 + 6.0:
+            continue
+        best = id
+        best_d = d
+    if best < 0:
+        return false
+    var dmg := 6 + int(float(skills["strength"]) / 10.0) if melee else 18 + int(float(skills["shooting"]) / 8.0)
+    Net.send_msg({"t": "act", "to": best, "kind": "hit", "dmg": dmg, "melee": melee})
+    return true
+
+
+func _open_player_menu() -> void:
+    if _net_target < 0 or not _remote.has(_net_target):
+        return
+    var id := _net_target
+    var r: Dictionary = _remote[id]
+    var fid := String(r.get("fid", ""))
+    var w := int(r.get("wanted", 0))
+    var text := "Организация: %s" % (FactionData.get_faction(fid).get("name", "нет") if fid != "" else "нет")
+    if w > 0:
+        text += "\nВ розыске: %s" % "★".repeat(w)
+    var buttons := [["Передать деньги", _give_money_dialog.bind(id)],
+            ["Попросить паспорт", _net_act.bind(id, "passport")]]
+    if (FactionData.base(faction) == "police" or faction == "kgb") and w > 0:
+        buttons.append(["Задержать", _net_act.bind(id, "arrest")])
+    if FactionData.base(faction) == "hospital":
+        buttons.append(["Предложить лечение (300 ₽)", _net_act.bind(id, "heal")])
+    if faction != "" and fid == "" and (_net_leader or _net_admin >= 3):
+        buttons.append(["Пригласить в организацию", _net_act.bind(id, "invite")])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog(String(r["name"]), text, buttons)
+
+
+func _net_act(id: int, kind: String) -> void:
+    _dialog.close()
+    Net.send_msg({"t": "act", "to": id, "kind": kind})
+
+
+func _give_money_dialog(id: int) -> void:
+    _open_dialog("Передать деньги", "Сколько наличных передать игроку %s?" % _remote[id]["name"],
+            [["Передать", func() -> void:
+                var amount := int(_dialog.input_text())
+                _dialog.close()
+                if amount <= 0 or amount > cash:
+                    _hud.show_toast("Неверная сумма или не хватает наличных")
+                    return
+                _sync_t = 99.0
+                _net_sync(0.0)   # сначала сервер узнаёт наши деньги, потом — перевод
+                Net.send_msg({"t": "give", "to": id, "amount": amount})],
+            ["Отмена", _dialog.close]], "Сумма, ₽")
+
+
+func _org_info_online() -> Dictionary:
+    var top := FactionData.ranks(faction).size()
+    var roster: Array = []
+    var online_n := 0
+    for e: Variant in _net_roster.get("list", []):
+        var d: Dictionary = e
+        var rk := clampi(int(d.get("rank", 1)), 1, top)
+        var lead: bool = d.get("leader", false) == true
+        var on: bool = d.get("online", false) == true
+        if on:
+            online_n += 1
+        roster.append({"name": String(d.get("nick", "")), "rank": rk, "online": on, "me": String(d.get("nick", "")) == Net.nick,
+                "role": "Лидер" if lead else FactionData.rank_name(rk, faction)})
+    var sd := absi(hash(faction))
+    return {"roster": roster, "members": roster.size(), "online": online_n, "cap": ORG_CAP,
+            "leader": String(_net_roster.get("leader", "")) if String(_net_roster.get("leader", "")) != "" else "нет (назначает администрация)",
+            "rating": HudScript.format_money(5000 + roster.size() * 250 + (_turf_count(faction) * 800 if FactionData.is_gang(faction) else 0)).replace(" ₽", "").replace("₽", "").strip_edges(),
+            "created": "%02d.%02d.%d" % [1 + sd % 28, 1 + (sd / 28) % 12, 1971 + (sd / 336) % 15]}

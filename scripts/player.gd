@@ -7,7 +7,8 @@ extends CharacterBody3D
 const TouchControlsScript := preload("res://scripts/touch_controls.gd")
 const BodyMesh := preload("res://scripts/body_mesh.gd")
 ## Персонаж Quaternius (CC0) с анимациями. Если файла нет — собираем своего из деталей.
-const CHARACTER_PATH := "res://models/character/character.gltf"
+var CHARACTER_PATH: String = preload("res://scripts/outfits.gd").male_model()
+var female := false              # пол персонажа (выбирается при регистрации)
 const CHAR_DIR := "res://models/character/"
 ## Какие анимации из библиотеки брать для состояний.
 const ANIM_NAMES := {"idle": "Idle_Loop", "walk": "Walk_Loop", "run": "Sprint_Loop", "jog": "Jog_Fwd_Loop",
@@ -163,6 +164,13 @@ func set_look(colors: Dictionary, textures := {}) -> void:
             _set_cloth(_look_mats[id], String(textures[id]))
     if _body_sh:
         for slot: String in ["jacket", "pants", "shoes"]:
+            if textures.has(slot):
+                _look_tex[slot] = String(textures[slot])
+            if colors.has(slot):
+                _look_col[slot] = colors[slot]
+        OutfitsScript.apply(_body_sh, String(_look_tex.get("jacket", "")), String(_look_tex.get("pants", "")),
+                String(_look_tex.get("shoes", "")), _look_col.get("jacket", Color.WHITE), female)
+        for slot: String in ["jacket", "pants", "shoes"]:
             if colors.has(slot):
                 var c: Color = colors[slot]
                 _body_sh.set_shader_parameter(slot + "_col", Vector3(c.r, c.g, c.b))
@@ -178,16 +186,20 @@ func set_look(colors: Dictionary, textures := {}) -> void:
             for part in style.split(","):
                 if String(part).begins_with("badge:"):
                     badge = String(part).substr(6)
-            var print_path := CHAR_DIR + ("body_badge_%s.png" % badge if badge != "" else "print_ussr.png")
+            var print_path := OutfitsScript.body_path("body_badge_%s.png" % badge if badge != "" else "print_ussr.png")
             if ResourceLoader.exists(print_path):
                 _body_sh.set_shader_parameter("print_tex", load(print_path))
-            _body_sh.set_shader_parameter("print_on", 1.0 if (style.contains("print") or badge != "") else 0.0)
-            _set_overlay("lampas", style.contains("lampas"))
-            _set_overlay("tape", style.contains("tape"))
-            _set_overlay("vest", style.contains("vest"))
+            # шевроны и лампасы нарисованы под мужскую развёртку — у женской модели их нет
+            _body_sh.set_shader_parameter("print_on", 1.0 if (style.contains("print") or badge != "") and not female else 0.0)
+            _set_overlay("lampas", style.contains("lampas") and not female)
+            _set_overlay("tape", style.contains("tape") and not female)
+            _set_overlay("vest", style.contains("vest") and not female)
         if colors.has("skin"):
             var sc: Color = colors["skin"]
             _body_sh.set_shader_parameter("skin_tint", Vector3(sc.r / 0.87, sc.g / 0.68, sc.b / 0.55))
+    if _body_sh and colors.has("hair"):
+        var hcol: Color = colors["hair"]
+        OutfitsScript.set_hair(_body_sh, hcol, not (OutfitsScript.TOP_F if female else OutfitsScript.TOP).has(String(_look_tex.get("jacket", ""))))
     if _hair_mat and colors.has("hair"):
         var hc: Color = colors["hair"]
         _hair_mat.albedo_color = hc.lightened(0.15)
@@ -424,6 +436,15 @@ var _skin_path := ""
 var _custom_skin := false
 
 
+## Сменить пол: другая модель (женская — models/character/human_f.gltf), одежда — заново через set_look.
+func set_female(on: bool) -> void:
+    if on == female and _model != null:
+        return
+    female = on
+    CHARACTER_PATH = OutfitsScript.female_model() if on else OutfitsScript.male_model()
+    set_skin("")
+
+
 func set_skin(path: String) -> bool:
     var want := path if path != "" and ResourceLoader.exists(path) else CHARACTER_PATH
     if want == _skin_path or not ResourceLoader.exists(want):
@@ -646,20 +667,23 @@ func _end_consume_prop_only() -> void:
 
 ## Материалы для персонажа Quaternius: тело с одеждой по маске, волосы, брови.
 var _body_sh: ShaderMaterial = null
+var _look_tex := {}     # текущие ткани (для готовой формы — scripts/outfits.gd)
+var _look_col := {}
+const OutfitsScript := preload("res://scripts/outfits.gd")
 var _hair_mat: StandardMaterial3D = null
 
 
 func _setup_character_look(root: Node) -> void:
-    if not ResourceLoader.exists("res://shaders/character.gdshader") or not ResourceLoader.exists(CHAR_DIR + "body_mask.png"):
+    if not ResourceLoader.exists("res://shaders/character.gdshader") or not ResourceLoader.exists(OutfitsScript.body_path("body_mask.png")):
         return
     _body_sh = ShaderMaterial.new()
     _body_sh.shader = load("res://shaders/character.gdshader")
-    _body_sh.set_shader_parameter("body_tex", load(CHAR_DIR + "body_light.png"))
-    _body_sh.set_shader_parameter("mask_tex", load(CHAR_DIR + "body_mask.png"))
-    if ResourceLoader.exists(CHAR_DIR + "sleeve_mask.png"):
-        _body_sh.set_shader_parameter("sleeve_tex", load(CHAR_DIR + "sleeve_mask.png"))
-    if ResourceLoader.exists(CHAR_DIR + "print_ussr.png"):
-        _body_sh.set_shader_parameter("print_tex", load(CHAR_DIR + "print_ussr.png"))
+    if female:
+        OutfitsScript.setup_female(_body_sh)
+    else:
+        OutfitsScript.setup_male(_body_sh)
+    if ResourceLoader.exists(OutfitsScript.body_path("print_ussr.png")):
+        _body_sh.set_shader_parameter("print_tex", load(OutfitsScript.body_path("print_ussr.png")))
     for slot: String in ["jacket", "pants", "shoes"]:
         var t := _load_tex({"jacket": "cloth_red_cotton", "pants": "cloth_denim_blue", "shoes": "cloth_leather_brown"}[slot])
         if t:
@@ -1003,11 +1027,11 @@ func _set_overlay(kind: String, on: bool) -> void:
     _body_sh.set_meta("ov_" + kind, true)
     match kind:
         "lampas":
-            _body_sh.set_shader_parameter("lampas_tex", load(CHAR_DIR + "body_lampas.png"))
+            _body_sh.set_shader_parameter("lampas_tex", load(OutfitsScript.body_path("body_lampas.png")))
         "tape":
-            _body_sh.set_shader_parameter("tape_tex", load(CHAR_DIR + "body_tape.png"))
+            _body_sh.set_shader_parameter("tape_tex", load(OutfitsScript.body_path("body_tape.png")))
         "vest":
-            _body_sh.set_shader_parameter("vest_mask", load(CHAR_DIR + "body_vest.png"))
+            _body_sh.set_shader_parameter("vest_mask", load(OutfitsScript.body_path("body_vest.png")))
             var vt := _load_tex("uni_vest")
             if vt:
                 _body_sh.set_shader_parameter("vest_tex", vt)
@@ -1139,7 +1163,7 @@ func set_cap(kind: String, col := Color(0, 0, 0, 0)) -> void:
     sk.add_child(att)
     _cap = att
     var hat := Hats.build(kind, col)
-    hat.position = Vector3(0, 0.16, 0.008)   # от кости головы до низа околыша (по модели персонажа)
+    OutfitsScript.place_hat(hat, female)   # от кости головы до низа околыша (по модели персонажа)
     att.add_child(hat)
     if Hats.covers_hair(kind):
         _set_hair_visible(false)

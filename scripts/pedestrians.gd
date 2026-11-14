@@ -54,7 +54,7 @@ func setup() -> void:
     if ResourceLoader.exists("res://shaders/character.gdshader"):
         _shader = load("res://shaders/character.gdshader")
         for k: String in ["male", "female"]:
-            var path := CHAR_DIR + ("character.gltf" if k == "male" else "female.gltf")
+            var path: String = preload("res://scripts/outfits.gd").male_model() if k == "male" else preload("res://scripts/outfits.gd").female_model()
             if ResourceLoader.exists(path):
                 var sc = load(path)
                 if sc is PackedScene:
@@ -369,10 +369,10 @@ func _make_ped_3d() -> Dictionary:
     var shoes_name: String = shoes_l[_rng.randi() % shoes_l.size()]
     var mat := ShaderMaterial.new()
     mat.shader = _shader
-    var pre := "female_" if female else "body_"
-    mat.set_shader_parameter("body_tex", _ctex(CHAR_DIR + ("female_light.png" if female else "body_light.png")))
-    mat.set_shader_parameter("mask_tex", _ctex(CHAR_DIR + pre + "mask.png"))
-    mat.set_shader_parameter("sleeve_tex", _ctex(CHAR_DIR + ("female_sleeve.png" if female else "sleeve_mask.png")))
+    if female:
+        preload("res://scripts/outfits.gd").setup_female(mat, HAIR_COLORS[_rng.randi() % HAIR_COLORS.size()])
+    else:
+        preload("res://scripts/outfits.gd").setup_male(mat, HAIR_COLORS[_rng.randi() % HAIR_COLORS.size()])
     mat.set_shader_parameter("jacket_tex", _ctex(String(top[0])))
     mat.set_shader_parameter("pants_tex", _ctex(pants_name))
     mat.set_shader_parameter("shoes_tex", _ctex(shoes_name))
@@ -382,6 +382,7 @@ func _make_ped_3d() -> Dictionary:
     mat.set_shader_parameter("long_sleeves", 0.0 if style.contains("short") else 1.0)
     mat.set_shader_parameter("print_on", 0.0)
     mat.set_shader_parameter("skin_tint", SKIN_TINTS[_rng.randi() % SKIN_TINTS.size()])
+    preload("res://scripts/outfits.gd").apply(mat, String(top[0]), pants_name, shoes_name, Color.WHITE, female)
 
     # причёска и цвет волос
     var hair_mat := StandardMaterial3D.new()

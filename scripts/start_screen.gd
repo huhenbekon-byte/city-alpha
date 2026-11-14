@@ -17,7 +17,7 @@ const GOLD := Color(0.95, 0.74, 0.33)
 ## Сервера на экране выбора.
 ## host — адрес онлайн-сервера ("адрес:порт"); пусто — одиночная игра без сети.
 const SERVERS := [
-    {"name": "1 СЕРВЕР", "info": "Казань · Пятигорск · Бусаево", "host": ""},
+    {"name": "1 СЕРВЕР", "info": "Онлайн · Казань · Пятигорск · Бусаево", "host": "city-alpha.onrender.com"},
 ]
 var chosen_host := ""      # куда подключаться (читает main.gd после server_chosen)
 var _addr: LineEdit
@@ -363,6 +363,184 @@ func _build_loading() -> void:
     _load_bar.offset_right = 420
     _load_bar.offset_top = -86
     _load_bar.offset_bottom = -70
+
+
+## Кнопка «Играть офлайн» на время подключения к серверу.
+var _offline_btn: Button
+
+
+func show_offline_button(on: bool) -> void:
+    if on and _offline_btn == null:
+        _offline_btn = Button.new()
+        _offline_btn.text = "Играть офлайн"
+        _offline_btn.focus_mode = Control.FOCUS_NONE
+        _offline_btn.add_theme_font_size_override("font_size", 26)
+        for st: String in ["normal", "hover", "pressed"]:
+            _offline_btn.add_theme_stylebox_override(st, _pill(Color(0.04, 0.05, 0.08, 0.85), Color(1, 1, 1, 0.3), 30))
+        _page_loading.add_child(_offline_btn)
+        _offline_btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+        _offline_btn.offset_left = -170
+        _offline_btn.offset_right = 170
+        _offline_btn.offset_top = -240
+        _offline_btn.offset_bottom = -180
+        _offline_btn.pressed.connect(func() -> void:
+            Sfx.play("click")
+            Net.cancel_join = true)
+    if _offline_btn:
+        _offline_btn.visible = on
+
+
+## Вход в аккаунт онлайн-сервера (поверх экрана загрузки).
+## Возвращает [true, ник, сохранение] — вошёл; [false, "", ""] — выбрал офлайн.
+signal _login_done(res: Array)
+var _login_panel: PanelContainer
+
+
+func ask_login() -> Array:
+    var cfg := ConfigFile.new()
+    cfg.load("user://settings.cfg")
+    _login_panel = PanelContainer.new()
+    var sb := _pill(Color(0.04, 0.05, 0.08, 0.94), GOLD * Color(1, 1, 1, 0.6), 30)
+    sb.content_margin_left = 40
+    sb.content_margin_right = 40
+    sb.content_margin_top = 30
+    sb.content_margin_bottom = 30
+    _login_panel.add_theme_stylebox_override("panel", sb)
+    _page_loading.add_child(_login_panel)
+    _login_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+    _login_panel.offset_left = -380
+    _login_panel.offset_right = 380
+    _login_panel.offset_top = -310
+    _login_panel.offset_bottom = 270
+    var box := VBoxContainer.new()
+    box.add_theme_constant_override("separation", 16)
+    _login_panel.add_child(box)
+    var title := _text(box, "ВХОД В АККАУНТ", 40, GOLD)
+    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    var nick := LineEdit.new()
+    nick.placeholder_text = "Ник (например, Иван_Петров)"
+    nick.max_length = 20
+    nick.custom_minimum_size = Vector2(0, 64)
+    nick.add_theme_font_size_override("font_size", 28)
+    nick.text = String(cfg.get_value("net", "nick", ""))
+    box.add_child(nick)
+    var pw := LineEdit.new()
+    pw.placeholder_text = "Пароль"
+    pw.secret = true
+    pw.max_length = 64
+    pw.custom_minimum_size = Vector2(0, 64)
+    pw.add_theme_font_size_override("font_size", 28)
+    pw.text = String(cfg.get_value("net", "pass", ""))
+    box.add_child(pw)
+    # пол персонажа — выбирается при регистрации (для входа в старый аккаунт не нужен)
+    var sex := ["m"]
+    var srow := HBoxContainer.new()
+    srow.add_theme_constant_override("separation", 12)
+    srow.alignment = BoxContainer.ALIGNMENT_CENTER
+    box.add_child(srow)
+    _text(srow, "Персонаж:", 24, Color(1, 1, 1, 0.75))
+    var b_m := _sex_button(srow, "МУЖЧИНА")
+    var b_f := _sex_button(srow, "ЖЕНЩИНА")
+    var pick_sex := func(v: String) -> void:
+        sex[0] = v
+        _sex_style(b_m, v == "m")
+        _sex_style(b_f, v == "f")
+    b_m.pressed.connect(func() -> void:
+        Sfx.play("click")
+        pick_sex.call("m"))
+    b_f.pressed.connect(func() -> void:
+        Sfx.play("click")
+        pick_sex.call("f"))
+    pick_sex.call("m")
+    var err := _text(box, "Новый игрок — придумай ник и пароль, выбери персонажа и нажми «Регистрация»", 22, Color(1, 1, 1, 0.7))
+    err.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    err.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", 16)
+    row.alignment = BoxContainer.ALIGNMENT_CENTER
+    box.add_child(row)
+    var b_in := _login_button(row, "ВОЙТИ", true)
+    var b_reg := _login_button(row, "РЕГИСТРАЦИЯ", false)
+    var b_off := Button.new()
+    b_off.flat = true
+    b_off.text = "Играть офлайн"
+    b_off.focus_mode = Control.FOCUS_NONE
+    b_off.add_theme_font_size_override("font_size", 22)
+    b_off.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+    box.add_child(b_off)
+    var busy := [false]
+    var try_auth := func(mode: String) -> void:
+        if busy[0]:
+            return
+        if not Net.online:
+            err.text = "Нет связи с сервером"
+            return
+        busy[0] = true
+        err.text = "Подождите..."
+        err.label_settings.font_color = Color(1, 1, 1, 0.7)
+        Sfx.play("click")
+        Net.auth(mode, nick.text.strip_edges(), pw.text, sex[0])
+        var r: Array = await Net.auth_result
+        busy[0] = false
+        if bool(r[0]):
+            var c2 := ConfigFile.new()
+            c2.load("user://settings.cfg")
+            c2.set_value("net", "nick", String(r[2]))
+            c2.set_value("net", "pass", pw.text)
+            c2.save("user://settings.cfg")
+            _login_panel.queue_free()
+            _login_done.emit([true, String(r[2]), String(r[3])])
+        else:
+            Sfx.play("error")
+            err.text = String(r[1])
+            err.label_settings.font_color = Color(1.0, 0.45, 0.35)
+    b_in.pressed.connect(func() -> void: try_auth.call("login"))
+    b_reg.pressed.connect(func() -> void: try_auth.call("register"))
+    b_off.pressed.connect(func() -> void:
+        Sfx.play("click")
+        _login_panel.queue_free()
+        _login_done.emit([false, "", ""]))
+    var res: Array = await _login_done
+    return res
+
+
+func _sex_button(parent: Control, text: String) -> Button:
+    var b := Button.new()
+    b.text = text
+    b.custom_minimum_size = Vector2(200, 56)
+    b.focus_mode = Control.FOCUS_NONE
+    if _font:
+        b.add_theme_font_override("font", _font)
+    b.add_theme_font_size_override("font_size", 24)
+    parent.add_child(b)
+    return b
+
+
+func _sex_style(b: Button, on: bool) -> void:
+    var bg := Color(0.95, 0.74, 0.33) if on else Color(0.10, 0.11, 0.14)
+    var fg := Color(0.08, 0.08, 0.08) if on else Color(1, 1, 1, 0.8)
+    for st: String in ["normal", "hover", "pressed"]:
+        b.add_theme_stylebox_override(st, _pill(bg, GOLD, 26))
+    for k: String in ["font_color", "font_hover_color", "font_pressed_color"]:
+        b.add_theme_color_override(k, fg)
+
+
+func _login_button(parent: Control, text: String, main: bool) -> Button:
+    var b := Button.new()
+    b.text = text
+    b.custom_minimum_size = Vector2(300, 72)
+    b.focus_mode = Control.FOCUS_NONE
+    if _font:
+        b.add_theme_font_override("font", _font)
+    b.add_theme_font_size_override("font_size", 28)
+    var bg := Color(0.95, 0.74, 0.33) if main else Color(0.10, 0.11, 0.14)
+    var fg := Color(0.08, 0.08, 0.08) if main else Color.WHITE
+    for st: String in ["normal", "hover", "pressed"]:
+        b.add_theme_stylebox_override(st, _pill(bg.lightened(0.1 if st == "pressed" else 0.0), GOLD, 30))
+    for k: String in ["font_color", "font_hover_color", "font_pressed_color"]:
+        b.add_theme_color_override(k, fg)
+    parent.add_child(b)
+    return b
 
 
 ## Плавно довести полосу загрузки до value (с надписью).
