@@ -789,6 +789,12 @@ function onMessage(p, m) {
     case 'turf': return onTurf(p, m);
     case 'home': return onHome(p, m);
     case 'biz': return onBiz(p, m);
+    case 'crash': {   // журнал вылета с телефона игрока — в лог сервера (Render → Logs)
+      const txt = String(m.log || '').slice(-6000);
+      log(`ВЫЛЕТ у ${p.acc.nick} (${String(m.dev || '').slice(0, 60)}):\n${txt}`);
+      dbLater('crashes/' + p.acc.key, { [Date.now()]: { dev: String(m.dev || '').slice(0, 60), log: txt } });
+      return;
+    }
     case 'pcars': {   // свои припаркованные машины — показать другим
       if (!Array.isArray(m.l) || m.l.length > 6) return;
       const l = m.l.filter(a => Array.isArray(a) && a.length === 8 && a.slice(4).every(Number.isFinite))

@@ -703,10 +703,27 @@ func _on_play() -> void:
     _touch.visible = true
     get_tree().paused = false
     Music.stop()
+    Crash.mark("игра: старт")
+    if Crash.report != "":
+        _show_crash_report.call_deferred()
+
+
+## Прошлый запуск оборвался: показываем хвост журнала и отправляем его на сервер (Render → Logs).
+func _show_crash_report() -> void:
+    var rep: String = Crash.report
+    Crash.report = ""
+    if Net.authed:
+        Net.send_msg({"t": "crash", "dev": OS.get_model_name(), "log": rep.right(6000)})
+    var lines := rep.split("\n")
+    var short := "\n".join(lines.slice(maxi(0, lines.size() - 18)))
+    _open_dialog("Игра закрылась в прошлый раз", ("Журнал отправлен разработчику. " if Net.authed else "") +
+            "Сделай скриншот и пришли его — так найдём причину:\n\n" + short, [["Понятно", _dialog.close]])
 
 
 func _on_quit() -> void:
     _save_game()
+    Crash.mark("[выход]")
+    Crash._set_flag(false)
     get_tree().quit()
 
 
@@ -6671,6 +6688,7 @@ func _use_account(nick: String, save_text: String) -> void:
 
 
 func _net_start() -> void:
+    Crash.mark("онлайн: старт")
     Net.server_msg.connect(_on_server_msg)
     _apply_profile(Net.profile)
     _net_point = {"pos": Vector3(0, -1000, 0), "r": 2.2, "text": "ИГРОК", "cb": _open_player_menu, "car": false}
@@ -6683,6 +6701,7 @@ func _net_start() -> void:
     Net.reconnected.connect(_on_net_reconnected)
     Net.reconnect_failed.connect(func(msg: String) -> void:
         _hud.chat("Не удалось вернуться на сервер (%s) — играешь офлайн, прогресс сохранится на телефоне." % msg, "warn"))
+    Crash.mark("онлайн: профиль применён, hello")
     Net.hello(Net.nick, {"look": look, "sex": "f" if player_female else "m"})
     _hud.chat("Онлайн: %s. Чат — кнопка с микрофоном, «/g текст» — написать всем." % Net.host_text, "info")
 
@@ -6743,6 +6762,7 @@ func _on_net_joined(id: int, pname: String, info: Dictionary) -> void:
         return
     var lk: Dictionary = info.get("look", {}) if info.get("look", {}) is Dictionary else {}
     var tex := Clothes.textures(lk)
+    Crash.mark("онлайн: игрок %s" % pname)
     var n = NpcScript.new()
     n.npc_name = pname
     n.female = String(info.get("sex", "")) == "f"
@@ -6843,6 +6863,7 @@ func _remote_set_car(r: Dictionary, car: Array, key: String) -> void:
 
 ## Копия чужой машины: без физики (её двигает сервер), с подписью над крышей.
 func _make_remote_car(car: Array, label: String, label_col := Color(0.75, 0.9, 1.0)) -> Node3D:
+    Crash.mark("онлайн: машина %s %s" % [str(car[0]), str(car[1])])
     var c = CarScene.instantiate()
     c.kind = String(car[0])
     c.model_id = String(car[1])

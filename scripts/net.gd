@@ -224,8 +224,17 @@ func _process(delta: float) -> void:
             _on_message(m)
 
 
+var _sts_seen := 0
+
+
 func _on_message(m: Dictionary) -> void:
-    match String(m.get("t", "")):
+    var mt := String(m.get("t", ""))
+    if mt != "sts":
+        Crash.mark("сеть ← " + mt)
+    elif _sts_seen < 3:
+        _sts_seen += 1
+        Crash.mark("сеть ← sts (%d игроков)" % (m.get("l", []) as Array).size())
+    match mt:
         "auth_ok":
             authed = true
             nick = String(m.get("nick", ""))
