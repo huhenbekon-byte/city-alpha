@@ -23,6 +23,7 @@ var name_y := 2.12
 var hat := ""                  # головной убор (см. hats.gd): "petushok", "militia"...
 var hat_col := Color(0, 0, 0, 0)
 var name_col := Color(1.0, 0.95, 0.8)
+var remote := false            # другой игрок по сети: анимации задаёт main.gd через play_anim()
 const Hats := preload("res://scripts/hats.gd")
 const Poses := preload("res://scripts/poses.gd")
 
@@ -56,7 +57,7 @@ func _ready() -> void:
             var players := m.find_children("*", "AnimationPlayer", true, false)
             if not players.is_empty():
                 _ap = players[0] as AnimationPlayer
-                if anim.begins_with("pose_") and not female:
+                if (anim.begins_with("pose_") or anim.begins_with("anim_") or remote) and not female:
                     var sks := m.find_children("*", "Skeleton3D", true, false)
                     if not sks.is_empty():
                         Poses.install(_ap, sks[0] as Skeleton3D)
@@ -138,7 +139,7 @@ func _process(delta: float) -> void:
 
 ## Стоящий человек поворачивается к игроку, когда тот подходит близко (сидящие и лежащие — нет).
 func _look_at_player(delta: float) -> void:
-    if _model == null or not _model.visible:
+    if _model == null or not _model.visible or remote:
         return
     for still: String in ["sit", "death", "pose", "walk"]:
         if anim.begins_with(still):
@@ -216,3 +217,15 @@ func _dress(m: Node) -> void:
 
 func _tex(path: String) -> Texture2D:
     return load(path) as Texture2D if ResourceLoader.exists(path) else null
+
+
+## Сетевой игрок: включить анимацию по точному имени (как у локального игрока).
+func play_anim(anim_name: String, speed: float) -> void:
+    if _ap == null or anim_name == "" or not _ap.has_animation(anim_name):
+        return
+    if _ap.current_animation != anim_name:
+        var a := _ap.get_animation(anim_name)
+        if a and a.loop_mode == Animation.LOOP_NONE and not anim_name.begins_with("Anim_") and not anim_name.begins_with("Pose_"):
+            a.loop_mode = Animation.LOOP_LINEAR
+        _ap.play(anim_name, 0.2)
+    _ap.speed_scale = clampf(speed, 0.0, 3.0)

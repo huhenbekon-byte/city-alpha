@@ -1,0 +1,12 @@
+# Render.com Blueprint: бесплатный онлайн-сервер City Alpha (Франкфурт).
+# Render → New → Blueprint → выбрать этот репозиторий → Apply.
+services:
+  - type: web
+    name: city-alpha
+    runtime: node
+    region: frankfurt
+    plan: free
+    rootDir: tools/server
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /

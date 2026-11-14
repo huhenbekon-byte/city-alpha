@@ -28,6 +28,7 @@ var _tabs: Array[Button] = []
 var _dyn: Control           # кнопки и поля текущей вкладки
 var _news_edit: LineEdit = null
 var _font: Font
+var _bold: Font
 var _emblems := {}
 
 
@@ -36,6 +37,7 @@ func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_STOP
     visible = false
     _font = ThemeDB.fallback_font
+    _bold = load("res://fonts/menu_bold.ttf") if ResourceLoader.exists("res://fonts/menu_bold.ttf") else _font
 
     var dim := ColorRect.new()
     dim.color = Color(0, 0, 0, 0.45)
@@ -78,8 +80,8 @@ func _ready() -> void:
         _tabs.append(b)
 
     var bw := (WIN.x - 52.0 - 32.0) / 3.0
-    _bottom_button("Метка на базу", Vector2(26, 572), Vector2(bw, 52), "gold", func() -> void: gps_requested.emit("base"))
-    _bottom_button("Метка на автопарк", Vector2(26 + bw + 16, 572), Vector2(bw, 52), "dark", func() -> void: gps_requested.emit("garage"))
+    _bottom_button("Метка на базу", Vector2(26, 572), Vector2(bw, 52), "dark", func() -> void: gps_requested.emit("base"))
+    _bottom_button("Объявление", Vector2(26 + bw + 16, 572), Vector2(bw, 52), "gold_line", func() -> void: _on_tab("news"))
     _bottom_button("Покинуть организацию", Vector2(26 + (bw + 16) * 2, 572), Vector2(bw, 52), "red", func() -> void: leave_requested.emit())
 
     _dyn = Control.new()
@@ -151,6 +153,8 @@ func _rebuild() -> void:
             var b := _small_button("Закончить смену" if on else "Начать смену", Vector2(WIN.x - 26 - 230, 112), Vector2(230, 48), true)
             b.pressed.connect(func() -> void: duty_toggled.emit())
         "garage":
+            var gb := _small_button("Метка на автопарк", Vector2(WIN.x - 26 - 230, 112), Vector2(230, 48), true)
+            gb.pressed.connect(func() -> void: gps_requested.emit("garage"))
             var list: Array = data.get("vehicles", [])
             for i in list.size():
                 var v: Dictionary = list[i]
@@ -202,15 +206,22 @@ func _bottom_button(text: String, pos: Vector2, sz: Vector2, style: String, cb: 
         fc = Color(0.08, 0.08, 0.08)
         border = Icons.GOLD
     elif style == "red":
-        bg = Color(0.35, 0.08, 0.08)
-        fc = Color(1.0, 0.75, 0.72)
-        border = Color(0.45, 0.12, 0.12)
+        bg = Color(0.78, 0.08, 0.06)
+        fc = Color.WHITE
+        border = Color(1.0, 0.25, 0.18)
+    elif style == "gold_line":
+        bg = Color(0.09, 0.09, 0.1)
+        fc = Color.WHITE
+        border = Icons.GOLD
     for st: String in ["normal", "hover", "pressed"]:
         var sb := StyleBoxFlat.new()
         sb.bg_color = bg if st != "pressed" else bg.lightened(0.15)
         sb.set_corner_radius_all(16)
-        sb.set_border_width_all(2)
+        sb.set_border_width_all(3 if style != "dark" else 2)
         sb.border_color = border
+        if style == "red":
+            sb.shadow_color = Color(1.0, 0.1, 0.05, 0.45)
+            sb.shadow_size = 8
         b.add_theme_stylebox_override(st, sb)
     for k: String in ["font_color", "font_hover_color", "font_pressed_color"]:
         b.add_theme_color_override(k, fc)
@@ -262,21 +273,37 @@ func _draw_win() -> void:
     var acc := _accent()
     Icons.panel(ci, Rect2(Vector2.ZERO, WIN), BG, 28, 2, Color(0.2, 0.2, 0.22))
 
-    # шапка: эмблема в кольце, название, ранг и стаж
-    var ec := Vector2(92, 90)
-    ci.draw_circle(ec, 64, Color(acc.r, acc.g, acc.b, 0.18))
-    ci.draw_circle(ec, 58, acc)
-    ci.draw_circle(ec, 52, Color(0.09, 0.09, 0.1))
+    # шапка по концепту: эмблема в лавровом венке, название, лидер, рейтинг, ранг | дата создания, численность
+    var hdr := Rect2(150, 16, WIN.x - 240, 140)
+    Icons.panel(ci, hdr, Color(0.11, 0.11, 0.12), 20, 2, Color(0.2, 0.2, 0.22))
+    var tip := PackedVector2Array([hdr.end - Vector2(64, hdr.size.y), hdr.end - Vector2(34, hdr.size.y),
+            hdr.end - Vector2(6, hdr.size.y - 34), hdr.end - Vector2(22, hdr.size.y - 50)])
+    ci.draw_colored_polygon(tip, Icons.GOLD)
+    var ec := Vector2(96, 88)
+    _wreath(ci, ec, 70.0)
+    ci.draw_circle(ec, 50, Color(0.09, 0.09, 0.1))
+    ci.draw_arc(ec, 50, 0, TAU, 48, acc, 3.0, true)
     var tex := _emblem_tex(String(data.get("emblem", "")))
     if tex:
-        ci.draw_texture_rect(tex, Rect2(ec - Vector2(36, 36), Vector2(72, 72)), false)
+        ci.draw_texture_rect(tex, Rect2(ec - Vector2(38, 38), Vector2(76, 76)), false)
     else:
-        Icons.draw(ci, "shield", ec, 64, acc)
-    _text(ci, Vector2(172, 104), String(data.get("title", "")), 48, Color.WHITE, 780)
-    var sub := "Ранг: %s" % data.get("rank_name", "")
-    if int(data.get("need", 0)) > 0:
-        sub += " · Стаж %d/%d" % [mini(int(data.get("exp", 0)), int(data.get("need", 0))), int(data.get("need", 0))]
-    _text(ci, Vector2(174, 142), sub, 22, GREY)
+        Icons.draw(ci, "star", ec, 64, Color(0.85, 0.12, 0.1))
+    var x0 := hdr.position.x + 46
+    ci.draw_string(_bold, Vector2(x0, 62), String(data.get("title", "")), HORIZONTAL_ALIGNMENT_LEFT, 470, 40, Color.WHITE)
+    var rows := [["Лидер:", String(data.get("leader", "—")), Icons.GOLD], ["Рейтинг:", String(data.get("rating", "0")), Color.WHITE],
+            ["Ранг:", String(data.get("rank_name", "")), Icons.GOLD]]
+    for k in rows.size():
+        var y := 94.0 + k * 26.0
+        _text(ci, Vector2(x0, y), String(rows[k][0]), 21, GREY)
+        _text(ci, Vector2(x0 + 112, y), String(rows[k][1]), 21, rows[k][2], 340)
+    var dx := hdr.end.x - 300
+    ci.draw_line(Vector2(dx, hdr.position.y + 22), Vector2(dx, hdr.end.y - 22), Color(0.3, 0.3, 0.33), 2.0)
+    _calendar(ci, Vector2(dx + 42, 56))
+    _text(ci, Vector2(dx + 78, 48), "Создана:", 19, GREY)
+    _text(ci, Vector2(dx + 78, 74), String(data.get("created", "")), 24, Color.WHITE)
+    _chart(ci, Vector2(dx + 42, 118))
+    _text(ci, Vector2(dx + 78, 108), "В организации:", 19, GREY)
+    _text(ci, Vector2(dx + 78, 134), "%d / %d" % [int(data.get("members", 1)), int(data.get("cap", 50))], 24, Color.WHITE)
 
     match tab:
         "main":
@@ -347,20 +374,63 @@ func _draw_main(ci: Control) -> void:
 
 func _draw_members(ci: Control) -> void:
     var c0 := CONTENT.position
-    _text(ci, c0 + Vector2(66, 20), "Ник", 19, GREY)
-    _text(ci, c0 + Vector2(380, 20), "Ранг", 19, GREY)
-    _text(ci, c0 + Vector2(620, 20), "Онлайн", 19, GREY)
-    var r := Rect2(c0 + Vector2(0, 36), Vector2(CONTENT.size.x, 60))
-    Icons.panel(ci, r, CARD, 16, 2, _accent())
-    var yc := r.position.y + 30
-    ci.draw_circle(Vector2(r.position.x + 34, yc), 21, Color(0.2, 0.2, 0.22))
-    Icons.draw(ci, "user", Vector2(r.position.x + 34, yc + 2), 30, Color(0.85, 0.85, 0.88))
-    _text(ci, Vector2(r.position.x + 66, yc + 8), String(data.get("nick", "")) + "  (ты)", 22, Color.WHITE, 300)
-    _text(ci, Vector2(r.position.x + 380, yc + 8), String(data.get("rank_name", "")), 20, _accent(), 230)
-    ci.draw_circle(Vector2(r.position.x + 640, yc), 7, Color(0.3, 0.9, 0.4))
-    ci.draw_multiline_string(_font, c0 + Vector2(0, 140), "Сейчас в составе только ты. Другие игроки появятся здесь, "
-            + "когда игра будет работать на сервере: тогда лидер сможет повышать, понижать и увольнять.",
-            HORIZONTAL_ALIGNMENT_LEFT, CONTENT.size.x, 19, 3, GREY)
+    var head := Rect2(c0, Vector2(CONTENT.size.x, 46))
+    Icons.panel(ci, head, Color(0.11, 0.11, 0.12), 14, 2, Color(0.2, 0.2, 0.22))
+    Icons.draw(ci, "crown", head.position + Vector2(30, 23), 30, Color.WHITE)
+    _text(ci, head.position + Vector2(60, 31), "Список членов организации", 21, Color.WHITE)
+    var on_n := int(data.get("online", 1))
+    ci.draw_circle(head.position + Vector2(head.size.x - 150, 23), 7, Color(0.25, 0.9, 0.3))
+    _text(ci, head.position + Vector2(head.size.x - 134, 31), "Онлайн: %d" % on_n, 21, Color.WHITE)
+    var list: Array = data.get("roster", [])
+    var rows := mini(list.size(), 6)
+    for k in rows:
+        var m: Dictionary = list[k]
+        var r := Rect2(c0 + Vector2(0, 56 + k * 50), Vector2(CONTENT.size.x, 44))
+        var lead := String(m["role"]) == "Лидер"
+        var me := bool(m.get("me", false))
+        var bg := Color(0.2, 0.16, 0.04) if lead else (Color(0.12, 0.13, 0.16) if me else CARD)
+        Icons.panel(ci, r, bg, 12, 2 if (lead or me) else 1, Icons.GOLD if lead else (_accent() if me else BORDER))
+        Icons.draw(ci, "crown" if lead else "star", r.position + Vector2(30, 22), 26, Icons.GOLD if lead else Color.WHITE)
+        var nm := String(m["name"]) + ("  (ты)" if me else "")
+        _text(ci, r.position + Vector2(64, 30), nm, 21, Icons.GOLD if lead else Color.WHITE, 380)
+        var role := String(m["role"])
+        var rw := _font.get_string_size(role, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+        _text(ci, Vector2(r.end.x - 56 - rw, r.position.y + 29), role, 19, Icons.GOLD if lead else GREY)
+        ci.draw_circle(Vector2(r.end.x - 26, r.position.y + 22), 7, Color(0.25, 0.9, 0.3) if bool(m["online"]) else Color(0.5, 0.5, 0.52))
+    if list.size() > rows:
+        _text(ci, c0 + Vector2(4, 56 + rows * 50 + 8), "…и ещё %d человек" % (list.size() - rows), 18, GREY)
+
+
+func _wreath(ci: Control, c: Vector2, r: float) -> void:
+    var gold := Color(0.95, 0.72, 0.15)
+    var dark := Color(0.7, 0.48, 0.06)
+    for side: float in [-1.0, 1.0]:
+        for k in 9:
+            var a := deg_to_rad(110.0 + k * 17.0)
+            var p := c + Vector2(cos(a) * side, sin(a)) * r * Vector2(1, 1)
+            p = c + Vector2(cos(a) * r * side, -sin(a) * r * -1.0)
+            var dir := Vector2(-sin(a) * side, -cos(a)).normalized()
+            var leaf := PackedVector2Array([p - dir * 11, p + dir.orthogonal() * 6, p + dir * 11, p - dir.orthogonal() * 6])
+            ci.draw_colored_polygon(leaf, gold if k % 2 == 0 else dark)
+    ci.draw_arc(c, r - 2, deg_to_rad(20), deg_to_rad(160), 32, dark, 3.0, true)
+
+
+func _calendar(ci: Control, c: Vector2) -> void:
+    Icons.panel(ci, Rect2(c - Vector2(22, 18), Vector2(44, 40)), Color.WHITE, 6)
+    ci.draw_rect(Rect2(c - Vector2(22, 18), Vector2(44, 10)), Color(0.75, 0.75, 0.78))
+    for ix in 3:
+        for iy in 2:
+            ci.draw_rect(Rect2(c + Vector2(-16 + ix * 12, -2 + iy * 10), Vector2(8, 7)), Color(0.12, 0.12, 0.13))
+    for sx: float in [-10.0, 10.0]:
+        ci.draw_line(c + Vector2(sx, -24), c + Vector2(sx, -14), Color.WHITE, 4.0)
+
+
+func _chart(ci: Control, c: Vector2) -> void:
+    for k in 3:
+        var h := 12.0 + k * 10.0
+        ci.draw_rect(Rect2(c + Vector2(-20 + k * 14, 20 - h), Vector2(10, h)), Color.WHITE)
+    ci.draw_line(c + Vector2(-22, 20), c + Vector2(24, 20), Color.WHITE, 3.0)
+    ci.draw_polyline(PackedVector2Array([c + Vector2(-20, 2), c + Vector2(-4, -8), c + Vector2(6, -2), c + Vector2(22, -20)]), Color.WHITE, 3.0, true)
 
 
 func _draw_ranks(ci: Control) -> void:

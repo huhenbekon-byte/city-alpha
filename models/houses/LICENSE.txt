@@ -1,0 +1,5 @@
+Модели с Sketchfab — лицензия CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+  khrush5   — "Khrushchevka" by quizzes: https://sketchfab.com/quizzes
+  stalinka  — "Russian Building Stalinka With Lods Game Ready" by Hambar1an (взят средний LOD):
+              https://sketchfab.com/3d-models/russian-building-stalinka-with-lods-game-ready-af10d32bfe1747c0b0ce47a3abfa9004
+Остальные дома — см. историю проекта.

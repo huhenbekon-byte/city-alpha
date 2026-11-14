@@ -604,14 +604,26 @@ static func _shape(body: CollisionObject3D, size: Vector3, pos: Vector3) -> void
 ## Материалы с ролями: Paint (красится), Glass (тонировка), Tail (стоп-сигналы), Rim / M_Grey (диски).
 const MODELS := {
     "vaz2106": "res://models/cars/vaz2106.gltf",   # ВАЗ-2106 (бесплатная модель с CGTrader)
-    "sedan": "res://models/cars/sedan.gltf",       # Quaternius Realistic Car Pack (CC0)
-    "hatch": "res://models/cars/hatch.gltf",
-    "sport": "res://models/cars/sport.gltf",
-    "coupe": "res://models/cars/coupe.gltf",
-    "suv": "res://models/cars/suv.gltf",
-    "taxi": "res://models/cars/taxi.gltf",
-    "cop": "res://models/cars/cop.gltf",
-    "uaz452": "res://models/cars/uaz452.gltf",     # УАЗ-452 «буханка» (OpenGameArt)
+    # Советские машины с Sketchfab (CC-BY 4.0, авторы — в models/cars/LICENSE.txt).
+    # Старые ключи (sedan, hatch, suv...) теперь ведут на советские модели — так
+    # они сразу появились в трафике, у фракций и на рынке.
+    "vaz2101": "res://models/cars/vaz2101.gltf",   # ВАЗ-2101 «Копейка»
+    "vaz2108": "res://models/cars/vaz2108.gltf",   # ВАЗ-2108 «Восьмёрка»
+    "moskvich": "res://models/cars/moskvich.gltf", # Москвич-412
+    "uaz469": "res://models/cars/uaz469.gltf",     # УАЗ-469
+    "gaz53": "res://models/cars/gaz53.gltf",       # ГАЗ-53 (грузовик)
+    "zil130": "res://models/cars/zil130.gltf",     # ЗИЛ-130 (грузовик)
+    "laz695": "res://models/cars/laz695.gltf",     # ЛАЗ-695 (автобус)
+    "izh": "res://models/cars/izh.gltf",           # ИЖ Планета-2 (мотоцикл, без отдельных колёс)
+    "sedan": "res://models/cars/moskvich.gltf",
+    "hatch": "res://models/cars/vaz2108.gltf",
+    "sport": "res://models/cars/vaz2108.gltf",
+    "coupe": "res://models/cars/vaz2101.gltf",
+    "suv": "res://models/cars/uaz469.gltf",
+    "taxi": "res://models/cars/vaz2101.gltf",
+    "cop": "res://models/cars/vaz2101_mil.gltf",
+    "uaz452": "res://models/cars/uaz452.gltf",     # УАЗ-452 «буханка» (OpenGameArt, красится под службы)
+    "uaz452n": "res://models/cars/uaz452n.gltf",   # УАЗ-452 «буханка» хаки (Sketchfab, CC-BY)
     "vaz2101_mil": "res://models/cars/vaz2101_mil.gltf",   # ВАЗ-2101 «Милиция» (раскраска в модели)
     "niva": "res://models/cars/niva.gltf",         # ВАЗ-2121 «Нива»
     "volga": "res://models/cars/volga.gltf",       # ГАЗ-3102 «Волга»

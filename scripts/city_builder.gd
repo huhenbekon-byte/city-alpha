@@ -144,6 +144,9 @@ func _ready() -> void:
     _build_sea_and_bridges()
     _build_outskirts()
     _build_interiors()
+    _build_dk_interiors()
+    _build_metro()
+    _build_festive()
     _build_cottages()
     _build_village()
     _build_billboards()
@@ -239,10 +242,12 @@ func _tpl_square() -> void:
     _kiosk(_p(27, 10), Vector3(-1, 0, 0), "ПЕЧАТЬ", Color(0.70, 0.20, 0.20))
     _kiosk(_p(-27, -9), Vector3(1, 0, 0), "КОФЕ", Color(0.45, 0.30, 0.20))
     _autosalon(_p(0, 29))
-    _kiosk(_p(27, -9), Vector3(-1, 0, 0), "КВАС", Color(0.75, 0.45, 0.10))
+    _kiosk(_p(27, -9), Vector3(-1, 0, 0), "ПИВО", Color(0.75, 0.45, 0.10))
     _kiosk(_p(-27, 22), Vector3(1, 0, 0), "ГАЗЕТЫ", Color(0.90, 0.50, 0.10), false)
     driving_school = _p(-27, 22) + Vector3(2.8, 0, 0)   # если отдельного здания нет
     _kiosk(_p(27, 22), Vector3(-1, 0, 0), "ВИДЕОСАЛОН", Color(0.25, 0.20, 0.45), false)
+    _metro_pavilion(_p(-19, -20), Vector3(0, 0, 1), "Площадь Ленина")
+    _occupy(_p(-19, -20), 6.0, 6.0)
     _atm(_p(-7, -29), Vector3(0, 0, 1))
     _atm(_p(7, -29), Vector3(0, 0, 1))
     _bus_stop(_p(21, 31), Vector3(0, 0, 1))
@@ -322,7 +327,11 @@ func _building(center: Vector3, length: float, depth: float, floors: int,
 
     # Панельки и высотки — готовые модели серии 1ЛГ-600А (models/houses), если есть.
     _model_kind = ""
-    var use_model := not _stalin_mats.has(mat) and _house_model(base, sx, sz, h, floors, style, entrance)
+    var use_model := false
+    if _stalin_mats.has(mat):
+        use_model = _stalin_model(base, sx, sz, h, floors)
+    else:
+        use_model = _house_model(base, sx, sz, h, floors, style, entrance)
     if use_model:
         _collider(Vector3(sx, h, sz), base + Vector3(0, h * 0.5, 0))
     else:
@@ -486,10 +495,35 @@ func _house_model(base: Vector3, sx: float, sz: float, h: float, floors: int, st
         _put("hs_khrush", base, atan2(-entrance.x, -entrance.z), Color.WHITE, Vector3(flen / 42.74, h / 13.31, fdep / 13.1))
         _model_kind = "khrush"
         return true
+    # кирпичная хрущёвка-пятиэтажка с балконами (Sketchfab) — у остальных кирпичных пятиэтажек, секциями
+    if floors == 5 and style == "brick" and _props_ok.has("khrush5"):
+        var nk := maxi(1, roundi(flen / (h * 2.03)))
+        var sk := flen / nk
+        for i in nk:
+            _put("hs_khrush5", base + axis * (-flen * 0.5 + sk * (i + 0.5)), yaw + PI * 0.5, Color.WHITE, Vector3(fdep / 5.5, h / 6.55, sk / 13.28))
+        return true
     if style == "panel" and floors <= 6 and _props_ok.has("lg_five"):
         _put("hs_lg_five", base, yaw, Color.WHITE, Vector3(flen / 49.68, h / 13.2, fdep / 11.88))
         return true
     return false
+
+
+## Сталинка — готовая модель (Sketchfab) у части жёлтых домов, секциями вдоль фасада.
+func _stalin_model(base: Vector3, sx: float, sz: float, h: float, floors: int) -> bool:
+    if not _props_ok.has("stalinka") or floors < 3 or floors > 7:
+        return false
+    if int(absf(base.x * 1.3 + base.z * 2.1)) % 5 >= 3:   # часть оставляем своими — разнообразие
+        return false
+    var along_x := sx >= sz
+    var flen := sx if along_x else sz
+    var fdep := sz if along_x else sx
+    var yaw := 0.0 if along_x else PI * 0.5
+    var axis := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
+    var n := maxi(1, roundi(flen / (h * 2.06)))
+    var seg := flen / n
+    for i in n:
+        _put("hs_stalinka", base + axis * (-flen * 0.5 + seg * (i + 0.5)), yaw, Color.WHITE, Vector3(seg / 1.36, h / 0.66, fdep / 0.75))
+    return true
 
 
 func _shop(center: Vector3, length: float, depth: float, front: Vector3, text: String) -> void:
@@ -515,8 +549,23 @@ func _garages(center: Vector3, count: int, along_x: bool, facing: Vector3) -> vo
     var flen := count * 3.2
     var size := Vector3(flen, 2.5, 6.0) if along_x else Vector3(6.0, 2.5, flen)
     var base := Vector3(center.x, 0.0, center.z)
-    _solid(size, base + Vector3(0, 1.25, 0), _m["garage"])
-    _deco(size + Vector3(0.3, -2.4, 0.3), base + Vector3(0, 2.55, 0), _m["roof"])
+    var garage_model := _props_ok.has("garages")
+    if garage_model:
+        # готовые гаражи: ряд из моделей по 4 разных гаража, двери к проезду
+        _collider(size, base + Vector3(0, 1.25, 0))
+        var axis0 := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
+        var segs := maxi(1, roundi(flen / 16.56))
+        var sl := flen / segs
+        var gyaw := atan2(-facing.z, facing.x)
+        for i in segs:
+            _put("pr_garages", base + axis0 * (-flen * 0.5 + sl * (i + 0.5)), gyaw, Color.WHITE, Vector3(6.0 / 7.12, 1.0, sl / 16.56))
+        var tp := base + axis0 * (flen * 0.5 + 1.8) + facing * 2.0
+        if _props_ok.has("trash") and _is_free(tp, 1.2):
+            _put("pr_trash", Vector3(tp.x, 0.0, tp.z), atan2(facing.x, facing.z))
+            _collider(Vector3(1.9, 1.5, 1.6), tp + Vector3(0, 0.75, 0))
+    else:
+        _solid(size, base + Vector3(0, 1.25, 0), _m["garage"])
+        _deco(size + Vector3(0.3, -2.4, 0.3), base + Vector3(0, 2.55, 0), _m["roof"])
     _flat(base + facing * 6.0, Vector2(flen, 6.0) if along_x else Vector2(6.0, flen),
             _m["yard_asphalt"], SIDE_H + 0.008)
     _occupy(base, size.x, size.z)
@@ -530,13 +579,31 @@ func _garages(center: Vector3, count: int, along_x: bool, facing: Vector3) -> vo
             Color(0.50, 0.50, 0.48), Color(0.55, 0.40, 0.20)]
     for g: int in range(count):
         var u := -flen * 0.5 + 3.2 * (g + 0.5)
-        var col: Color = colors[rng.randi() % colors.size()]
-        _put("garage_door", base + axis * u + facing * 3.03 + Vector3(0, 1.1, 0), yaw, col)
+        var col: Color = colors[rng.randi() % colors.size()]   # rng тратим всегда — планировка не меняется
+        if not garage_model:
+            _put("garage_door", base + axis * u + facing * 3.03 + Vector3(0, 1.1, 0), yaw, col)
 
 
 func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color, is_pickup := true) -> void:
     var yaw := atan2(facing.x, facing.z)
     var b := Basis(Vector3.UP, yaw)
+    # готовые модели: «Союзпечать» (газеты) и пивной ларёк
+    var mk := ""
+    if (text == "ГАЗЕТЫ" or text == "ПЕЧАТЬ") and _props_ok.has("kiosk_rail"):
+        mk = "kiosk_rail"
+    elif text == "ПИВО" and _props_ok.has("pivnaya"):
+        mk = "pivnaya"
+    if mk != "":
+        var sz := Vector3(1.9, 2.7, 2.1) if mk == "kiosk_rail" else Vector3(5.0, 2.5, 2.6)
+        _put("pr_" + mk, Vector3(p.x, 0.0, p.z), yaw)
+        _collider(sz, p + Vector3(0, sz.y * 0.5, 0), yaw)
+        if mk == "kiosk_rail":
+            _label("СОЮЗПЕЧАТЬ", p + b * Vector3(0, 2.95, 1.1), facing, 48, Color(0.15, 0.25, 0.6))
+        _occupy(p, sz.x + 1.0, sz.z + 1.0)
+        building_rects.append(Rect2(p.x - sz.x * 0.5, p.z - sz.z * 0.5, sz.x, sz.z))
+        if is_pickup:
+            pickups.append({"pos": p + facing * (sz.z * 0.5 + 1.6), "name": text})
+        return
     _solid(Vector3(3.2, 2.6, 2.4), p + Vector3(0, 1.3, 0), _tinted("kiosk_siding", col.lightened(0.15), 2.0), yaw)
     _deco(Vector3(2.6, 1.2, 0.05), p + b * Vector3(0, 1.35, 1.21), _m["vitrine"], yaw)
     _deco(Vector3(3.2, 1.0, 0.05), p + b * Vector3(0, 1.3, -1.21), _m["shutter"], yaw)
@@ -591,23 +658,37 @@ func _playground(c: Vector3) -> void:
     # песочница
     _deco(Vector3(3.0, 0.25, 3.0), c + Vector3(-3, 0.125, -2), _m["sandbox"])
     _deco(Vector3(2.7, 0.26, 2.7), c + Vector3(-3, 0.13, -2), _m["sand"])
-    # качели
-    var s := c + Vector3(2.5, 0, -2)
-    for dx: float in [-1.2, 1.2]:
-        _solid(Vector3(0.1, 2.4, 0.1), s + Vector3(dx, 1.2, 0), _m["blue"])
-    _deco(Vector3(2.6, 0.1, 0.1), s + Vector3(0, 2.4, 0), _m["blue"])
-    _deco(Vector3(0.6, 0.05, 0.35), s + Vector3(0, 0.5, 0), _m["wood"])
-    for dx: float in [-0.25, 0.25]:
-        _deco(Vector3(0.02, 1.85, 0.02), s + Vector3(dx, 1.43, 0), _m["pipe"])
-    # горка
-    var g := c + Vector3(1.5, 0, 2.0)
-    _deco(Vector3(1.2, 0.1, 1.2), g + Vector3(0, 1.5, 0), _m["red"])
-    for px: float in [-0.55, 0.55]:
-        for pz: float in [-0.55, 0.55]:
-            _solid(Vector3(0.08, 1.5, 0.08), g + Vector3(px, 0.75, pz), _m["pipe"])
-    var slide := _deco(Vector3(0.7, 0.06, 2.63), g + Vector3(0, 0.78, 1.7), _m["slide"])
-    slide.rotation.x = 0.583
-    _solid(Vector3(0.6, 1.6, 0.06), g + Vector3(0, 0.8, -0.65), _m["yellow"])
+    # качели и горка: готовая модель (у половины площадок) или свои
+    if _props_ok.has("playground") and int(absf(c.x + c.z * 3.0)) % 2 == 0:
+        _put("pr_playground", c + Vector3(2.4, 0.0, 0.0), PI * 0.5)
+        _collider(Vector3(0.3, 2.0, 3.0), c + Vector3(2.4, 1.0, 0.0))
+        if _props_ok.has("trash") and _is_free(c + Vector3(7.5, 0, 3.0), 1.0):
+            _put("pr_trash", c + Vector3(7.5, 0.0, 3.0), 0.0)
+            _collider(Vector3(1.9, 1.5, 1.6), c + Vector3(7.5, 0.75, 3.0))
+    else:
+        # качели
+        var s := c + Vector3(2.5, 0, -2)
+        for dx: float in [-1.2, 1.2]:
+            _solid(Vector3(0.1, 2.4, 0.1), s + Vector3(dx, 1.2, 0), _m["blue"])
+        _deco(Vector3(2.6, 0.1, 0.1), s + Vector3(0, 2.4, 0), _m["blue"])
+        _deco(Vector3(0.6, 0.05, 0.35), s + Vector3(0, 0.5, 0), _m["wood"])
+        for dx: float in [-0.25, 0.25]:
+            _deco(Vector3(0.02, 1.85, 0.02), s + Vector3(dx, 1.43, 0), _m["pipe"])
+        # горка
+        var g := c + Vector3(1.5, 0, 2.0)
+        _deco(Vector3(1.2, 0.1, 1.2), g + Vector3(0, 1.5, 0), _m["red"])
+        for px: float in [-0.55, 0.55]:
+            for pz: float in [-0.55, 0.55]:
+                _solid(Vector3(0.08, 1.5, 0.08), g + Vector3(px, 0.75, pz), _m["pipe"])
+        var slide := _deco(Vector3(0.7, 0.06, 2.63), g + Vector3(0, 0.78, 1.7), _m["slide"])
+        slide.rotation.x = 0.583
+        _solid(Vector3(0.6, 1.6, 0.06), g + Vector3(0, 0.8, -0.65), _m["yellow"])
+    # турник во дворе: два столба и перекладина
+    var tk := c + Vector3(4.0, 0, 3.7)
+    for dx: float in [-0.75, 0.75]:
+        _solid(Vector3(0.07, 2.3, 0.07), tk + Vector3(dx, 1.15, 0), _m["pipe"])
+    _deco(Vector3(1.6, 0.04, 0.04), tk + Vector3(0, 2.25, 0), _m["pipe"])
+    workout_spots.append(tk + Vector3(0, 0, -0.6))
     # лавочки
     _bench(c + Vector3(-4.5, 0, 3.5), Vector3(0, 0, -1))
     _bench(c + Vector3(-2.0, 0, 3.5), Vector3(0, 0, -1))
@@ -640,6 +721,7 @@ func _parked_car(p: Vector3, yaw: float) -> void:
 
 ## Лавки: [середина сиденья на земле, куда смотрит] — на них можно сесть.
 var benches: Array = []
+var workout_spots: Array[Vector3] = []   # турники во дворах — качаться (точка, где стоять)
 
 
 func _bench(p: Vector3, facing: Vector3) -> void:
@@ -1187,12 +1269,13 @@ func _define_batches() -> void:
     _batch("birch_crown", _sphere_mesh(1.3, 4.0), _nature("foliage_birch", Color.WHITE, 2.0, true), 200.0, true)
     _batch("bush", _sphere_mesh(0.7, 1.0), _nature("foliage_bush", Color.WHITE, 1.2, true), 80.0)
     # Готовые модели: остановочный павильон и бензоколонка (models/props)
-    for pk: String in ["bus_stop", "gas_station", "militia"]:
+    for pk: String in ["bus_stop", "gas_station", "militia", "soda", "soda2", "trash", "pivnaya", "kiosk_rail",
+            "playground", "garages", "el_pole"]:
         var prm := _nature_mesh(pk, "props")
         if prm:
             _batch("pr_" + pk, prm, null, 180.0, true)
             _props_ok[pk] = true
-    for hk: String in ["lg_section", "lg_tower", "lg_five", "khrush", "dester", "house3f"]:
+    for hk: String in ["lg_section", "lg_tower", "lg_five", "khrush", "dester", "house3f", "khrush5", "stalinka"]:
         var hm := _nature_mesh(hk, "houses")
         if hm:
             _batch("hs_" + hk, hm, null, 900.0, true)
@@ -1233,7 +1316,7 @@ func _define_batches() -> void:
         door_mat.uv1_offset = Vector3(0.5, 0.5, 0.5)
     _batch("garage_door", _box_mesh(Vector3(2.6, 2.1, 0.06)), door_mat, 140.0)
     for i in PARKED_COLORS.size():
-        _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i], ["vaz2106", "hatch", "sedan", "vaz2106", "suv"][i % 5]), null, 160.0, true)
+        _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i], ["vaz2106", "vaz2108", "moskvich", "vaz2101", "uaz469", "niva"][i % 6]), null, 160.0, true)
     _define_sign_batches()
 
 
@@ -1632,7 +1715,8 @@ func _build_outskirts() -> void:
             ISLAND_PYAT.position.x + 20.0, ISLAND_PYAT.end.x - 20.0)
 
     truck_drops = [Vector3(-248 - OUT, 0, 90), Vector3(22, 0, -248 - OUT), Vector3(-226 - OUT, 0, -214 - OUT),
-            Vector3(-215 - OUT, 0, 215 + OUT), Vector3(215 + OUT, 0, -215 - OUT), PY_ORG + Vector3(0, 0, 215)]
+            Vector3(-215 - OUT, 0, 215 + OUT), Vector3(215 + OUT, 0, -215 - OUT), PY_ORG + Vector3(0, 0, 215),
+            PY_ORG + Vector3(215, 0, -86), PY_ORG + Vector3(-215, 0, 86)]   # межгород: Пятигорск
 
 
 ## Автосалон в Казани: стеклянный павильон, вывеска, три машины на витрине. Вход смотрит на площадь (-Z).
@@ -2763,8 +2847,43 @@ func _home_room(o: Vector3, w: float, d: float, wall_col: Color) -> Dictionary:
     _f_plant(o + Vector3(-3.6, 0.0, -d * 0.5 + 0.5))
     _f_clock(o + Vector3(1.9, 2.6, -d * 0.5 + 0.22), 0.0)
     _f_picture(o + Vector3(-w * 0.5 + 0.22, 1.9, 2.4), PI * 0.5, 1.0, 0.6)
+    # мебель на покупку (Sketchfab, «Soviet furniture pack»): стоит на своих местах, видна, когда куплена
+    var furn := {}
+    var spots := {
+        "servant": [o + Vector3(-1.8, 0, d * 0.5 - 0.35), PI, Vector3(1.61, 1.56, 0.6)],
+        "radiola": [o + Vector3(-w * 0.5 + 2.2, 0, d * 0.5 - 0.3), PI, Vector3(1.29, 0.77, 0.47)],
+        "armchair": [o + Vector3(-1.6, 0, 1.4), PI, Vector3(0.82, 0.99, 1.22)],
+        "desk": [o + Vector3(-w * 0.5 + 0.45, 0, 2.4), 0.0, Vector3(0.41, 0.61, 0.84)],
+        "chair": [o + Vector3(-w * 0.5 + 1.15, 0, 2.4), -PI * 0.5, Vector3(0.7, 0.9, 0.7)],
+        "tumba": [o + Vector3(-w * 0.5 + 0.45, 0, -2.3), PI * 0.5, Vector3(0.8, 0.68, 0.44)],
+    }
+    for id: String in spots:
+        var path := "res://models/furniture/%s.gltf" % id
+        if not ResourceLoader.exists(path):
+            continue
+        var sp: Array = spots[id]
+        var node := Node3D.new()
+        node.position = sp[0]
+        node.rotation.y = sp[1]
+        node.visible = false
+        var inst: Node = (load(path) as PackedScene).instantiate()
+        node.add_child(inst)
+        var body := StaticBody3D.new()
+        body.collision_layer = 0
+        var cs := CollisionShape3D.new()
+        var bs := BoxShape3D.new()
+        bs.size = sp[2]
+        cs.shape = bs
+        cs.position = Vector3(0, (sp[2] as Vector3).y * 0.5, 0)
+        body.add_child(cs)
+        node.add_child(body)
+        node.set_meta("body", body)
+        add_child(node)
+        furn[id] = node
     return {"spawn": o + Vector3(0, 0.3, d * 0.5 - 2.6), "exit": o + Vector3(0, 0, d * 0.5 - 1.0),
-            "fridge": o + Vector3(w * 0.5 - 1.6, 0, d * 0.5 - 1.2), "bed": o + Vector3(w * 0.5 - 2.3, 0, -d * 0.5 + 1.6)}
+            "fridge": o + Vector3(w * 0.5 - 1.6, 0, d * 0.5 - 1.2), "bed": o + Vector3(w * 0.5 - 2.3, 0, -d * 0.5 + 1.6),
+            "furn": furn, "shop": o + Vector3(1.8, 0, d * 0.5 - 1.3),
+            "radiola": o + Vector3(-w * 0.5 + 2.2, 0, d * 0.5 - 1.1)}
 
 
 
@@ -3673,7 +3792,13 @@ func _soda(p: Vector3, facing: Vector3) -> void:
         _soda_mat.roughness = 0.45
     var yaw := atan2(facing.x, facing.z)
     var base := Vector3(p.x, SIDE_H, p.z)
-    _solid(Vector3(0.8, 1.6, 0.6), base + Vector3(0, 0.8, 0), _soda_mat, yaw)
+    var alt := int(absf(p.x * 1.7 + p.z * 0.9)) % 2 == 0
+    if _props_ok.has("soda") and _props_ok.has("soda2"):
+        # готовые модели «Газированная вода» (два вида — по координатам)
+        _put("pr_soda" if alt else "pr_soda2", base, yaw)
+        _collider(Vector3(0.7, 1.6, 0.6), base + Vector3(0, 0.8, 0), yaw)
+    else:
+        _solid(Vector3(0.8, 1.6, 0.6), base + Vector3(0, 0.8, 0), _soda_mat, yaw)
     soda_spots.append(base + facing * 1.0)
 
 
@@ -3713,6 +3838,20 @@ func _build_village() -> void:
             _lamp(lp, Vector3(1, 0, 0))
     for lx: float in [-60.0, -20.0, 100.0, 140.0]:
         _lamp(Vector3(lx, 0, VILLAGE_CROSS + 5.0), Vector3(0, 0, -1))
+    # деревянные столбы ЛЭП вдоль сельских дорог (модель с Sketchfab)
+    if _props_ok.has("el_pole"):
+        var pz := 262.0
+        while pz < 580.0:
+            var pp := Vector3(x + 6.8, 0, pz + OUT)
+            if on_land(pp) and absf(pp.z - VILLAGE_CROSS) > 7.0 and absf(pp.z - (VILLAGE_BRIDGE.x + VILLAGE_BRIDGE.y) * 0.5) > 40.0 and _is_free(pp, 0.8):
+                _put("pr_el_pole", pp, PI * 0.5)
+                _collider(Vector3(0.3, 6.8, 0.3), pp + Vector3(0, 3.4, 0))
+            pz += 34.0
+        for ex: float in [-110.0, -78.0, -46.0, -14.0, 104.0, 136.0, 168.0]:
+            var ep := Vector3(ex, 0, VILLAGE_CROSS - 6.0)
+            if on_land(ep) and _is_free(ep, 0.8):
+                _put("pr_el_pole", ep, 0.0)
+                _collider(Vector3(0.3, 6.8, 0.3), ep + Vector3(0, 3.4, 0))
     # дома: вдоль главной улицы и поперечной
     var walls := [Color(0.70, 0.52, 0.38), Color(0.62, 0.72, 0.82), Color(0.82, 0.76, 0.58), Color(0.66, 0.78, 0.62),
             Color(0.85, 0.80, 0.72)]
@@ -4149,6 +4288,7 @@ func _tpl_square_py() -> void:
     _kiosk(_p(-27, 27), Vector3(0, 0, -1), "КВАС", Color(0.75, 0.45, 0.10))
     _atm(_p(27, 22), Vector3(-1, 0, 0))
     _market(_p(0, 22))
+    _dk(_p(0, -23))
     _bus_stop(_p(0, 31), Vector3(0, 0, 1))
     _label("ПЯТИГОРСК", mon + Vector3(0, 2.0, 2.6), Vector3(0, 0, 1), 120, Color(1.0, 0.85, 0.3))
 
@@ -4497,3 +4637,302 @@ func _scooter_rent(rp: Vector3) -> void:
         scooter_slots.append([rp + Vector3(-2.7 + i * 1.8, 0.0, -0.2), 0.0])
 
 
+
+
+
+# ================================================================ часть 3: ДК, метро, праздники
+
+## Дом культуры: id -> позиции; "lights"/"floor" — узлы дискотеки, "screen" — надпись на экране кино.
+var dk := {}
+## Станции метро Казани: {"name", "pos" (где стоять), "out" (куда выходить), "yaw"}.
+var metro: Array[Dictionary] = []
+## Праздничное убранство (флаги, гирлянды) и ёлка — main.gd включает в праздники.
+var festive_root: Node3D
+var tree_root: Node3D
+var fireworks_spots: Array[Vector3] = []
+
+
+func _glow(col: Color, energy: float) -> StandardMaterial3D:
+    var m := _mat(col, 0.4)
+    m.emission_enabled = true
+    m.emission = col
+    m.emission_energy_multiplier = energy
+    return m
+
+
+## Здание ДК с колоннадой (фасад смотрит на +Z — к стеле Пятигорска).
+func _dk(c: Vector3) -> void:
+    var base := Vector3(c.x, SIDE_H, c.z)
+    var cream := _tinted("plaster", Color(0.93, 0.86, 0.70), 3.0)
+    var white := _tinted("plaster", Color(0.97, 0.96, 0.93), 3.0)
+    _solid(Vector3(24, 9, 8), base + Vector3(0, 4.5, -1.0), cream)
+    _deco(Vector3(24.6, 0.6, 8.6), base + Vector3(0, 9.3, -1.0), white)            # карниз
+    _solid(Vector3(16, 0.5, 4.0), base + Vector3(0, 0.25, 5.0), _m["granite"])     # крыльцо
+    _deco(Vector3(16, 0.8, 4.4), base + Vector3(0, 7.6, 5.0), white)               # портик
+    for k in 6:
+        var x := -7.0 + k * 2.8
+        var col := StaticBody3D.new()
+        col.position = base + Vector3(x, 3.9, 6.4)
+        add_child(col)
+        var mi := MeshInstance3D.new()
+        mi.mesh = _cyl_mesh(0.32, 0.38, 6.8, 12)
+        mi.material_override = white
+        col.add_child(mi)
+        var cs := CollisionShape3D.new()
+        var sh := CylinderShape3D.new()
+        sh.radius = 0.38
+        sh.height = 6.8
+        cs.shape = sh
+        col.add_child(cs)
+    # фронтон-треугольник
+    var tri := MeshInstance3D.new()
+    var pm := PrismMesh.new()
+    pm.size = Vector3(16.4, 2.0, 4.4)
+    tri.mesh = pm
+    tri.material_override = white
+    tri.position = base + Vector3(0, 9.0, 5.0)
+    add_child(tri)
+    _deco(Vector3(2.6, 3.2, 0.1), base + Vector3(0, 1.85, 3.03), _mat(Color(0.32, 0.2, 0.12), 0.6))   # дверь
+    for x: float in [-8.0, -4.5, 4.5, 8.0]:
+        _deco(Vector3(2.0, 2.4, 0.06), base + Vector3(x, 5.6, 3.02), _m["glass"])
+        _deco(Vector3(2.0, 2.0, 0.06), base + Vector3(x, 2.0, 3.02), _m["glass"])
+    _label("ДОМ КУЛЬТУРЫ", base + Vector3(0, 8.05, 7.25), Vector3(0, 0, 1), 150, Color(0.75, 0.1, 0.08))
+    # афиши у входа
+    for sx: float in [-1.0, 1.0]:
+        var ap := base + Vector3(sx * 10.0, 0, 6.2)
+        _solid(Vector3(1.6, 2.4, 0.2), ap + Vector3(0, 1.2, 0), _mat(Color(0.25, 0.2, 0.18), 0.7))
+        _deco(Vector3(1.4, 1.8, 0.04), ap + Vector3(0, 1.4, 0.12), _mat(Color(0.95, 0.9, 0.75), 0.8))
+        _label("КИНО" if sx < 0 else "ДИСКОТЕКА", ap + Vector3(0, 2.0, 0.15), Vector3(0, 0, 1), 48, Color(0.75, 0.1, 0.08))
+        _label("сеансы\nкаждый час" if sx < 0 else "по вечерам\nс 19:00", ap + Vector3(0, 1.3, 0.15), Vector3(0, 0, 1), 34, Color(0.15, 0.15, 0.2))
+    building_rects.append(Rect2(base.x - 12.0, base.z - 5.0, 24.0, 8.0))
+    _occupy(base + Vector3(0, 0, 1.0), 26.0, 14.0)
+    dk["door"] = base + Vector3(0, 0, 4.6)
+    dk["out"] = base + Vector3(0, 0, 8.4)
+
+
+## Кинозал и танцзал ДК — далеко за городом, как остальные интерьеры.
+func _build_dk_interiors() -> void:
+    if not dk.has("door"):
+        return
+    # --- кинозал
+    var o := Vector3(2000.0, SIDE_H, 2400.0)
+    var w := 20.0
+    var d := 26.0
+    var h := 7.0
+    var wall := _tinted("plaster", Color(0.45, 0.12, 0.12), 3.0)
+    _solid(Vector3(w + 1, 0.4, d + 1), o + Vector3(0, -0.2, 0), _mat(Color(0.25, 0.12, 0.1), 0.9))
+    _solid(Vector3(w + 1, 0.4, d + 1), o + Vector3(0, h + 0.2, 0), _ceiling_mat())
+    _solid(Vector3(0.4, h, d), o + Vector3(-w * 0.5, h * 0.5, 0), wall)
+    _solid(Vector3(0.4, h, d), o + Vector3(w * 0.5, h * 0.5, 0), wall)
+    _solid(Vector3(w, h, 0.4), o + Vector3(0, h * 0.5, -d * 0.5), wall)
+    _solid(Vector3(w, h, 0.4), o + Vector3(0, h * 0.5, d * 0.5), wall)
+    var scr_mat := _glow(Color(0.85, 0.85, 0.9), 0.6)
+    var scr := _deco(Vector3(14, 6, 0.06), o + Vector3(0, 3.8, -d * 0.5 + 0.3), scr_mat)
+    _deco(Vector3(15, 0.4, 0.3), o + Vector3(0, 0.6, -d * 0.5 + 0.4), _mat(Color(0.3, 0.05, 0.05), 0.8))   # сцена
+    var lab := Label3D.new()
+    lab.text = ""
+    lab.font_size = 96
+    lab.pixel_size = 0.01
+    lab.modulate = Color(0.08, 0.08, 0.1)
+    lab.outline_size = 0
+    lab.width = 1200
+    lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    lab.position = o + Vector3(0, 3.8, -d * 0.5 + 0.36)
+    add_child(lab)
+    for row in 6:
+        var z := -4.0 + row * 2.4
+        for x: float in [-6.0, -3.2, 3.2, 6.0]:
+            _bench(Vector3(o.x + x, 0, o.z + z), Vector3(0, 0, -1))
+    var hall_light := OmniLight3D.new()
+    hall_light.position = o + Vector3(0, h - 0.8, 4.0)
+    hall_light.omni_range = 22.0
+    hall_light.light_energy = 1.2
+    hall_light.light_color = Color(1.0, 0.92, 0.8)
+    add_child(hall_light)
+    var scr_light := OmniLight3D.new()
+    scr_light.position = o + Vector3(0, 3.5, -d * 0.5 + 3.0)
+    scr_light.omni_range = 16.0
+    scr_light.light_energy = 0.5
+    add_child(scr_light)
+    _deco(Vector3(2.4, 2.8, 0.08), o + Vector3(0, 1.4, d * 0.5 - 0.22), _mat(Color(0.32, 0.2, 0.12), 0.6))
+    _label("ВЫХОД", o + Vector3(0, 3.2, d * 0.5 - 0.25), Vector3(0, 0, -1), 64, Color(0.3, 0.9, 0.4))
+    dk["cinema_spawn"] = o + Vector3(0, 0.3, d * 0.5 - 2.2)
+    dk["cinema_exit"] = o + Vector3(0, 0, d * 0.5 - 1.2)
+    dk["cinema_center"] = o
+    dk["cinema_size"] = Vector2(w, d)
+    dk["screen"] = lab
+    dk["screen_mat"] = scr_mat
+    dk["hall_light"] = hall_light
+    dk["screen_node"] = scr
+
+    # --- танцзал
+    o = Vector3(2100.0, SIDE_H, 2400.0)
+    w = 22.0
+    d = 22.0
+    h = 6.0
+    var dark := _mat(Color(0.08, 0.07, 0.1), 0.8)
+    _solid(Vector3(w + 1, 0.4, d + 1), o + Vector3(0, -0.2, 0), _mat(Color(0.12, 0.1, 0.12), 0.6))
+    _solid(Vector3(w + 1, 0.4, d + 1), o + Vector3(0, h + 0.2, 0), dark)
+    _solid(Vector3(0.4, h, d), o + Vector3(-w * 0.5, h * 0.5, 0), dark)
+    _solid(Vector3(0.4, h, d), o + Vector3(w * 0.5, h * 0.5, 0), dark)
+    _solid(Vector3(w, h, 0.4), o + Vector3(0, h * 0.5, -d * 0.5), dark)
+    _solid(Vector3(w, h, 0.4), o + Vector3(0, h * 0.5, d * 0.5), dark)
+    # светящийся пол 6×6 плиток
+    var tiles: Array = []
+    for ix in 6:
+        for iz in 6:
+            var tm := _glow(Color(0.2, 0.2, 0.2), 1.2)
+            _deco(Vector3(1.9, 0.04, 1.9), o + Vector3(-5.0 + ix * 2.0, 0.02, -6.0 + iz * 2.0), tm)
+            tiles.append(tm)
+    # диско-шар
+    var ball := MeshInstance3D.new()
+    var sm := SphereMesh.new()
+    sm.radius = 0.6
+    sm.height = 1.2
+    ball.mesh = sm
+    var bm := _mat(Color(0.9, 0.9, 0.95), 0.05)
+    bm.metallic = 1.0
+    ball.material_override = bm
+    ball.position = o + Vector3(0, h - 1.2, -1.0)
+    add_child(ball)
+    _deco(Vector3(0.03, 0.6, 0.03), o + Vector3(0, h - 0.3, -1.0), _m["metal"])
+    var lights: Array = []
+    var cols := [Color(1, 0.2, 0.3), Color(0.2, 0.5, 1), Color(0.3, 1, 0.4), Color(1, 0.8, 0.2)]
+    for k in 4:
+        var sl := SpotLight3D.new()
+        sl.position = o + Vector3(-7.0 + k * 4.7, h - 0.4, -9.0)
+        sl.light_color = cols[k]
+        sl.light_energy = 6.0
+        sl.spot_range = 22.0
+        sl.spot_angle = 18.0
+        sl.rotation = Vector3(-1.0, 0, 0)
+        add_child(sl)
+        lights.append(sl)
+    var amb := OmniLight3D.new()
+    amb.position = o + Vector3(0, h - 1.0, 4.0)
+    amb.omni_range = 18.0
+    amb.light_energy = 0.9
+    amb.light_color = Color(0.6, 0.4, 1.0)
+    add_child(amb)
+    # неоновые полосы по стенам
+    var neon := [_glow(Color(1.0, 0.2, 0.7), 2.5), _glow(Color(0.2, 0.8, 1.0), 2.5)]
+    for k in 2:
+        var yy := 2.2 + k * 1.6
+        _deco(Vector3(w - 0.6, 0.08, 0.04), o + Vector3(0, yy, -d * 0.5 + 0.22), neon[k])
+        _deco(Vector3(0.04, 0.08, d - 0.6), o + Vector3(-w * 0.5 + 0.22, yy, 0), neon[k])
+        _deco(Vector3(0.04, 0.08, d - 0.6), o + Vector3(w * 0.5 - 0.22, yy, 0), neon[k])
+    # пульт диджея и бар
+    _solid(Vector3(4.0, 1.1, 1.0), o + Vector3(0, 0.55, -d * 0.5 + 1.4), _mat(Color(0.15, 0.15, 0.18), 0.5))
+    _deco(Vector3(4.0, 0.08, 0.9), o + Vector3(0, 1.12, -d * 0.5 + 1.4), _glow(Color(0.2, 0.9, 1.0), 1.5))
+    _label("ДИСКОТЕКА «80»", o + Vector3(0, 4.4, -d * 0.5 + 0.25), Vector3(0, 0, 1), 140, Color(1.0, 0.3, 0.7))
+    _solid(Vector3(1.0, 1.1, 5.0), o + Vector3(w * 0.5 - 1.6, 0.55, 3.0), _mat(Color(0.35, 0.22, 0.12), 0.6))
+    _label("БАР", o + Vector3(w * 0.5 - 0.25, 3.0, 3.0), Vector3(-1, 0, 0), 90, Color(1.0, 0.8, 0.2))
+    _deco(Vector3(2.4, 2.8, 0.08), o + Vector3(0, 1.4, d * 0.5 - 0.22), _mat(Color(0.32, 0.2, 0.12), 0.6))
+    _label("ВЫХОД", o + Vector3(0, 3.2, d * 0.5 - 0.25), Vector3(0, 0, -1), 64, Color(0.3, 0.9, 0.4))
+    dk["disco_spawn"] = o + Vector3(0, 0.3, d * 0.5 - 2.2)
+    dk["disco_exit"] = o + Vector3(0, 0, d * 0.5 - 1.2)
+    dk["disco_center"] = o
+    dk["disco_size"] = Vector2(w, d)
+    dk["dance"] = o + Vector3(0, 0, -1.0)
+    dk["bar"] = o + Vector3(w * 0.5 - 2.8, 0, 3.0)
+    dk["dj"] = o + Vector3(0, 0, -d * 0.5 + 2.4)
+    dk["tiles"] = tiles
+    dk["lights"] = lights
+    dk["ball"] = ball
+
+
+## Павильон метро: стеклянный вход с красной «М». facing — куда смотрит вход.
+func _metro_pavilion(c: Vector3, facing: Vector3, st_name: String) -> void:
+    var base := Vector3(c.x, SIDE_H, c.z)
+    var yaw := atan2(facing.x, facing.z)
+    var b := Basis(Vector3.UP, yaw)
+    var stone := _tinted("plaster", Color(0.85, 0.82, 0.78), 2.0)
+    _solid(Vector3(0.3, 2.8, 3.0), base + b * Vector3(-1.85, 1.4, 0), stone, yaw)
+    _solid(Vector3(0.3, 2.8, 3.0), base + b * Vector3(1.85, 1.4, 0), stone, yaw)
+    _solid(Vector3(4.0, 2.8, 0.3), base + b * Vector3(0, 1.4, -1.35), stone, yaw)
+    _deco(Vector3(4.4, 0.3, 3.4), base + b * Vector3(0, 2.95, 0), _mat(Color(0.75, 0.1, 0.1), 0.5), yaw)
+    _deco(Vector3(3.4, 0.05, 2.6), base + b * Vector3(0, 0.03, -0.1), _mat(Color(0.05, 0.05, 0.06), 0.9), yaw)   # спуск
+    var m := _glow(Color(0.95, 0.1, 0.1), 1.5)
+    _deco(Vector3(0.9, 0.9, 0.1), base + b * Vector3(1.3, 3.65, 1.0), m, yaw)
+    _label("М", base + b * Vector3(1.3, 3.65, 1.07), facing, 150, Color.WHITE)
+    _label("МЕТРО", base + b * Vector3(-0.4, 2.95, 1.72), facing, 56, Color.WHITE)
+    _label(st_name, base + b * Vector3(-0.5, 3.3, 1.0), facing, 44, Color(1, 0.95, 0.85))
+    metro.append({"name": st_name, "pos": base + b * Vector3(0, 0, 0.3), "out": base + b * Vector3(0, 0, 2.6), "yaw": yaw})
+
+
+func _build_metro() -> void:
+    _metro_pavilion(Vector3(station_spawn.x - 16.0, 0, station_spawn.z + 4.0), Vector3(0, 0, 1), "Вокзальная")
+    _metro_pavilion(Vector3(-377.0, 0, 25.0), Vector3(-1, 0, 0), "Заречная")
+    _metro_pavilion(Vector3(110.0, 0, 377.0), Vector3(0, 0, 1), "Горки")
+
+
+## Праздничное убранство площадей: флаги на флагштоках, гирлянды; ёлка — отдельно (Новый год).
+func _build_festive() -> void:
+    festive_root = Node3D.new()
+    festive_root.visible = false
+    add_child(festive_root)
+    tree_root = Node3D.new()
+    tree_root.visible = false
+    add_child(tree_root)
+    var red := _mat(Color(0.85, 0.05, 0.05), 0.7)
+    var pole: Material = _m["metal"]
+    for org: Vector3 in [Vector3(0, SIDE_H, -12), py_center + Vector3(0, SIDE_H, 0)]:
+        fireworks_spots.append(org + Vector3(0, 0, 0))
+        var rad := 18.0 if org.x > -500.0 else 15.0
+        for k in 8:
+            var a := k * TAU / 8.0
+            var p := org + Vector3(cos(a), 0, sin(a)) * rad
+            var pm := MeshInstance3D.new()
+            pm.mesh = _cyl_mesh(0.05, 0.06, 7.0, 6)
+            pm.material_override = pole
+            pm.position = p + Vector3(0, 3.5, 0)
+            festive_root.add_child(pm)
+            var fl := MeshInstance3D.new()
+            fl.mesh = _box_mesh(Vector3(1.6, 1.0, 0.03))
+            fl.material_override = red
+            fl.position = p + Vector3(0.8, 6.4, 0)
+            festive_root.add_child(fl)
+        # гирлянда из лампочек по кругу
+        for k in 48:
+            var a := k * TAU / 48.0
+            var bulb := MeshInstance3D.new()
+            var sp := SphereMesh.new()
+            sp.radius = 0.09
+            sp.height = 0.18
+            bulb.mesh = sp
+            bulb.material_override = _glow([Color(1, 0.2, 0.2), Color(1, 0.85, 0.2), Color(0.3, 0.6, 1), Color(0.3, 1, 0.4)][k % 4], 2.5)
+            bulb.position = org + Vector3(cos(a) * rad, 5.6 + 0.4 * absf(sin(a * 4.0)), sin(a) * rad)
+            festive_root.add_child(bulb)
+        # ёлка
+        var t0 := org + Vector3(0, 0, 12.0) if org.x > -500.0 else org + Vector3(0, 0, -10.0)
+        var green := _mat(Color(0.08, 0.35, 0.15), 0.9)
+        for lvl in 5:
+            var cone := MeshInstance3D.new()
+            var cm := CylinderMesh.new()
+            cm.top_radius = 0.05
+            cm.bottom_radius = 3.4 - lvl * 0.6
+            cm.height = 2.6
+            cone.mesh = cm
+            cone.material_override = green
+            cone.position = t0 + Vector3(0, 1.8 + lvl * 1.6, 0)
+            tree_root.add_child(cone)
+        var star := MeshInstance3D.new()
+        var ss := SphereMesh.new()
+        ss.radius = 0.45
+        ss.height = 0.9
+        star.mesh = ss
+        star.material_override = _glow(Color(1, 0.1, 0.05), 3.0)
+        star.position = t0 + Vector3(0, 10.3, 0)
+        tree_root.add_child(star)
+        for k in 30:
+            var a := k * 2.4
+            var hh := randf_range(1.5, 8.5)
+            var r := (3.4 - (hh - 0.5) / 1.6 * 0.6) * 0.75
+            var toy := MeshInstance3D.new()
+            var ts := SphereMesh.new()
+            ts.radius = 0.16
+            ts.height = 0.32
+            toy.mesh = ts
+            toy.material_override = _glow([Color(1, 0.2, 0.2), Color(1, 0.85, 0.2), Color(0.3, 0.6, 1)][k % 3], 1.5)
+            toy.position = t0 + Vector3(cos(a) * r, hh, sin(a) * r)
+            tree_root.add_child(toy)

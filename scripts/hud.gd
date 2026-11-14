@@ -21,6 +21,8 @@ const APPS := [
     ["car", "Моя машина", "key", Color(0.35, 0.38, 0.45)],
     ["biz", "Бизнес", "money", Color(0.6, 0.45, 0.1)],
     ["emote", "Жесты", "people", Color(0.55, 0.3, 0.6)],
+    ["skills", "Навыки", "star", Color(0.2, 0.55, 0.6)],
+    ["achieve", "Достижения", "trophy", Color(0.75, 0.55, 0.1)],
     ["menu", "Меню", "gear", Color(0.3, 0.3, 0.33)],
 ]
 const MinimapScript := preload("res://scripts/minimap.gd")
@@ -56,6 +58,7 @@ const CHAT_COLORS := {
     "info": Color(0.95, 0.95, 0.95), "money": Color(0.45, 0.95, 0.5), "weather": Color(0.55, 0.8, 1.0),
     "warn": Color(1.0, 0.45, 0.35), "faction": Color(0.4, 0.65, 1.0), "job": Color(1.0, 0.85, 0.3),
     "sms": Color(1.0, 0.6, 0.85), "news": Color(0.85, 0.75, 1.0), "time": Color(0.75, 0.75, 0.8),
+    "say": Color(1.0, 1.0, 1.0), "shout": Color(1.0, 0.75, 0.4),
 }
 var chat_time_text := ""       # «[12:30]» перед строкой — задаёт main.gd
 var _chat_box: VBoxContainer

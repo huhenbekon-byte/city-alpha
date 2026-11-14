@@ -6,3 +6,15 @@ sedan, hatch, sport, coupe, suv, taxi, cop — Quaternius, "Realistic Car Pack (
 vaz2106 (VAZ_2106_TAXI) и uaz452 (uaz-452) — скачаны автором проекта со стоков.
 Перед публичным релизом проверь лицензию на странице, откуда они скачаны,
 и укажи там же автора, если лицензия этого требует.
+
+Модели с Sketchfab — лицензия CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+Модели упрощены и пересобраны под игру (уменьшены текстуры и число полигонов).
+  vaz2101   — "VAZ 2101" by Javkal: https://sketchfab.com/3d-models/vaz-2101-95d34f63b5b14e2197fd41383776e031
+  vaz2108   — "USSR VAZ-2108" by NewViStudios: https://sketchfab.com/3d-models/ussr-vaz-2108-c9e297b856594cbf936c63321253b6b5
+  moskvich  — "Moskvich 412" by mamont10050017: https://sketchfab.com/3d-models/moskvich-412-8904994c39d24529b8581b181198b687
+  uaz469    — "Uaz-469" by Yo.Ri: https://sketchfab.com/3d-models/uaz-469-70c8691c6fb64b859fbfc16babfa2c5f
+  uaz452n   — "Uaz 452" by Sergey Egelsky: https://sketchfab.com/eg (Sketchfab, CC-BY 4.0)
+  gaz53     — "Gaz" by lelkinbrain: https://sketchfab.com/lelkinbrain (Sketchfab, CC-BY 4.0)
+  zil130    — "ZiL-130" by nghesiyeubuom97: https://sketchfab.com/3d-models/zil-130-38e93a0437c84184a141fe44a5125e4f
+  laz695    — "Laz 695" by Alt: https://sketchfab.com/3d-models/laz-695-ddfd0b9846c24a058874521e9d170bcb
+  izh       — "IZH - Planeta 2 (ИЖ Планета - 2)" by kreems: https://sketchfab.com/kreems (Sketchfab, CC-BY 4.0)

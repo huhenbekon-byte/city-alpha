@@ -19,6 +19,8 @@ const MarkerScript := preload("res://scripts/marker.gd")
 const DialogScript := preload("res://scripts/dialog.gd")
 const SpeedoScript := preload("res://scripts/speedo.gd")
 const WelcomeScript := preload("res://scripts/welcome.gd")
+const TramScript := preload("res://scripts/tram.gd")
+const BagScript := preload("res://scripts/bag.gd")
 const NpcScript := preload("res://scripts/npc.gd")
 const TrainScript := preload("res://scripts/train.gd")
 const WorkScript := preload("res://scripts/work.gd")
@@ -37,15 +39,16 @@ const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 �
 const TYAP_SKIN := "res://models/character/tyap.gltf"
 const CAR_MODELS := [
     {"name": "Шестёрка", "price": 8000, "color": Color(0.92, 0.92, 0.90), "speed": 110.0, "force": 4300.0, "model": "vaz2106"},
-    {"name": "Комфорт", "price": 15000, "color": Color(0.15, 0.22, 0.45), "speed": 125.0, "force": 5000.0, "model": "sedan"},
-    {"name": "Спорт", "price": 28000, "color": Color(0.45, 0.06, 0.10), "speed": 155.0, "force": 6500.0, "model": "sport"},
-    {"name": "Люкс", "price": 45000, "color": Color(0.10, 0.10, 0.11), "speed": 175.0, "force": 7400.0, "model": "coupe"},
-    {"name": "Мотоцикл", "price": 12000, "color": Color(0.75, 0.10, 0.10), "speed": 150.0, "force": 1500.0, "kind": "moto"},
-    {"name": "Внедорожник", "price": 60000, "color": Color(0.12, 0.14, 0.12), "speed": 165.0, "force": 8200.0, "model": "suv"},
+    {"name": "Москвич-412", "price": 12000, "color": Color(0.15, 0.22, 0.45), "speed": 125.0, "force": 5000.0, "model": "moskvich"},
+    {"name": "ВАЗ-2108 «Восьмёрка»", "price": 24000, "color": Color(0.45, 0.06, 0.10), "speed": 150.0, "force": 6200.0, "model": "vaz2108"},
+    {"name": "ВАЗ-2101 «Копейка»", "price": 6000, "color": Color(0.85, 0.82, 0.70), "speed": 110.0, "force": 4300.0, "model": "vaz2101"},
+    {"name": "Мотоцикл ИЖ «Планета»", "price": 12000, "color": Color(0.25, 0.35, 0.65), "speed": 140.0, "force": 1500.0, "kind": "moto", "model": "izh"},
+    {"name": "УАЗ-469", "price": 32000, "color": Color(0.30, 0.36, 0.25), "speed": 120.0, "force": 7600.0, "model": "uaz469"},
     # новые — только в конец: сохранения хранят машины по номеру в списке
     {"name": "Нива", "price": 22000, "color": Color(0.82, 0.78, 0.62), "speed": 130.0, "force": 6200.0, "model": "niva"},
     {"name": "Волга ГАЗ-3102", "price": 38000, "color": Color(0.85, 0.85, 0.83), "speed": 160.0, "force": 7000.0, "model": "volga"},
     {"name": "УАЗ «Аварийка» 04", "price": 26000, "color": Color(0.95, 0.80, 0.25), "speed": 110.0, "force": 6000.0, "model": "uaz_gas"},
+    {"name": "УАЗ-452 «Буханка»", "price": 21000, "color": Color(0.30, 0.36, 0.25), "speed": 110.0, "force": 6400.0, "model": "uaz452n"},
 ]
 ## Тюнинг на СТО
 const PAINTS := [["Белый", Color(0.92, 0.92, 0.90)], ["Чёрный", Color(0.06, 0.06, 0.07)], ["Красный", Color(0.65, 0.06, 0.08)],
@@ -106,6 +109,7 @@ const FOOD := {
     "УНИВЕРСАМ": [["Батон", 50, 15, 0], ["Колбаса", 250, 40, 0], ["Комплексный обед", 450, 80, 5]],
     "АПТЕКА": [["Аптечка", 400, 0, 40], ["Бинт", 150, 0, 15], ["Витамины", 200, 5, 10]],
     "АЗС": [["Беляш", 100, 30, 0], ["Лимонад «Тархун»", 60, 5, 5], ["Канистра 10 л", 600, 0, 0]],
+    "_РЫБА": [["Вобла", 80, 15, 0], ["Лещ", 200, 25, 0], ["Судак", 450, 35, 0], ["Сом", 1200, 50, 0]],   # улов (не продаётся в ларьках)
     "БУФЕТ": [["Пирожок с капустой", 60, 20, 0], ["Пирожок с мясом", 80, 25, 0], ["Беляш", 90, 30, 0],
             ["Чай в подстаканнике", 40, 5, 2], ["Лимонад «Буратино»", 60, 8, 2]],
 }
@@ -255,6 +259,29 @@ var _speedo: SpeedoScript
 var _welcome: WelcomeScript = null
 var welcome_seen := false     # окно «Добро пожаловать» уже показали
 var quests_skipped := false   # отказался от квестовой линии (можно начать у Петера)
+var furniture: Array = []     # купленная мебель (id), стоит дома — и в квартире, и в частном доме
+var _tram: TramScript = null
+var _bag: BagScript = null
+var _tram_ride = null         # вагон, в котором едем (словарь из tram.gd)
+var _tram_seat := Transform3D()
+var _tram_wait := -1          # ждём трамвай на остановке №
+var _rob := {}                # идущее ограбление: {"key", "tier", "left", "pos", "name"}
+var _loot := 0                # добыча в сумке — нести в общак
+var _rob_cd := {}             # цель -> игровая минута, когда снова можно
+var skills := {"strength": 0.0, "driving": 0.0, "shooting": 0.0}   # навыки 0..100
+var stats := {"rob": 0, "steal": 0, "turf": 0, "tram": 0, "drive_m": 0.0, "workouts": 0}
+var achievements: Array = []  # открытые достижения (id)
+var _steal_car = null         # машина под заказ (угон)
+var _steal_order := {}        # {"model", "name", "pay"}
+var _steal_cd := 0.0
+var _ach_t := 0.0
+var _train_t := 0.0           # идёт подход на турнике
+var _train_pos := Vector3.ZERO
+var _taxi_cond := 100.0
+var has_rod := false
+var _fish_t := 0.0
+var _fish_pos := Vector3.ZERO
+var _court_work_cd := 0.0
 var _player
 var _cars: Array = []
 var _driving = null
@@ -301,6 +328,8 @@ var _start: StartScreenScript
 
 func _ready() -> void:
     set_process(false)
+    if Net.is_server:
+        return   # выделенный сервер: город не строим, Net всё делает сам
     var layer := CanvasLayer.new()
     layer.layer = 30
     add_child(layer)
@@ -321,6 +350,12 @@ func _start_music_volume() -> float:
 
 
 func _on_server_chosen(_index: int, layer: CanvasLayer) -> void:
+    var host := _start.chosen_host
+    var net_failed := false
+    if host != "":
+        await _start.progress(20.0, "Подключение к %s... (если сервер спал — до минуты)" % host, 0.3)
+        var ok: bool = await Net.join(host)
+        net_failed = not ok
     await _start.progress(35.0, "Подключение к серверу...", 0.7)
     await _start.progress(45.0, "Загрузка города...", 0.2)
     await get_tree().process_frame
@@ -331,6 +366,10 @@ func _on_server_chosen(_index: int, layer: CanvasLayer) -> void:
     _start = null
     set_process(true)
     _on_play()
+    if Net.online:
+        _net_start()
+    elif net_failed:
+        _hud.chat("Сервер %s не отвечает — играешь офлайн." % host, "warn")
 
 
 func _setup() -> void:
@@ -432,6 +471,14 @@ func _process(delta: float) -> void:
     _check_dps(delta, speed)
     _traffic.focus = focus
     _peds.focus = focus
+    if _tram:
+        _tram.focus = focus
+        _update_tram()
+    _update_rob(delta, focus)
+    _update_part1(delta, focus)
+    _update_part2(delta)
+    _update_part3(delta)
+    _update_online(delta)
     _lamp_timer -= delta
     if _lamp_timer <= 0.0:
         _lamp_timer = 0.5
@@ -493,8 +540,21 @@ func _process(delta: float) -> void:
         job_text = _duty.status_text(focus)
     if not _capt.is_empty():
         job_text = "ЗАХВАТ КВАРТАЛА: %d с — не уходи с территории" % int(_capt["left"])
+    if not _rob.is_empty():
+        job_text = "ГРАБЁЖ: %s — ещё %d с, не уходи!" % [_rob["name"], int(ceil(float(_rob["left"])))]
+    elif _loot > 0:
+        job_text = "Добыча %s — отнеси в общак на базу (не попадись милиции!)" % HudScript.format_money(_loot)
+    if _tram_ride != null:
+        job_text = "Едешь в трамвае №1. Выйти — джойстиком на остановке"
+    if not _steal_order.is_empty() and _rob.is_empty() and _loot == 0:
+        job_text = ("Угон: %s — гони в гараж ОПГ" if bool(_steal_order.get("taken", false)) else "Заказ: угнать %s (метка на карте)") % _steal_order["name"]
+    if _train_t > 0.0:
+        job_text = "Подход на турнике: %d с" % int(ceil(_train_t))
+    var p3_text := _part3_job_text()
+    if p3_text != "":
+        job_text = p3_text
     if jail_left > 0.0:
-        job_text = "КПЗ: осталось %d с" % int(ceil(jail_left))
+        job_text = "Срок: осталось %d с — «РАБОТАТЬ» у стены сокращает срок" % int(ceil(jail_left))
     if job_text == "" and quest_i < QUESTS.size() and not quests_skipped:
         if not peter_met:
             job_text = "Подойди к Петеру у входа в вокзал — он всё расскажет"
@@ -681,6 +741,12 @@ func _on_reset() -> void:
     quest_i = 0
     quest_active = false
     peter_met = false
+    furniture = []
+    _loot = 0
+    skills = {"strength": 0.0, "driving": 0.0, "shooting": 0.0}
+    stats = {"rob": 0, "steal": 0, "turf": 0, "tram": 0, "drive_m": 0.0, "workouts": 0}
+    achievements = []
+    has_rod = false
     welcome_seen = false
     quests_skipped = false
     rent_free_used = false
@@ -910,6 +976,14 @@ func _on_profile_closed() -> void:
 
 
 func _on_job_paid(amount: int, text: String) -> void:
+    # такси: аккуратно довёз (машина не побилась) — чаевые
+    if _job.active and _job.kind == "taxi" and _driving != null:
+        var cond: float = _driving.condition
+        if cond >= _taxi_cond - 0.5:
+            var tip := int(amount * 0.3 / 10.0) * 10
+            amount += tip
+            text += " · чаевые +%d ₽" % tip
+        _taxi_cond = cond
     earned_total += amount
     bank += amount   # зарплата приходит на карту
     _bank_log(amount, "Зарплата: " + _job_name())
@@ -998,12 +1072,24 @@ func _toggle_vehicle() -> void:
         var car = _nearest_car()
         if car == null:
             return
+        if car == _steal_car and not bool(_steal_order.get("taken", false)):
+            _steal_order["taken"] = true
+            Sfx.play_at("siren", car.global_position, -10.0, 1.6)
+            _hud.show_toast("Вскрыл! Гони в гараж своей ОПГ (метка на автопарк)")
+            if randf() < 0.5:
+                _add_wanted(1, "угон автомобиля")
+            if _city.faction_sites.has(faction):
+                _set_gps(_city.faction_sites[faction]["marker"], "Гараж: сдать машину", true)
         if car.locked:   # своя машина: ключом открываем замок
             car.locked = false
             Sfx.play("lock", -6.0)
         if car.kind != "moto":
             Sfx.play("car_door", -6.0, randf_range(0.95, 1.05))
         Sfx.play("scooter_start" if car.kind == "moto" or car.scooter else "engine_start", -9.0, randf_range(0.95, 1.05))
+        # навык вождения: до +20% тяги у опытного водителя
+        if not car.has_meta("base_force"):
+            car.set_meta("base_force", car.max_engine_force)
+        car.max_engine_force = float(car.get_meta("base_force")) * (1.0 + float(skills["driving"]) * 0.002)
         _player.set_active(false)
         if car.kind == "moto":
             var rider_col: Color = Clothes.colors(look)["jacket"]
@@ -1060,8 +1146,10 @@ func _nearest_car():
         all.append(_faction_car)
     if _rent_scooter != null:
         all.append(_rent_scooter)
+    if _steal_car != null:
+        all.append(_steal_car)
     for car in all:
-        if not car.owned or not car.visible:
+        if (not car.owned and car != _steal_car) or not car.visible:
             continue
         var d: float = car.global_position.distance_to(_player.global_position)
         if d < best_d:
@@ -1143,6 +1231,10 @@ func _spawn_life() -> void:
     _traffic.obstacles = [_player] + _cars
     _traffic.honk.connect(func(pos: Vector3) -> void: Sfx.play_at("horn", pos, -2.0, 0.9))
     _traffic.setup()
+    _tram = TramScript.new()
+    _tram.traffic = _traffic
+    _tram.obstacles = _traffic.obstacles
+    add_child(_tram)
 
     _peds = PedestriansScript.new()
     add_child(_peds)
@@ -1224,6 +1316,10 @@ func _spawn_cars() -> void:
             car.rim_color = Color.html(String(t[2])) if String(t[2]) != "" else Color(0, 0, 0, 0)
             car.plate_text = String(t[3])
             car.condition = float(t[4])
+            if t.size() >= 8:
+                car.freshener = bool(t[5])
+                car.loud = bool(t[6])
+                car.lowered = bool(t[7])
         if i < saved.size():
             var e: Array = saved[i]
             var pos: Vector3 = e[0]
@@ -1324,7 +1420,8 @@ func _save_game() -> void:
     cfg.set_value("world", "turf", turf)
     var tun := []
     for car in _cars:
-        tun.append([car.paint.to_html(), car.tint, car.rim_color.to_html() if car.rim_color.a > 0.0 else "", car.plate_text, car.condition])
+        tun.append([car.paint.to_html(), car.tint, car.rim_color.to_html() if car.rim_color.a > 0.0 else "", car.plate_text, car.condition,
+                car.freshener, car.loud, car.lowered])
     cfg.set_value("world", "tuning", tun)
     cfg.set_value("player", "licenses", licenses)
     cfg.set_value("player", "quest", quest_i)
@@ -1332,6 +1429,11 @@ func _save_game() -> void:
     cfg.set_value("player", "quest_active", quest_active)
     cfg.set_value("player", "peter_met", peter_met)
     cfg.set_value("player", "welcome_seen", welcome_seen)
+    cfg.set_value("player", "furniture", furniture)
+    cfg.set_value("player", "skills", skills)
+    cfg.set_value("player", "has_rod", has_rod)
+    cfg.set_value("player", "stats", stats)
+    cfg.set_value("player", "achievements", achievements)
     cfg.set_value("player", "quests_skipped", quests_skipped)
     cfg.set_value("player", "rent_free_used", rent_free_used)
     cfg.set_value("player", "earned", earned_total)
@@ -1425,6 +1527,17 @@ func _load_game() -> void:
         peter_met = true
         quest_active = true
     welcome_seen = bool(cfg.get_value("player", "welcome_seen", peter_met))
+    furniture = Array(cfg.get_value("player", "furniture", []))
+    var sk = cfg.get_value("player", "skills", {})
+    if sk is Dictionary:
+        for k in sk:
+            skills[k] = float(sk[k])
+    var st = cfg.get_value("player", "stats", {})
+    if st is Dictionary:
+        for k in st:
+            stats[k] = st[k]
+    achievements = Array(cfg.get_value("player", "achievements", []))
+    has_rod = bool(cfg.get_value("player", "has_rod", false))
     quests_skipped = bool(cfg.get_value("player", "quests_skipped", false))
     rent_free_used = bool(cfg.get_value("player", "rent_free_used", false))
     earned_total = int(cfg.get_value("player", "earned", 0))
@@ -1599,7 +1712,7 @@ func _build_ui() -> void:
     _touch.radio_pressed.connect(_on_radio)
     _touch.lock_pressed.connect(_toggle_lock)
     _touch.lights_pressed.connect(_toggle_lights)
-    _touch.chat_pressed.connect(func() -> void: _hud.toggle_chat_history())
+    _touch.chat_pressed.connect(_on_chat_button)
     _touch.faction_pressed.connect(func() -> void:
         if faction == "":
             _hud.show_toast("Ты не во фракции. Вступить — в отделе кадров любого здания фракции или ОПГ")
@@ -1641,6 +1754,18 @@ func _build_ui() -> void:
     _fmenu.spawn_requested.connect(_on_fmenu_spawn)
     _fmenu.announce_posted.connect(_on_fmenu_news)
     _fmenu.duty_toggled.connect(_toggle_duty)
+
+    _bag = BagScript.new()
+    layer.add_child(_bag)
+    _bag.closed.connect(func() -> void: _touch.blocked = false)
+    _bag.use_requested.connect(func(item: String) -> void:
+        _use_item(item)
+        _refresh_bag())
+    _bag.drop_requested.connect(func(item: String) -> void:
+        _take_item(item)
+        Sfx.play("click")
+        _hud.show_toast("Выброшено: %s" % item)
+        _refresh_bag())
 
     _dialog = DialogScript.new()
     layer.add_child(_dialog)
@@ -1753,7 +1878,23 @@ func _setup_points() -> void:
         _add_point(hi["exit"], 1.4, "ВЫЙТИ", _exit_home, false, Color.WHITE, false)
         _add_point(hi["fridge"], 1.5, "ХОЛОДИЛЬНИК", _use_fridge, false, Color.WHITE, false)
         _add_point(hi["bed"], 1.6, "ОТДОХНУТЬ", _use_bed, false, Color.WHITE, false)
+        if hi.has("shop"):
+            _add_point(hi["shop"], 1.3, "МЕБЕЛЬ", _open_furniture, false, Color.WHITE, false)
+            _add_point(hi["radiola"], 1.3, "РАДИОЛА", _use_radiola, false, Color.WHITE, false)
+    if _tram:
+        for ti in _tram.stops.size():
+            _add_point(_tram.stops[ti]["sign"], 3.0, "ТРАМВАЙ", _tram_board.bind(ti), false, Color(0.95, 0.35, 0.3))
+    _setup_rob_points()
+    _setup_part2_points()
+    _setup_part3_points()
+    for wp: Vector3 in _city.workout_spots:
+        _add_point(wp, 1.3, "КАЧАТЬСЯ", _workout, false, Color.WHITE, false)
+    for gid: String in _city.faction_sites:
+        if FactionData.is_gang(gid):
+            _points.append({"pos": _city.faction_sites[gid]["marker"] + Vector3(3.0, 0, 0), "r": 2.0, "text": "ЗАКАЗ НА УГОН",
+                    "cb": _steal_menu.bind(gid), "car": false, "gang_only": true})
     _set_home(int(_loaded.get("home", -1)))
+    _apply_furniture()
     for p: Vector3 in _city.service_stations:
         _add_point(p, 7.0, "СТО", _open_sto, true, Color(0.3, 0.5, 1.0))
     for p: Vector3 in _city.fuel_pumps:
@@ -2062,6 +2203,8 @@ func _stop_work_from_dialog() -> void:
 
 
 func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
+    if _work_vehicle != null:
+        _on_work_vehicle_done()
     if _driving:  # выходим из своей машины
         var pos: Vector3 = _driving.get_exit_position()
         _driving.set_driven(false)
@@ -2075,7 +2218,8 @@ func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
     match vehicle_kind:
         "bus":
             v.kind = "bus"
-            v.car_name = "Автобус"
+            v.model_id = "laz695"
+            v.car_name = "ЛАЗ-695"
             v.paint = Color(0.95, 0.75, 0.15)
             v.max_engine_force = 18000.0
             v.max_speed_kmh = 80.0
@@ -2083,7 +2227,8 @@ func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
             v.max_steer = 0.5
         "truck":
             v.kind = "truck"
-            v.car_name = "Фура"
+            v.model_id = "zil130"
+            v.car_name = "ЗИЛ-130"
             v.paint = Color(0.15, 0.30, 0.65)
             v.max_engine_force = 22000.0
             v.max_speed_kmh = 90.0
@@ -2091,13 +2236,23 @@ func _on_work_vehicle_needed(vehicle_kind: String, at: Transform3D) -> void:
             v.max_steer = 0.5
         "school_moto":
             v.kind = "moto"
-            v.car_name = "Учебный мотоцикл"
+            v.model_id = "izh"
+            v.car_name = "Учебный ИЖ"
             v.paint = Color(0.95, 0.55, 0.1)
             v.max_engine_force = 1500.0
             v.max_speed_kmh = 110.0
+        "taxi_volga":
+            v.model_id = "volga"
+            v.car_name = "«Волга»-такси"
+            v.paint = Color(0.95, 0.78, 0.12)
+            v.livery_text = "ТАКСИ"
+            v.livery_color = Color(0.08, 0.08, 0.08)
+            v.max_engine_force = 7000.0
+            v.max_speed_kmh = 150.0
         "school_truck":
             v.kind = "truck"
-            v.car_name = "Учебный грузовик"
+            v.model_id = "gaz53"
+            v.car_name = "Учебный ГАЗ-53"
             v.paint = Color(0.95, 0.55, 0.1)
             v.max_engine_force = 22000.0
             v.max_speed_kmh = 90.0
@@ -2867,7 +3022,7 @@ func _fmenu_data() -> Dictionary:
             "payday_left": int(ceil(PAYDAY_MINUTES - _payday_acc)), "online": 1, "members": 1,
             "ranks": ranks, "vehicles": f.get("vehicles", []), "at_garage": at_garage,
             "nick": passport_name if passport_name != "" else "Без_Имени", "news": faction_news,
-            "on_duty": _duty.active}
+            "on_duty": _duty.active}.merged(_org_info(), true)
 
 
 func _on_fmenu_closed() -> void:
@@ -2988,6 +3143,7 @@ func _hurt(amount: float, text: String) -> void:
 ## Здоровье кончилось: игрок теряет сознание и приходит в себя у больницы.
 func _faint() -> void:
     Sfx.play("faint")
+    _lose_loot("Пока ты был без сознания, сумку с добычей унесли")
     if _driving:
         var pos: Vector3 = _driving.get_exit_position()
         _driving.set_driven(false)
@@ -3125,6 +3281,7 @@ func _sell_home() -> void:
 
 func _enter_home(i: int) -> void:
     _dialog.close()
+    _apply_furniture()
     var hi: Dictionary = _city.home_interiors[String(_city.homes[i]["kind"])]
     _home_inside = i
     _player.global_position = hi["spawn"]
@@ -3134,6 +3291,7 @@ func _enter_home(i: int) -> void:
 
 
 func _exit_home() -> void:
+    Music.stop_home()
     var i := _home_inside if _home_inside >= 0 else home
     _home_inside = -1
     var p: Vector3 = _city.homes[i]["pos"] if i >= 0 else PLAYER_SPAWN
@@ -3234,8 +3392,17 @@ func _arrest() -> void:
     if fine - from_cash > 0:
         _bank_log(-(fine - from_cash), "Штраф милиции")
     jail_left = 30.0 * wanted
-    _open_dialog("Задержание", "Тебя задержал наряд милиции.\nРозыск: ★%d\nШтраф: %s\n\nКПЗ: %d секунд." % [wanted,
-            HudScript.format_money(fine), int(jail_left)], [["Понятно", _dialog.close]])
+    _lose_loot("Добычу изъяли при задержании")
+    if wanted >= 4:
+        # серьёзно: суд и колония — срок дольше, можно нанять адвоката или работать в колонии
+        jail_left = 75.0 * wanted
+        var lawyer := 2500 * wanted
+        _open_dialog("Народный суд", "Розыск ★%d — дело передано в суд.\nШтраф: %s\n\nПриговор: %d секунд колонии общего режима.\nВ колонии можно работать на швейке — срок идёт быстрее." % [
+                wanted, HudScript.format_money(fine), int(jail_left)],
+                [["Адвокат — срок вдвое меньше (%s)" % HudScript.format_money(lawyer), _hire_lawyer.bind(lawyer)], ["Принять приговор", _dialog.close]])
+    else:
+        _open_dialog("Задержание", "Тебя задержал наряд милиции.\nРозыск: ★%d\nШтраф: %s\n\nКПЗ: %d секунд." % [wanted,
+                HudScript.format_money(fine), int(jail_left)], [["Понятно", _dialog.close]])
     wanted = 0
     _interior = "police"
     _player.global_position = _city.kpz_cell
@@ -3308,6 +3475,12 @@ func _on_app(id: String) -> void:
         "emote":
             _hud.close_phone()
             _open_emotes()
+        "skills":
+            _hud.close_phone()
+            _open_skills()
+        "achieve":
+            _hud.close_phone()
+            _open_achievements()
         "work":
             _hud.close_phone()
             if _job.active or _work.active or _duty.active:
@@ -3431,8 +3604,25 @@ func _item_info(item: String) -> Array:
 
 func _open_inventory() -> void:
     _touch.blocked = true
-    _win_mode = "inv"
-    _win.open_window("СУМКА  %d/%d" % [_bag_count(), BAG_SIZE], "bag", [{"id": "all", "name": "Вещи", "icon": "bag"}], false)
+    _refresh_bag()
+
+
+## Сумка 5×5 (окно по концепту): вещи стопками.
+func _refresh_bag() -> void:
+    if _bag == null:
+        return
+    var list := []
+    for item: String in inventory:
+        var info := _item_info(item)
+        var what := ""
+        if int(info[0]) > 0:
+            what += "+%d сытости  " % int(info[0])
+        if int(info[1]) > 0:
+            what += "+%d здоровья" % int(info[1])
+        if item.begins_with("Канистра"):
+            what = "+10 л бензина в бак своей машины"
+        list.append({"name": item, "count": int(inventory[item]), "icon": _item_icon(item), "about": what.strip_edges()})
+    _bag.open_bag(list, "%d/%d" % [_bag_count(), BAG_SIZE])
 
 
 func _fill_inv_rows(rows: Array) -> void:
@@ -3770,6 +3960,7 @@ func _update_turf(delta: float, focus: Vector3) -> void:
                 bank += 1500
                 _bank_log(1500, "Захват района")
                 faction_exp += 1
+                stats["turf"] = int(stats["turf"]) + 1
                 Sfx.play("levelup")
                 _hud.show_toast("Район наш! +1 500 ₽ из общака, +1 стаж")
                 _sms_add(_faction_name(), "Район взят под контроль. Каждая получка — больше на 150 ₽ за район.")
@@ -3816,6 +4007,9 @@ func _open_sto() -> void:
         buttons.append(["Диски — %s" % HudScript.format_money(RIM_PRICE), _sto_rim_menu])
         buttons.append(["%s — %s" % ["Снять тонировку" if car.tint else "Тонировка", HudScript.format_money(TINT_PRICE)], _sto_tint])
         buttons.append(["Красивые номера — %s" % HudScript.format_money(PLATE_PRICE), _sto_plate])
+        buttons.append(["%s — %s" % ["Убрать «ёлочку»" if car.freshener else "«Ёлочка» на зеркало", HudScript.format_money(150)], _sto_toggle.bind("freshener", 150)])
+        buttons.append(["%s — %s" % ["Вернуть глушитель" if car.loud else "Прямоток (громкий выхлоп)", HudScript.format_money(3000)], _sto_toggle.bind("loud", 3000)])
+        buttons.append(["%s — %s" % ["Поднять обратно" if car.lowered else "Занижение", HudScript.format_money(2500)], _sto_toggle.bind("lowered", 2500)])
     buttons.append(["Закрыть", _dialog.close])
     _open_dialog("СТО — %s" % car.car_name, "Состояние: %d%%\nНомер: %s" % [int(car.condition),
             car.plate_text if car.plate_text != "" else "—"], buttons)
@@ -3873,6 +4067,16 @@ func _sto_tint() -> void:
     if _driving == null or not _pay(TINT_PRICE, "СТО: тонировка"):
         return
     _driving.tint = not _driving.tint
+    _driving.apply_tuning()
+    Sfx.play("cash")
+    _save_game()
+    _open_sto()
+
+
+func _sto_toggle(prop: String, price: int) -> void:
+    if _driving == null or not _pay(price, "СТО: тюнинг"):
+        return
+    _driving.set(prop, not bool(_driving.get(prop)))
     _driving.apply_tuning()
     Sfx.play("cash")
     _save_game()
@@ -4156,7 +4360,17 @@ const ITEM_ICONS := {"Шаурма": "shawarma", "Шаурма двойная": 
 
 
 func _item_icon(item: String) -> String:
-    return String(ITEM_ICONS.get(item, "bag"))
+    if ITEM_ICONS.has(item):
+        return String(ITEM_ICONS[item])
+    var low := item.to_lower()
+    for pair: Array in [["пирож", "sandwich"], ["ватруш", "sandwich"], ["эклер", "sandwich"], ["беляш", "sandwich"],
+            ["чебурек", "sandwich"], ["пряник", "sandwich"], ["чай", "coffee"], ["кофе", "coffee"], ["квас", "bottle"],
+            ["кефир", "bottle"], ["молоко", "bottle"], ["айран", "bottle"], ["лимонад", "bottle"], ["пельмен", "dumplings"],
+            ["колбас", "dumplings"], ["сало", "dumplings"], ["обед", "dumplings"], ["хлеб", "bread"], ["батон", "bread"],
+            ["аптеч", "firstaid"], ["вобла", "fish"], ["лещ", "fish"], ["судак", "fish"], ["сом", "fish"], ["бинт", "bandage"], ["витамин", "vitamins"], ["канистр", "canister"]]:
+        if low.contains(String(pair[0])):
+            return String(pair[1])
+    return "bag"
 
 
 
@@ -4215,7 +4429,11 @@ func _attack() -> void:
         _traffic.panic(_player.global_position, 70.0)
     var dir: Vector3 = _player.aim_direction()
     var origin: Vector3 = _player.global_position + Vector3(0, 1.3, 0)
-    var hit_pos := _peds.hit(origin, dir, float(info["range"]), 35.0 if melee else 8.0)
+    var rng_k := 1.0 + float(skills["strength"]) / 150.0 if melee else 1.0
+    var cone := 35.0 + float(skills["strength"]) * 0.15 if melee else 8.0 + float(skills["shooting"]) * 0.07
+    var hit_pos := _peds.hit(origin, dir, float(info["range"]) * rng_k, cone)
+    if not melee:
+        skills["shooting"] = minf(100.0, float(skills["shooting"]) + 0.15)
     var lawful: bool = (FactionData.base(faction) == "police" or faction == "kgb") and _duty.active
     if melee:
         Sfx.play("swing", -10.0, randf_range(0.9, 1.15))
@@ -4384,7 +4602,11 @@ func _apply_look() -> void:
         return
     var u := {} if _last_uniform == "" else FactionData.uniform(faction, faction_rank)
     # головной убор формы: фуражка, шляпа, «петушок», каска, шапочка...
-    _player.set_cap(String(u.get("cap", "")), u.get("cap_col", Color(0, 0, 0, 0)))
+    if u.is_empty():
+        var own_hat: Array = Clothes.hat(look)   # своя шапка из магазина одежды
+        _player.set_cap(String(own_hat[0]), own_hat[1])
+    else:
+        _player.set_cap(String(u.get("cap", "")), u.get("cap_col", Color(0, 0, 0, 0)))
     if u.is_empty():
         _player.set_look(Clothes.colors(look), Clothes.textures(look))
         return
@@ -4899,3 +5121,1600 @@ func _travel(dest: Vector3, text: String, secs: float, train_stop: String) -> vo
     _fade.visible = false
     _touch.blocked = false
     _traveling = false
+
+
+
+# ================================================================ мебель в квартире
+
+const FURNITURE := [
+    {"id": "servant", "name": "Сервант «Хельга»", "price": 9000, "about": "полированный, со стеклом — посуда и хрусталь на виду"},
+    {"id": "radiola", "name": "Радиола «Ригонда»", "price": 6000, "about": "играет все радиостанции, пока ты дома"},
+    {"id": "armchair", "name": "Кресло с пледом", "price": 3000, "about": "бабушкин плед в цветочек"},
+    {"id": "desk", "name": "Письменный столик", "price": 1500, "about": "для домашних дел и писем"},
+    {"id": "chair", "name": "Мягкий стул", "price": 800, "about": "к письменному столику"},
+    {"id": "tumba", "name": "Тумбочка", "price": 1200, "about": "у дивана, для мелочей"},
+]
+
+
+## Купленная мебель видна (и твёрдая) в комнатах жилья.
+func _apply_furniture() -> void:
+    for kind: String in _city.home_interiors:
+        var hi: Dictionary = _city.home_interiors[kind]
+        if not hi.has("furn"):
+            continue
+        for id: String in hi["furn"]:
+            var n: Node3D = hi["furn"][id]
+            var on := furniture.has(id)
+            n.visible = on
+            var body: StaticBody3D = n.get_meta("body")
+            body.collision_layer = 1 if on else 0
+
+
+func _open_furniture() -> void:
+    var text := "Мебельный каталог «Уют». Доставка и сборка — сразу.\n"
+    var buttons := []
+    for f: Dictionary in FURNITURE:
+        var id := String(f["id"])
+        if furniture.has(id):
+            text += "\n[+] %s — уже стоит" % f["name"]
+        else:
+            text += "\n- %s — %s (%s)" % [f["name"], HudScript.format_money(int(f["price"])), f["about"]]
+            buttons.append(["%s · %s" % [f["name"], HudScript.format_money(int(f["price"]))], _buy_furniture.bind(id)])
+    if buttons.is_empty():
+        text += "\n\nКвартира обставлена полностью!"
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Мебель", text, buttons)
+
+
+func _buy_furniture(id: String) -> void:
+    var f := {}
+    for x: Dictionary in FURNITURE:
+        if String(x["id"]) == id:
+            f = x
+    if f.is_empty() or furniture.has(id):
+        return
+    if not _pay(int(f["price"]), "Мебель: " + String(f["name"])):
+        return
+    furniture.append(id)
+    _apply_furniture()
+    _add_xp(5)
+    Sfx.play("cash")
+    _hud.show_toast("Привезли и собрали: %s" % f["name"])
+    _save_game()
+    _open_furniture()
+
+
+func _use_radiola() -> void:
+    if not furniture.has("radiola"):
+        _hud.show_toast("Радиолы нет — купи «Ригонду» в каталоге «Мебель»")
+        return
+    Sfx.play("radio_tune", -6.0)
+    _hud.show_toast(Music.home_next())
+
+
+# ================================================================ трамвай
+
+const TRAM_FARE := 5
+
+
+func _tram_board(i: int) -> void:
+    if _tram == null or _tram_ride != null:
+        return
+    var c = _tram.car_at_stop(i)
+    if c == null:
+        _tram_wait = i
+        _hud.show_toast("Трамвай №1 придёт примерно через %d с — жди на остановке, сядешь сам" % int(_tram.eta(i)))
+        return
+    _tram_enter(c)
+
+
+func _tram_enter(c: Dictionary) -> void:
+    if not _player.can_sit("sit"):
+        return
+    if not _pay(TRAM_FARE, "Проезд в трамвае"):
+        return
+    _tram_wait = -1
+    _tram.hold(c, 2.0)
+    var body: Node3D = c["body"]
+    var bt: Transform3D = body.global_transform
+    var seat: Vector3 = bt * Vector3(0.75, 0.9, randf_range(-3.5, 3.5))
+    if not _player.sit_at(seat, -bt.basis.x):
+        return
+    _tram_seat = bt.affine_inverse() * _player.global_transform
+    _tram_ride = c
+    stats["tram"] = int(stats["tram"]) + 1
+    Sfx.play("coin", -4.0)
+    _hud.show_toast("Проезд %d ₽. Едем! Выйти — джойстиком на остановке" % TRAM_FARE)
+
+
+func _update_tram() -> void:
+    if _tram_ride != null:
+        var body: Node3D = _tram_ride["body"]
+        if _player.seated == "sit":
+            _player.global_transform = body.global_transform * _tram_seat
+            return
+        if float(_tram_ride["speed"]) > 1.0:
+            # на ходу не выпрыгиваем — садимся обратно
+            _player.sit_at(body.global_transform * _tram_seat.origin, -body.global_transform.basis.x)
+            _player.global_transform = body.global_transform * _tram_seat
+            _hud.show_toast("На ходу не выходят — дождись остановки")
+            return
+        var best: Vector3 = body.global_position
+        var bd := INF
+        for st: Dictionary in _tram.stops:
+            var sp: Vector3 = st["sign"]
+            var dd := sp.distance_to(body.global_position)
+            if dd < bd:
+                bd = dd
+                best = sp
+        _player.global_position = best + Vector3(0, 0.3, 0)
+        _player.velocity = Vector3.ZERO
+        _tram_ride = null
+        return
+    if _tram_wait >= 0:
+        var st: Dictionary = _tram.stops[_tram_wait]
+        var sp: Vector3 = st["sign"]
+        if _player.global_position.distance_to(sp) > 16.0 or _driving != null:
+            _tram_wait = -1
+            return
+        var c = _tram.car_at_stop(_tram_wait)
+        if c != null:
+            _tram_enter(c)
+
+
+# ================================================================ ограбления (только ОПГ)
+
+const ROB := {
+    "kiosk": {"rank": 1, "time": 8.0, "min": 500, "max": 1200, "wanted": 1, "xp": 10, "r": 5.0, "gun": false},
+    "atm": {"rank": 2, "time": 15.0, "min": 2000, "max": 4000, "wanted": 2, "xp": 20, "r": 4.0, "gun": false},
+    "store": {"rank": 3, "time": 25.0, "min": 7000, "max": 14000, "wanted": 3, "xp": 40, "r": 9.0, "gun": true},
+}
+const ROB_COOLDOWN := 360.0    # игровых минут до следующего налёта на ту же цель
+
+
+func _setup_rob_points() -> void:
+    var k := 0
+    for pk: Dictionary in _city.pickups:
+        var nm := String(pk["name"])
+        var tier := "store" if nm == "УНИВЕРСАМ" else "kiosk"
+        var pos: Vector3 = pk["pos"]
+        _points.append({"pos": pos + Vector3(0.0, 0, 0.0), "r": 1.6, "text": "ОГРАБИТЬ", "cb": _start_rob.bind("p%d" % k, tier, pos, nm),
+                "car": false, "gang_only": true})
+        k += 1
+    k = 0
+    for ap: Vector3 in _city.atms:
+        _points.append({"pos": ap, "r": 1.2, "text": "ВСКРЫТЬ", "cb": _start_rob.bind("a%d" % k, "atm", ap, "банкомат"),
+                "car": false, "gang_only": true})
+        k += 1
+
+
+func _now_min() -> float:
+    return day * 1440.0 + minutes
+
+
+func _start_rob(key: String, tier: String, pos: Vector3, nm: String) -> void:
+    if not FactionData.is_gang(faction) or not _rob.is_empty():
+        return
+    var t: Dictionary = ROB[tier]
+    if _loot > 0:
+        _hud.show_toast("Сначала отнеси добычу в общак")
+        return
+    if faction_rank < int(t["rank"]):
+        Sfx.play("error")
+        _hud.show_toast("Рано тебе на такое дело — нужен ранг %s" % FactionData.rank_name(int(t["rank"]), faction))
+        return
+    if bool(t["gun"]) and Weapons.is_melee(weapon_id):
+        Sfx.play("error")
+        _hud.show_toast("С кулаками кассу не возьмёшь — нужен ствол")
+        return
+    if _now_min() < float(_rob_cd.get(key, -1.0)):
+        _hud.show_toast("Тут недавно уже побывали — сейчас пусто и милиция рядом. Позже")
+        return
+    _rob = {"key": key, "tier": tier, "left": float(t["time"]), "pos": pos, "name": nm.to_lower() if nm.length() > 3 else nm}
+    Sfx.play("whistle" if tier != "kiosk" else "notify", -8.0)
+    _hud.show_toast("Налёт начался! Продержись %d с рядом с целью" % int(t["time"]))
+    if _peds:
+        _peds.scare(pos, 22.0)
+    if tier != "kiosk":
+        _add_wanted(int(t["wanted"]), "ограбление")
+
+
+func _update_rob(delta: float, focus: Vector3) -> void:
+    if _rob.is_empty():
+        if _loot > 0 and FactionData.is_gang(faction) and _city.faction_sites.has(faction):
+            var base: Vector3 = _city.faction_sites[faction]["out"]
+            if focus.distance_to(base) < 5.0 and _driving == null:
+                _deliver_loot()
+        return
+    var t: Dictionary = ROB[String(_rob["tier"])]
+    var pos: Vector3 = _rob["pos"]
+    if focus.distance_to(pos) > float(t["r"]) or _driving != null or jail_left > 0.0:
+        _rob = {}
+        Sfx.play("error")
+        _hud.show_toast("Налёт сорван: ты ушёл с места")
+        return
+    _rob["left"] = float(_rob["left"]) - delta
+    if float(_rob["left"]) > 0.0:
+        return
+    var tier := String(_rob["tier"])
+    _rob_cd[String(_rob["key"])] = _now_min() + ROB_COOLDOWN
+    _loot = randi_range(int(t["min"]), int(t["max"]))
+    _rob = {}
+    Sfx.play("cash")
+    if tier == "kiosk" and randf() < 0.6:
+        _add_wanted(1, "ограбление ларька")
+    var where := "базу"
+    if _city.faction_sites.has(faction):
+        _set_gps(_city.faction_sites[faction]["out"], "Общак: база " + _faction_name(), true)
+    _hud.show_toast("Взяли %s! Неси в общак на %s" % [HudScript.format_money(_loot), where])
+    _add_xp(int(t["xp"]))
+
+
+func _deliver_loot() -> void:
+    var share := _loot * 7 / 10
+    cash += share
+    faction_exp += 1
+    Sfx.play("levelup")
+    _hud.show_toast("Общак принял добычу: тебе %s, братве %s. +1 стаж" % [HudScript.format_money(share),
+            HudScript.format_money(_loot - share)])
+    _sms_add(_faction_name(), "Красиво сработал. Твоя доля — %s." % HudScript.format_money(share))
+    _loot = 0
+    stats["rob"] = int(stats["rob"]) + 1
+    _clear_gps()
+    _save_game()
+
+
+func _lose_loot(text: String) -> void:
+    _rob = {}
+    if _loot > 0:
+        _loot = 0
+        _hud.show_toast(text)
+
+
+
+# ================================================================ состав организации (пока игра без сервера — NPC)
+
+const ORG_FIRST := ["Vlad", "Artem", "Dima", "Kirill", "Sergey", "Andrey", "Oleg", "Igor", "Pavel", "Roma", "Maks",
+        "Denis", "Ruslan", "Timur", "Marat", "Ilya", "Zhenya", "Kostya", "Anton", "Vova", "Rinat", "Ayrat"]
+const ORG_LAST := ["Minskiy", "Sokolov", "Petrov", "Ivanov", "Volkov", "Kuznetsov", "Smirnov", "Popov", "Lebedev",
+        "Kozlov", "Novikov", "Morozov", "Galiev", "Safin", "Khabibullin", "Zaytsev", "Orlov", "Belov", "Frolov",
+        "Nikitin", "Gareev", "Valiev"]
+const ORG_CAP := 50
+
+
+## Лидер, рейтинг, дата создания и список состава. Состав — постоянные NPC
+## (одни и те же для организации), онлайн меняется каждый игровой час.
+func _org_info() -> Dictionary:
+    var sd := absi(hash(faction))
+    var rng := RandomNumberGenerator.new()
+    rng.seed = sd
+    var top := FactionData.ranks(faction).size()
+    var me_nick := passport_name if passport_name != "" else "Без_Имени"
+    var count := 12 + sd % 26
+    var roster: Array = []
+    var used := {}
+    for k in count:
+        var nm := ""
+        while nm == "" or used.has(nm):
+            nm = "%s_%s" % [ORG_FIRST[rng.randi() % ORG_FIRST.size()], ORG_LAST[rng.randi() % ORG_LAST.size()]]
+        used[nm] = true
+        var rk := top if k == 0 else (top - 1 if k < 3 else 1 + rng.randi() % maxi(1, top - 2))
+        roster.append({"name": nm, "rank": rk})
+    # игрок-лидер занимает место NPC-лидера
+    if faction_rank >= top:
+        roster.remove_at(0)
+    roster.append({"name": me_nick, "rank": faction_rank, "me": true})
+    var hour := int(day * 24 + minutes / 60.0)
+    var online := 0
+    for m: Dictionary in roster:
+        var on := bool(m.get("me", false)) or (absi(hash(String(m["name"]) + str(hour))) % 3 == 0)
+        m["online"] = on
+        if on:
+            online += 1
+        var rk := int(m["rank"])
+        m["role"] = "Лидер" if rk >= top else ("Заместитель" if rk == top - 1 else FactionData.rank_name(rk, faction))
+    roster.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["rank"]) != int(b["rank"]):
+            return int(a["rank"]) > int(b["rank"])
+        return bool(a.get("me", false)) and not bool(b.get("me", false)))
+    var leader := ""
+    for m: Dictionary in roster:
+        if String(m["role"]) == "Лидер":
+            leader = String(m["name"])
+            break
+    var rating := 5000 + sd % 7000 + faction_exp * 37 + (_turf_count(faction) * 800 if FactionData.is_gang(faction) else 0)
+    var created := "%02d.%02d.%d" % [1 + sd % 28, 1 + (sd / 28) % 12, 1971 + (sd / 336) % 15]
+    return {"roster": roster, "members": roster.size(), "online": online, "cap": ORG_CAP, "leader": leader,
+            "rating": HudScript.format_money(rating).replace(" ₽", "").replace("₽", "").strip_edges(), "created": created}
+
+
+
+# ================================================================ часть 1: угон, качалка, навыки, достижения
+
+const STEAL_MODELS := [["vaz2106", "ВАЗ-2106", 3500], ["vaz2108", "ВАЗ-2108 «Восьмёрку»", 4500], ["moskvich", "«Москвич-412»", 3000],
+        ["vaz2101", "«Копейку»", 2500], ["uaz469", "УАЗ-469", 5000], ["volga", "«Волгу»", 7000], ["niva", "«Ниву»", 4000]]
+const STEAL_COLORS := [["вишнёвую", Color(0.45, 0.06, 0.10)], ["белую", Color(0.92, 0.92, 0.90)], ["синюю", Color(0.15, 0.22, 0.45)],
+        ["зелёную", Color(0.12, 0.30, 0.22)], ["чёрную", Color(0.08, 0.08, 0.09)]]
+
+
+func _update_part1(delta: float, focus: Vector3) -> void:
+    _steal_cd = maxf(0.0, _steal_cd - delta)
+    # навык вождения — от пройденных километров
+    if _driving != null and _driving != _rent_scooter:
+        var v: float = (_driving as RigidBody3D).linear_velocity.length()
+        stats["drive_m"] = float(stats["drive_m"]) + v * delta
+        skills["driving"] = minf(100.0, float(stats["drive_m"]) / 1000.0)
+    # подход на турнике
+    if _train_t > 0.0:
+        _train_t -= delta
+        var me := _focus()
+        var moved := Vector2(me.x - _train_pos.x, me.z - _train_pos.z).length()
+        if moved > 1.2 or _driving != null:
+            _train_t = 0.0
+            _hud.show_toast("Подход сорван")
+        elif _train_t <= 0.0:
+            var gain := maxf(0.5, 3.0 - float(skills["strength"]) * 0.025)
+            skills["strength"] = minf(100.0, float(skills["strength"]) + gain)
+            stats["workouts"] = int(stats["workouts"]) + 1
+            hunger = maxf(0.0, hunger - 4.0)
+            Sfx.play("levelup", -8.0)
+            _hud.show_toast("Сила +%.1f (теперь %d/100). Удар дальше и точнее" % [gain, int(skills["strength"])])
+    # сдать угнанную машину в гараж
+    if _steal_car != null and _driving == _steal_car and _city.faction_sites.has(faction):
+        var mk: Vector3 = _city.faction_sites[faction]["marker"]
+        if Vector2(focus.x - mk.x, focus.z - mk.z).length() < 8.0:
+            _deliver_stolen()
+    # достижения — раз в 2 с
+    _ach_t -= delta
+    if _ach_t <= 0.0:
+        _ach_t = 2.0
+        _check_achievements()
+
+
+func _workout() -> void:
+    if _train_t > 0.0:
+        return
+    if hunger < 15.0:
+        _hud.show_toast("Голодный не накачаешься — сначала поешь")
+        return
+    _train_t = 6.0
+    _train_pos = _focus()
+    _player.play_emote("squat")
+    _hud.show_toast("Качаешься: приседания и турник — не двигайся 6 секунд")
+
+
+func _steal_menu(gid: String) -> void:
+    if not FactionData.is_gang(faction) or gid != faction:
+        _hud.show_toast("Это не ваш гараж")
+        return
+    if not _steal_order.is_empty():
+        _open_dialog("Заказ на угон", "Заказ уже есть: %s.\nМашина отмечена на карте." % _steal_order["name"],
+                [["Отменить заказ", _cancel_steal], ["Закрыть", _dialog.close]])
+        return
+    if _steal_cd > 0.0:
+        _hud.show_toast("Барыга пока ничего не заказывал — загляни через %d с" % int(_steal_cd))
+        return
+    var m: Array = STEAL_MODELS[randi() % STEAL_MODELS.size()]
+    var c: Array = STEAL_COLORS[randi() % STEAL_COLORS.size()]
+    var pay := int(m[2]) + randi_range(0, 1000)
+    _open_dialog("Барыга", "Нужна %s %s. Стоит где-то в Казани у обочины.\nПригонишь в этот гараж целой — %s.\n\nОсторожно: может сработать сигнализация, тогда приедет милиция." % [
+            c[0], m[1], HudScript.format_money(pay)],
+            [["Берусь", _take_steal.bind(String(m[0]), "%s %s" % [c[0], m[1]], c[1], pay)], ["Не сейчас", _dialog.close]])
+
+
+func _take_steal(model: String, nm: String, col: Color, pay: int) -> void:
+    _dialog.close()
+    # обочина случайного проспекта Казани: в середине квартала, у бордюра
+    var lines := [-301.0, -215.0, -129.0, -43.0, 43.0, 129.0, 215.0, 301.0]
+    var pos := Vector3.ZERO
+    var yaw := 0.0
+    for attempt in 20:
+        var axis_x := randf() < 0.5
+        var l: float = lines[randi() % lines.size()]
+        var t := float(randi_range(-3, 3)) * CityBuilder.PITCH
+        var side := 1.0 if randf() < 0.5 else -1.0
+        pos = Vector3(l + side * 5.8, 0.6, t) if axis_x else Vector3(t, 0.6, l + side * 5.8)
+        yaw = 0.0 if axis_x else PI * 0.5
+        if pos.distance_to(_focus()) > 90.0:
+            break
+    var v = CarScene.instantiate()
+    v.model_id = model
+    v.paint = col
+    v.car_name = nm
+    v.owned = false
+    v.position = pos
+    v.rotation.y = yaw
+    add_child(v)
+    v.touch = _touch
+    _traffic.obstacles.append(v)
+    _steal_car = v
+    _steal_order = {"model": model, "name": nm, "pay": pay, "taken": false}
+    _set_gps(pos, "Угнать: " + nm, true)
+    _hud.show_toast("Машина отмечена на карте. Подойди и садись")
+
+
+func _cancel_steal() -> void:
+    _dialog.close()
+    _clear_steal()
+    _hud.show_toast("Заказ отменён")
+
+
+func _clear_steal() -> void:
+    if _steal_car != null:
+        if _driving == _steal_car:
+            _toggle_vehicle()
+        _traffic.obstacles.erase(_steal_car)
+        _steal_car.queue_free()
+    _steal_car = null
+    _steal_order = {}
+    _steal_cd = 60.0
+
+
+func _deliver_stolen() -> void:
+    var pay := int(_steal_order["pay"])
+    var dmg_k := clampf(float(_steal_car.condition) / 100.0, 0.3, 1.0)
+    pay = int(pay * dmg_k)
+    _toggle_vehicle()
+    cash += pay
+    faction_exp += 1
+    stats["steal"] = int(stats["steal"]) + 1
+    _add_xp(25)
+    Sfx.play("levelup")
+    _hud.show_toast("Барыга забрал тачку: +%s, +1 стаж" % HudScript.format_money(pay))
+    _clear_gps()
+    _clear_steal()
+    _steal_cd = 120.0
+    _save_game()
+
+
+func _open_skills() -> void:
+    var text := ""
+    var info := [["strength", "Сила", "качайся на турниках во дворах — удар дальше и точнее"],
+            ["driving", "Вождение", "растёт от километров за рулём — машина тянет сильнее (до +20%)"],
+            ["shooting", "Стрельба", "растёт от выстрелов — легче попасть"]]
+    for it: Array in info:
+        var v := int(skills[it[0]])
+        var bar := ""
+        for k in 10:
+            bar += "■" if k < v / 10 else "□"
+        text += "%s: %d/100\n%s\n%s\n\n" % [it[1], v, bar, it[2]]
+    text += "Пройдено за рулём: %.1f км" % (float(stats["drive_m"]) / 1000.0)
+    _open_dialog("Навыки", text, [["Закрыть", _dialog.close]])
+
+
+const ACHIEVEMENTS := [
+    ["car", "Первая машина", "купить машину", 1000],
+    ["home", "Новосёл", "купить жильё", 2000],
+    ["faction", "В деле", "вступить во фракцию или ОПГ", 500],
+    ["rank5", "Начальство", "дорасти до 5 ранга", 5000],
+    ["rich", "Зажиточный", "накопить 100 000 ₽", 3000],
+    ["million", "Подпольный миллионер", "накопить 1 000 000 ₽", 25000],
+    ["rob", "Налётчик", "сдать добычу в общак", 1500],
+    ["steal", "Угонщик", "пригнать машину под заказ", 1500],
+    ["steal5", "Профессионал", "пригнать 5 машин под заказ", 6000],
+    ["turf", "Взял район", "захватить квартал", 2000],
+    ["strong", "Качок", "сила 50", 2500],
+    ["driver", "Водила", "проехать 50 км", 2500],
+    ["sniper", "Ворошиловский стрелок", "стрельба 50", 2500],
+    ["tram", "Зайцем не ездим", "проехать на трамвае", 300],
+    ["furniture", "Уютное гнёздышко", "купить всю мебель", 3000],
+    ["quests", "Свой в городе", "пройти все задания Петера", 5000],
+    ["fish", "Рыбак", "поймать 10 рыб", 1000],
+    ["cinema", "Киноман", "досмотреть фильм в ДК", 500],
+    ["dance", "Король танцпола", "10 раз зажечь на дискотеке", 1500],
+    ["metro", "Подземка", "проехать на метро", 300],
+    ["race", "Ночной гонщик", "выиграть ночную гонку", 3000],
+    ["drift", "Дрифт-король", "набрать 5 000 очков в дрифте", 3000],
+]
+
+
+func _ach_done(id: String) -> bool:
+    match id:
+        "car":
+            return _has_owned_car()
+        "home":
+            return home >= 0
+        "faction":
+            return faction != ""
+        "rank5":
+            return faction != "" and faction_rank >= 5
+        "rich":
+            return cash + bank >= 100000
+        "million":
+            return cash + bank >= 1000000
+        "rob":
+            return int(stats["rob"]) >= 1
+        "steal":
+            return int(stats["steal"]) >= 1
+        "steal5":
+            return int(stats["steal"]) >= 5
+        "turf":
+            return int(stats["turf"]) >= 1
+        "strong":
+            return float(skills["strength"]) >= 50.0
+        "driver":
+            return float(stats["drive_m"]) >= 50000.0
+        "sniper":
+            return float(skills["shooting"]) >= 50.0
+        "tram":
+            return int(stats["tram"]) >= 1
+        "furniture":
+            return furniture.size() >= FURNITURE.size()
+        "quests":
+            return quest_i >= QUESTS.size()
+        "fish", "cinema", "dance", "metro", "race":
+            var need := {"fish": 10, "cinema": 1, "dance": 10, "metro": 1, "race": 1}
+            return int(stats.get(id, 0)) >= int(need[id])
+        "drift":
+            return int(stats.get("drift_best", 0)) >= 5000
+    return false
+
+
+func _check_achievements() -> void:
+    if not _started:
+        return
+    for a: Array in ACHIEVEMENTS:
+        var id := String(a[0])
+        if achievements.has(id) or not _ach_done(id):
+            continue
+        achievements.append(id)
+        cash += int(a[3])
+        Sfx.play("levelup")
+        _hud.show_toast("Достижение «%s»! +%s" % [a[1], HudScript.format_money(int(a[3]))])
+        _sms_add("Достижения", "«%s» — %s. Награда %s." % [a[1], a[2], HudScript.format_money(int(a[3]))])
+        _save_game()
+        return   # по одному за раз
+
+
+func _open_achievements() -> void:
+    var text := "Открыто %d из %d\n" % [achievements.size(), ACHIEVEMENTS.size()]
+    for a: Array in ACHIEVEMENTS:
+        var ok := achievements.has(String(a[0]))
+        text += "\n%s %s — %s (%s)" % ["[+]" if ok else "[  ]", a[1], a[2], HudScript.format_money(int(a[3]))]
+    _open_dialog("Достижения", text, [["Закрыть", _dialog.close]])
+
+
+
+# ================================================================ часть 2: такси, рыбалка, напёрстки и «очко», суд
+
+const FISH_PRICES := {"Вобла": 80, "Лещ": 200, "Судак": 450, "Сом": 1200}
+const ROD_PRICE := 500
+var _fish_spots: Array[Vector3] = []
+
+
+func _setup_part2_points() -> void:
+    # таксопарк — у автобусного парка
+    _add_point(_city.bus_depot + Vector3(9.0, 0, 0), 3.0, "ТАКСОПАРК", _open_taxi_park, false, Color(1.0, 0.85, 0.1))
+    # рыбалка — на набережных у парапета
+    var cand: Array[Vector3] = []
+    var kz: Rect2 = CityBuilder.ISLAND_KAZAN
+    var py: Rect2 = CityBuilder.ISLAND_PYAT
+    for x: float in [-400.0, -250.0, -100.0, 150.0, 300.0]:
+        cand.append(Vector3(x, 0, kz.end.y - 2.2))
+    for x: float in [-300.0, 320.0]:
+        cand.append(Vector3(x, 0, kz.position.y + 2.2))
+    for x: float in [-1300.0, -1150.0, -1000.0]:
+        cand.append(Vector3(x, 0, py.end.y - 2.2))
+    for p: Vector3 in cand:
+        if CityBuilder.on_land(p):
+            _fish_spots.append(p)
+            _add_point(p, 2.2, "РЫБАЧИТЬ", _fish_start.bind(p), false, Color(0.3, 0.7, 1.0))
+    # рынок Пятигорска: скупка рыбы, напёрстки, «очко»
+    if _city.market != Vector3.ZERO:
+        var mk: Vector3 = _city.market
+        _add_point(mk + Vector3(6.0, 0, 3.0), 1.8, "СКУПКА РЫБЫ", _sell_fish, false, Color(0.3, 0.7, 1.0), false)
+        _add_point(mk + Vector3(-6.0, 0, 3.5), 1.8, "НАПЁРСТКИ", _thimbles_menu, false, Color(0.9, 0.3, 0.3))
+        _add_point(mk + Vector3(-9.5, 0, 3.5), 1.8, "«ОЧКО»", _cards_menu, false, Color(0.9, 0.3, 0.3), false)
+        for k in 2:
+            var n = NpcScript.new()
+            n.npc_name = "НАПЁРСТОЧНИК" if k == 0 else "КАТАЛА"
+            n.jacket = "cloth_leather2" if k == 0 else "ts_black"
+            n.pants = "cloth_acidwash" if k == 0 else "ts_black"
+            n.hat = "kepka"
+            n.anim = "idle"
+            n.mark = false
+            n.position = mk + Vector3(-6.0 - k * 3.5, 0, 5.0)
+            n.rotation.y = PI
+            add_child(n)
+            var tb := StaticBody3D.new()
+            tb.position = mk + Vector3(-6.0 - k * 3.5, 0, 4.2)
+            var mi := MeshInstance3D.new()
+            var bm := BoxMesh.new()
+            bm.size = Vector3(0.9, 0.75, 0.6)
+            mi.mesh = bm
+            mi.position.y = 0.375
+            var mm := StandardMaterial3D.new()
+            mm.albedo_color = Color(0.35, 0.25, 0.15)
+            mi.material_override = mm
+            tb.add_child(mi)
+            var cs := CollisionShape3D.new()
+            var bs := BoxShape3D.new()
+            bs.size = bm.size
+            cs.shape = bs
+            cs.position.y = 0.375
+            tb.add_child(cs)
+            add_child(tb)
+    # колония: работа на швейке
+    if _city.kpz_cell != Vector3.ZERO:
+        _add_point(_city.kpz_cell + Vector3(0, 0, 0.8), 1.6, "РАБОТАТЬ", _jail_work, false, Color.WHITE, false)
+
+
+func _update_part2(delta: float) -> void:
+    _court_work_cd = maxf(0.0, _court_work_cd - delta)
+    if _fish_t > 0.0:
+        _fish_t -= delta
+        var me := _focus()
+        if Vector2(me.x - _fish_pos.x, me.z - _fish_pos.z).length() > 1.5 or _driving != null:
+            _fish_t = 0.0
+            _hud.show_toast("Ушёл — рыба сорвалась")
+        elif _fish_t <= 0.0:
+            _fish_catch()
+
+
+# --- такси на «Волге»
+
+func _open_taxi_park() -> void:
+    if _job.active and _job.kind == "taxi" and _work_vehicle != null:
+        _open_dialog("Таксопарк", "Смена идёт. Сдать «Волгу» и закончить?", [["Сдать машину", _taxi_park_end], ["Закрыть", _dialog.close]])
+        return
+    _open_dialog("Таксопарк", "Бери жёлтую «Волгу» и вози пассажиров по вызовам.\nДовёз аккуратно, без ДТП — пассажир оставит чаевые (+30%).\nНужны права категории B.",
+            [["Взять «Волгу» и начать смену", _taxi_park_start], ["Закрыть", _dialog.close]])
+
+
+func _taxi_park_start() -> void:
+    _dialog.close()
+    if not _check_docs(true):
+        return
+    _work.stop()
+    var at := Transform3D(Basis(), _city.bus_depot + Vector3(14.0, 0.7, 0))
+    _on_work_vehicle_needed("taxi_volga", at)
+    _taxi_cond = 100.0
+    _job.start("taxi", _focus())
+
+
+func _taxi_park_end() -> void:
+    _dialog.close()
+    _job.stop()
+    _on_work_vehicle_done()
+    _hud.show_toast("Смена в таксопарке закончена")
+
+
+# --- рыбалка
+
+func _fish_start(p: Vector3) -> void:
+    if _fish_t > 0.0:
+        return
+    if not has_rod:
+        _open_dialog("Рыбалка", "Нужна удочка. Купить бамбуковую удочку с мормышкой?", [["Купить — %s" % HudScript.format_money(ROD_PRICE), _buy_rod.bind(p)], ["Закрыть", _dialog.close]])
+        return
+    if _bag_count() >= BAG_SIZE:
+        _hud.show_toast("Сумка полная — некуда класть улов")
+        return
+    _fish_t = randf_range(7.0, 12.0)
+    _fish_pos = _focus()
+    _player.play_emote("squat")
+    Sfx.play("click")
+    _hud.show_toast("Закинул удочку… ждём клёва, не уходи")
+
+
+func _buy_rod(p: Vector3) -> void:
+    if not _pay(ROD_PRICE, "Удочка"):
+        return
+    has_rod = true
+    _dialog.close()
+    Sfx.play("cash")
+    _fish_start(p)
+
+
+func _fish_catch() -> void:
+    var r := randf()
+    var fish := ""
+    if r < 0.2:
+        _hud.show_toast("Не клюёт… Попробуй ещё раз")
+        return
+    elif r < 0.62:
+        fish = "Вобла"
+    elif r < 0.84:
+        fish = "Лещ"
+    elif r < 0.96:
+        fish = "Судак"
+    else:
+        fish = "Сом"
+    if _give_item(fish):
+        Sfx.play("coin")
+        stats["fish"] = int(stats.get("fish", 0)) + 1
+        _hud.show_toast("Поймал: %s! Продай на рынке Пятигорска (%s) или съешь" % [fish, HudScript.format_money(int(FISH_PRICES[fish]))])
+
+
+func _sell_fish() -> void:
+    var total := 0
+    for f: String in FISH_PRICES:
+        var n := int(inventory.get(f, 0))
+        if n > 0:
+            total += n * int(FISH_PRICES[f])
+            inventory.erase(f)
+    if total == 0:
+        _hud.show_toast("Рыбы нет. Ловят на набережных — ищи синие метки «РЫБАЧИТЬ»")
+        return
+    cash += total
+    Sfx.play("cash")
+    _hud.show_toast("Скупщик взял весь улов: +%s" % HudScript.format_money(total))
+    _save_game()
+
+
+# --- напёрстки
+
+func _thimbles_menu() -> void:
+    _open_dialog("Напёрстки", "— Кручу-верчу, обмануть хочу! Угадаешь, где шарик, — плачу вдвое.\n\nСтавка?",
+            [["100 ₽", _thimbles_bet.bind(100)], ["500 ₽", _thimbles_bet.bind(500)], ["2 000 ₽", _thimbles_bet.bind(2000)], ["Уйти", _dialog.close]])
+
+
+func _thimbles_bet(bet: int) -> void:
+    if cash < bet:
+        _hud.show_toast("Наличных не хватает — снимай в банкомате")
+        return
+    cash -= bet
+    Sfx.play("click")
+    _open_dialog("Напёрстки", "Напёрстки замелькали… Где шарик?",
+            [["Левый", _thimbles_pick.bind(bet)], ["Средний", _thimbles_pick.bind(bet)], ["Правый", _thimbles_pick.bind(bet)]])
+
+
+func _thimbles_pick(bet: int) -> void:
+    if randf() < 0.3:
+        cash += bet * 2
+        Sfx.play("cash")
+        _open_dialog("Напёрстки", "Шарик тут! Выиграл %s.\n— Везучий! Ещё разок?" % HudScript.format_money(bet * 2),
+                [["Ещё", _thimbles_menu], ["Хватит", _dialog.close]])
+    else:
+        Sfx.play("error")
+        _open_dialog("Напёрстки", "Пусто. — Эх, не повезло! Шарик был под соседним.",
+                [["Отыграться", _thimbles_menu], ["Уйти", _dialog.close]])
+    _save_game()
+
+
+# --- «очко» (двадцать одно, колода 36 карт)
+
+var _cards := {}
+
+
+func _cards_menu() -> void:
+    _open_dialog("«Очко»", "Играем в двадцать одно. Валет — 2, дама — 3, король — 4, туз — 11. Два туза — «золотое очко».\nПеребрал больше 21 — проиграл.\n\nСтавка?",
+            [["200 ₽", _cards_start.bind(200)], ["1 000 ₽", _cards_start.bind(1000)], ["5 000 ₽", _cards_start.bind(5000)], ["Уйти", _dialog.close]])
+
+
+func _card_draw() -> Array:
+    var ranks := [["6", 6], ["7", 7], ["8", 8], ["9", 9], ["10", 10], ["В", 2], ["Д", 3], ["К", 4], ["Т", 11]]
+    var r: Array = ranks[randi() % ranks.size()]
+    return [String(r[0]), int(r[1])]
+
+
+func _hand_sum(hand: Array) -> int:
+    var s := 0
+    for c: Array in hand:
+        s += int(c[1])
+    return s
+
+
+func _hand_text(hand: Array) -> String:
+    var t := ""
+    for c: Array in hand:
+        t += String(c[0]) + "  "
+    return t + "= %d" % _hand_sum(hand)
+
+
+func _cards_start(bet: int) -> void:
+    if cash < bet:
+        _hud.show_toast("Наличных не хватает — снимай в банкомате")
+        return
+    cash -= bet
+    _cards = {"bet": bet, "me": [_card_draw(), _card_draw()], "dealer": [_card_draw()]}
+    _cards_show()
+
+
+func _cards_show() -> void:
+    var me: Array = _cards["me"]
+    var s := _hand_sum(me)
+    if me.size() == 2 and s == 22:   # два туза
+        _cards_finish(true, "Золотое очко!")
+        return
+    if s > 21:
+        _cards_finish(false, "Перебор")
+        return
+    _open_dialog("«Очко»", "У катáлы: %s\nУ тебя: %s" % [_hand_text(_cards["dealer"]), _hand_text(me)],
+            [["Ещё карту", _cards_hit], ["Хватит", _cards_stand]])
+
+
+func _cards_hit() -> void:
+    (_cards["me"] as Array).append(_card_draw())
+    Sfx.play("click")
+    _cards_show()
+
+
+func _cards_stand() -> void:
+    var dealer: Array = _cards["dealer"]
+    while _hand_sum(dealer) < 17:
+        dealer.append(_card_draw())
+    var me := _hand_sum(_cards["me"])
+    var d := _hand_sum(dealer)
+    if d > 21 or me > d:
+        _cards_finish(true, "У катáлы %d" % d)
+    elif me == d:
+        cash += int(_cards["bet"])
+        _open_dialog("«Очко»", "Ничья (%d на %d) — ставка возвращена." % [me, d], [["Ещё партию", _cards_menu], ["Уйти", _dialog.close]])
+    else:
+        _cards_finish(false, "У катáлы %d" % d)
+
+
+func _cards_finish(win: bool, why: String) -> void:
+    var bet := int(_cards["bet"])
+    var text := "%s\nУ тебя: %s\n\n" % [why, _hand_text(_cards["me"])]
+    if win:
+        cash += bet * 2
+        Sfx.play("cash")
+        text += "Выиграл %s!" % HudScript.format_money(bet * 2)
+    else:
+        Sfx.play("error")
+        text += "Проиграл %s." % HudScript.format_money(bet)
+    _open_dialog("«Очко»", text, [["Ещё партию", _cards_menu], ["Уйти", _dialog.close]])
+    _save_game()
+
+
+# --- суд и колония
+
+func _hire_lawyer(price: int) -> void:
+    if not _pay(price, "Адвокат"):
+        return
+    jail_left *= 0.5
+    _dialog.close()
+    Sfx.play("cash")
+    _hud.show_toast("Адвокат добился смягчения: срок %d с" % int(jail_left))
+
+
+func _jail_work() -> void:
+    if jail_left <= 0.0:
+        _hud.show_toast("Ты на свободе")
+        return
+    if _court_work_cd > 0.0:
+        return
+    _court_work_cd = 3.0
+    jail_left = maxf(1.0, jail_left - 12.0)
+    _player.play_emote("squat")
+    Sfx.play("click")
+    _hud.show_toast("Отработал смену на швейке: −12 с срока")
+
+
+
+# ================================================================ часть 3: ДК, метро, праздники, гонки и дрифт
+
+const CINEMA_PRICE := 25
+const DISCO_PRICE := 50
+const METRO_FARE := 5
+## Фильмы в кинозале ДК (свои сюжеты): название и кадры-титры.
+const FILMS := [
+    ["Тайна Волжского моста", ["Казань, 1984 год.", "Ночью на мосту пропадает грузовик с арбузами.",
+            "Лейтенант Сафин берётся за дело.", "След ведёт на рынок Пятигорска…", "Погоня по серпантину!",
+            "Арбузы найдены. Справедливость восторжествовала.", "КОНЕЦ"]],
+    ["Весна в Бусаево", ["Село Бусаево. Посевная.", "Тракторист Гена влюблён в почтальона Олю.",
+            "Но Оля мечтает о городе…", "Гена пишет письма в стихах.", "Свадьба на всё село!", "КОНЕЦ"]],
+    ["Отряд «Лучик»", ["Пионерский лагерь «Лучик».", "Вожатый пропал перед самым смотром строя и песни.",
+            "Пятеро ребят идут его искать.", "Он застрял на дереве, спасая котёнка.", "Отряд берёт первое место!", "КОНЕЦ"]],
+    ["Москва — Пятигорск, транзитом", ["Скорый поезд, купе №7.", "Попутчики: профессор, повар и спортсмен.",
+            "Из чемодана профессора исчезает рукопись.", "Подозревают всех…", "Рукопись была в кастрюле повара!", "КОНЕЦ"]],
+]
+const HOLIDAYS := [
+    ["Новый год", "01-01"], ["День Советской Армии", "02-23"], ["Международный женский день", "03-08"],
+    ["Праздник Весны и Труда", "05-01"], ["День Победы", "05-09"], ["День Великого Октября", "11-07"],
+]
+## Ночная гонка: кольцо по внешним проспектам Казани.
+const RACE_START := Vector3(-235.0, 0, -298.0)
+const RACE_CP := [Vector3(0, 0, -301), Vector3(301, 0, -301), Vector3(301, 0, 0), Vector3(301, 0, 301),
+        Vector3(0, 0, 301), Vector3(-301, 0, 301), Vector3(-301, 0, 0), Vector3(-301, 0, -301), Vector3(-150, 0, -301)]
+const DRIFT_START := Vector3(330.0, 0, 298.0)
+const DRIFT_TIME := 60.0
+
+var _dk_room := ""          # "" / "cinema" / "disco"
+var _film := -1
+var _film_frame := 0
+var _film_t := 0.0
+var _disco_t := 0.0
+var _disco_beat := 0.0
+var _dance_acc := 0.0
+var _holiday := ""
+var _hol_day := -1
+var _fw_t := 0.0
+var _race := {}
+var _race_marker: MarkerScript
+var _drift := {}
+
+
+func _setup_part3_points() -> void:
+    var dk: Dictionary = _city.dk
+    if dk.has("door"):
+        _add_point(dk["door"], 2.6, "ДОМ КУЛЬТУРЫ", _open_dk, false, Color(1.0, 0.4, 0.7))
+        _add_point(dk["cinema_exit"], 1.6, "ВЫЙТИ", _dk_leave, false, Color.WHITE, false)
+        _add_point(dk["disco_exit"], 1.6, "ВЫЙТИ", _dk_leave, false, Color.WHITE, false)
+        _add_point(dk["dance"], 3.5, "ТАНЦЕВАТЬ", _dk_dance, false, Color(1.0, 0.4, 0.7), false)
+        _add_point(dk["bar"], 1.6, "БАР", _dk_bar, false, Color(1.0, 0.8, 0.2), false)
+        var dj = NpcScript.new()
+        dj.npc_name = "ДИДЖЕЙ"
+        dj.jacket = "ts_red"
+        dj.pants = "ts_black"
+        dj.anim = "anim_dance"
+        dj.mark = false
+        dj.position = dk["dj"] + Vector3(0, 0, -1.4)
+        add_child(dj)
+        var spots := [Vector3(-3.5, 0, -3.0), Vector3(3.2, 0, -2.5), Vector3(-2.0, 0, 2.5), Vector3(3.8, 0, 2.0),
+                Vector3(0.5, 0, -5.5), Vector3(-4.5, 0, 0.5)]
+        var looks := [["ts_black", "cloth_acidwash"], ["cloth_alyaska", "ts_black"], ["ts_green", "cloth_acidwash"],
+                ["cloth_leather2", "ts_black"], ["suit_gray", "ts_black"], ["ts_red", "cloth_acidwash"]]
+        for k in spots.size():
+            var n = NpcScript.new()
+            n.npc_name = ""
+            n.jacket = String(looks[k][0])
+            n.pants = String(looks[k][1])
+            n.anim = "anim_dance"
+            n.mark = false
+            n.position = dk["disco_center"] + spots[k]
+            n.rotation.y = randf() * TAU
+            add_child(n)
+    for i in _city.metro.size():
+        var st: Dictionary = _city.metro[i]
+        _add_point(st["pos"], 2.0, "МЕТРО", _metro_menu.bind(i), false, Color(0.95, 0.15, 0.15))
+    _add_point(RACE_START, 6.0, "НОЧНЫЕ ГОНКИ", _race_menu, true, Color(1.0, 0.35, 0.1))
+    _add_point(DRIFT_START, 6.0, "ДРИФТ", _drift_menu, true, Color(1.0, 0.35, 0.1))
+
+
+func _update_part3(delta: float) -> void:
+    _update_dk(delta)
+    _update_holiday(delta)
+    _update_race(delta)
+    _update_drift(delta)
+
+
+func _part3_job_text() -> String:
+    if not _race.is_empty():
+        var i := int(_race["cp"])
+        return "НОЧНАЯ ГОНКА: КП %d/%d · %.1f с · соперник %.1f с" % [i + 1, RACE_CP.size(), float(_race["t"]), float(_race["target"])]
+    if not _drift.is_empty():
+        return "ДРИФТ: %d очков ×%.1f · осталось %d с" % [int(_drift["score"]), 1.0 + minf(float(_drift["combo"]), 5.0) * 0.2,
+                int(ceil(float(_drift["left"])))]
+    if _dk_room == "cinema":
+        if _film >= 0:
+            return "Сеанс: «%s» — сядь в зале и смотри" % FILMS[_film][0]
+        return "Кинозал ДК"
+    if _dk_room == "disco":
+        return "Дискотека: встань в центр зала — «ТАНЦЕВАТЬ»"
+    return ""
+
+
+func _warp(pos: Vector3, face: Vector3) -> void:
+    if _player.seated == "sit":
+        _player.set_seated("")
+    _player.global_position = pos + Vector3(0, 0.3, 0)
+    _player.velocity = Vector3.ZERO
+    _player.set_camera_yaw(atan2(-face.x, -face.z))
+
+
+# --- Дом культуры
+
+func _open_dk() -> void:
+    var hh := int(minutes) / 60
+    var disco_open := hh >= 19 or hh < 3
+    var film_i := (day * 24 + hh) % FILMS.size()
+    _open_dialog("Дом культуры", "Кинозал: сейчас идёт «%s».\nДискотека: %s" % [FILMS[film_i][0], "открыта, играет музыка 80-х!" if disco_open else "закрыта, приходи после 19:00"],
+            [["Билет в кино — %s" % HudScript.format_money(CINEMA_PRICE), _dk_cinema.bind(film_i)],
+            ["На дискотеку — %s" % HudScript.format_money(DISCO_PRICE), _dk_disco],
+            ["Закрыть", _dialog.close]])
+
+
+func _dk_cinema(film_i: int) -> void:
+    if not _pay(CINEMA_PRICE, "Билет в кино"):
+        return
+    _dialog.close()
+    Sfx.play("door")
+    _dk_room = "cinema"
+    _film = film_i
+    _film_frame = -1
+    _film_t = 3.0
+    _warp(_city.dk["cinema_spawn"], Vector3(0, 0, -1))
+    var lab: Label3D = _city.dk["screen"]
+    lab.text = "«%s»" % FILMS[film_i][0]
+    (_city.dk["hall_light"] as OmniLight3D).light_energy = 0.15
+    _hud.show_toast("Свет гаснет… Садись на любой ряд — фильм начинается")
+
+
+func _dk_disco() -> void:
+    var hh := int(minutes) / 60
+    if not (hh >= 19 or hh < 3):
+        _hud.show_toast("Дискотека открывается в 19:00")
+        return
+    if not _pay(DISCO_PRICE, "Вход на дискотеку"):
+        return
+    _dialog.close()
+    Sfx.play("door")
+    _dk_room = "disco"
+    _dance_acc = 0.0
+    _warp(_city.dk["disco_spawn"], Vector3(0, 0, -1))
+    Music.play_place("radio_disco")
+    _hud.show_toast("Дискотека «80»! Встань в центр зала и жми «ТАНЦЕВАТЬ»")
+
+
+func _dk_leave() -> void:
+    _dk_exit_state()
+    Sfx.play("door")
+    _warp(_city.dk["out"], Vector3(0, 0, 1))
+
+
+func _dk_exit_state() -> void:
+    if _dk_room == "disco":
+        Music.stop_place()
+    if _dk_room == "cinema":
+        (_city.dk["screen"] as Label3D).text = ""
+        (_city.dk["hall_light"] as OmniLight3D).light_energy = 1.2
+    _dk_room = ""
+    _film = -1
+
+
+func _dk_dance() -> void:
+    if _dk_room != "disco":
+        return
+    if _player.play_emote("dance"):
+        _hud.show_toast("Танцуешь! Не двигайся с места, чтобы не сбиться с ритма")
+
+
+func _dk_bar() -> void:
+    var items := [["Лимонад «Буратино»", 60], ["Лимонад «Тархун»", 60], ["Чай в подстаканнике", 40]]
+    var buttons := []
+    for it: Array in items:
+        buttons.append(["%s — %s" % [it[0], HudScript.format_money(int(it[1]))], _dk_buy.bind(String(it[0]), int(it[1]))])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Бар", "— Что будешь?", buttons)
+
+
+func _dk_buy(item: String, price: int) -> void:
+    if _bag_count() >= BAG_SIZE:
+        _hud.show_toast("Сумка полная")
+        return
+    if not _pay(price, item):
+        return
+    _give_item(item)
+    _dialog.close()
+    Sfx.play("coin")
+
+
+func _update_dk(delta: float) -> void:
+    if _dk_room == "":
+        return
+    var dk: Dictionary = _city.dk
+    var center: Vector3 = dk["cinema_center"] if _dk_room == "cinema" else dk["disco_center"]
+    var me: Vector3 = _player.global_position
+    if Vector2(me.x - center.x, me.z - center.z).length() > 20.0 or _driving != null:
+        _dk_exit_state()   # ушёл другим путём (арест, смерть, телепорт)
+        return
+    if _dk_room == "cinema":
+        if _film < 0:
+            return
+        _film_t -= delta
+        var sm: StandardMaterial3D = dk["screen_mat"]
+        sm.emission_energy_multiplier = 0.55 + 0.08 * sin(Time.get_ticks_msec() * 0.03)
+        if _film_t > 0.0:
+            return
+        var frames: Array = FILMS[_film][1]
+        _film_frame += 1
+        if _film_frame >= frames.size():
+            var watched: bool = _player.seated == "sit"
+            var name_f := String(FILMS[_film][0])
+            _dk_exit_state()
+            _dk_room = "cinema"
+            (dk["screen"] as Label3D).text = "«%s»\nСпасибо за внимание!" % name_f
+            if watched:
+                health = minf(100.0, health + 30.0)
+                stats["cinema"] = int(stats.get("cinema", 0)) + 1
+                Sfx.play("levelup")
+                _hud.show_toast("Хорошее кино! Отдохнул душой: +30 здоровья")
+                _save_game()
+            else:
+                _hud.show_toast("Фильм закончился. В следующий раз садись в зале — так приятнее")
+            return
+        (dk["screen"] as Label3D).text = String(frames[_film_frame])
+        _film_t = 4.5
+        return
+    # дискотека: свет и пол в такт
+    _disco_t += delta
+    _disco_beat -= delta
+    (dk["ball"] as Node3D).rotation.y += delta * 1.2
+    var lights: Array = dk["lights"]
+    for k in lights.size():
+        var sl: SpotLight3D = lights[k]
+        sl.rotation = Vector3(-0.9 + 0.35 * sin(_disco_t * 1.3 + k), 0.6 * sin(_disco_t * 0.9 + k * 1.7), 0)
+    if _disco_beat <= 0.0:
+        _disco_beat = 0.47
+        var pal := [Color(1, 0.15, 0.4), Color(0.2, 0.5, 1), Color(0.2, 1, 0.4), Color(1, 0.8, 0.1), Color(0.7, 0.2, 1), Color(0.1, 0.1, 0.12)]
+        for tm: StandardMaterial3D in dk["tiles"]:
+            var c: Color = pal[randi() % pal.size()]
+            tm.albedo_color = c
+            tm.emission = c
+    if _player.emote == "dance":
+        _dance_acc += delta
+        if _dance_acc >= 12.0:
+            _dance_acc = 0.0
+            stats["dance"] = int(stats.get("dance", 0)) + 1
+            hunger = maxf(0.0, hunger - 3.0)
+            Sfx.play("coin")
+            _hud.show_toast("Зажёг на танцполе! (%d) Девчонки оглядываются" % int(stats["dance"]))
+
+
+# --- метро
+
+func _metro_menu(i: int) -> void:
+    var buttons := []
+    for j in _city.metro.size():
+        if j != i:
+            buttons.append(["«%s»" % _city.metro[j]["name"], _metro_ride.bind(i, j)])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Метро — станция «%s»" % _city.metro[i]["name"], "Проезд — %s (жетон). Куда едем?" % HudScript.format_money(METRO_FARE), buttons)
+
+
+func _metro_ride(from: int, to: int) -> void:
+    if _traveling or not _pay(METRO_FARE, "Жетон метро"):
+        return
+    _dialog.close()
+    stats["metro"] = int(stats.get("metro", 0)) + 1
+    Sfx.play("station")
+    var st: Dictionary = _city.metro[to]
+    var out: Vector3 = st["out"]
+    var pos: Vector3 = st["pos"]
+    var face := out - pos
+    _player.set_camera_yaw(atan2(-face.x, -face.z))
+    await _travel(out + Vector3(0, 0.3, 0), "Осторожно, двери закрываются!\nСледующая станция — «%s»" % st["name"], 2.5, "")
+    _save_game()
+
+
+# --- праздники и салют
+
+func _holiday_for_today() -> String:
+    var d := Time.get_date_dict_from_system()
+    var md := "%02d-%02d" % [int(d["month"]), int(d["day"])]
+    if md == "12-31":
+        return "Новый год"
+    for h: Array in HOLIDAYS:
+        if String(h[1]) == md:
+            return String(h[0])
+    if day % 5 == 0:
+        return String(HOLIDAYS[(day / 5) % HOLIDAYS.size()][0])
+    return ""
+
+
+func _update_holiday(delta: float) -> void:
+    if not _started:
+        return
+    if day != _hol_day:
+        _hol_day = day
+        _holiday = _holiday_for_today()
+        var month := int(Time.get_date_dict_from_system()["month"])
+        if _city.festive_root:
+            _city.festive_root.visible = _holiday != ""
+        if _city.tree_root:
+            _city.tree_root.visible = _holiday == "Новый год" or month == 12 or month == 1
+        if _holiday != "":
+            _hud.chat("Сегодня праздник — %s! Площади украшены, в 21:00 — салют в Казани и Пятигорске." % _holiday, "info")
+            if faction != "":
+                bank += 1000
+                _hud.chat("Праздничная премия от организации: +%s на счёт" % HudScript.format_money(1000), "info")
+    var m := int(minutes)
+    if _holiday != "" and m >= 21 * 60 and m < 21 * 60 + 45:
+        _fw_t -= delta
+        if _fw_t <= 0.0:
+            _fw_t = randf_range(0.35, 0.9)
+            var spots: Array = _city.fireworks_spots
+            if not spots.is_empty():
+                var near: Vector3 = spots[0]
+                for sp: Vector3 in spots:
+                    if sp.distance_to(_focus()) < near.distance_to(_focus()):
+                        near = sp
+                if near.distance_to(_focus()) < 600.0:
+                    _launch_firework(near + Vector3(randf_range(-20, 20), 0, randf_range(-20, 20)))
+
+
+func _launch_firework(at: Vector3) -> void:
+    var cols := [Color(1, 0.2, 0.2), Color(1, 0.85, 0.2), Color(0.3, 0.6, 1), Color(0.3, 1, 0.4), Color(1, 0.4, 1), Color(1, 1, 1)]
+    var col: Color = cols[randi() % cols.size()]
+    var glow := StandardMaterial3D.new()
+    glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    glow.albedo_color = col
+    glow.emission_enabled = true
+    glow.emission = col
+    glow.emission_energy_multiplier = 4.0
+    var rocket := MeshInstance3D.new()
+    var rm := SphereMesh.new()
+    rm.radius = 0.3
+    rm.height = 0.6
+    rm.radial_segments = 6
+    rm.rings = 3
+    rocket.mesh = rm
+    rocket.material_override = glow
+    add_child(rocket)
+    rocket.global_position = at + Vector3(0, 1.0, 0)
+    Sfx.play_at("firework", at)
+    var top := at + Vector3(randf_range(-6, 6), randf_range(38.0, 55.0), randf_range(-6, 6))
+    var tw := create_tween()
+    tw.tween_property(rocket, "global_position", top, 0.95).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+    tw.tween_callback(func() -> void:
+        rocket.visible = false
+        var p := CPUParticles3D.new()
+        p.one_shot = true
+        p.explosiveness = 1.0
+        p.amount = 140
+        p.lifetime = 2.2
+        p.direction = Vector3.UP
+        p.spread = 180.0
+        p.initial_velocity_min = 14.0
+        p.initial_velocity_max = 20.0
+        p.gravity = Vector3(0, -5.0, 0)
+        p.damping_min = 2.0
+        p.damping_max = 3.0
+        var sp := SphereMesh.new()
+        sp.radius = 0.38
+        sp.height = 0.76
+        sp.radial_segments = 4
+        sp.rings = 2
+        sp.material = glow
+        p.mesh = sp
+        var curve := Curve.new()
+        curve.add_point(Vector2(0, 1))
+        curve.add_point(Vector2(1, 0))
+        p.scale_amount_curve = curve
+        add_child(p)
+        p.global_position = top
+        p.emitting = true
+        var fl := OmniLight3D.new()
+        fl.light_color = col
+        fl.omni_range = 70.0
+        fl.light_energy = 3.0
+        add_child(fl)
+        fl.global_position = top
+        var t2 := create_tween()
+        t2.tween_property(fl, "light_energy", 0.0, 0.8)
+        t2.tween_interval(1.6)
+        t2.tween_callback(func() -> void:
+            p.queue_free()
+            fl.queue_free()
+            rocket.queue_free()))
+
+
+# --- ночные гонки
+
+func _race_menu() -> void:
+    if not _race.is_empty() or not _drift.is_empty():
+        return
+    if _night_k < 0.5:
+        _open_dialog("Ночные гонки", "— Днём тут гаишники. Приезжай ночью, когда стемнеет.", [["Понял", _dialog.close]])
+        return
+    _open_dialog("Ночные гонки", "Кольцо по внешним проспектам Казани: %d контрольных точек.\nОбгонишь соперника по времени — заберёшь ставку вдвое.\nНа больших ставках соперники быстрее." % RACE_CP.size(),
+            [["Ставка 500 ₽ — «Москвич»", _race_start.bind(500, 15.0)],
+            ["Ставка 2 000 ₽ — «Жигули»", _race_start.bind(2000, 18.0)],
+            ["Ставка 10 000 ₽ — «Волга» с форсированным мотором", _race_start.bind(10000, 21.0)],
+            ["Не сейчас", _dialog.close]])
+
+
+func _race_length() -> float:
+    var L := 0.0
+    var prev := RACE_START
+    for cp: Vector3 in RACE_CP:
+        L += prev.distance_to(cp)
+        prev = cp
+    return L
+
+
+func _race_start(bet: int, rival_speed: float) -> void:
+    if _driving == null:
+        return
+    if not _pay(bet, "Ставка на гонку"):
+        return
+    _dialog.close()
+    _race = {"bet": bet, "cp": 0, "t": 0.0, "target": snappedf(_race_length() / rival_speed, 0.1), "car": _driving}
+    if _race_marker == null:
+        _race_marker = MarkerScript.new()
+        add_child(_race_marker)
+    _race_show_cp()
+    Sfx.play("beep")
+    _hud.show_toast("СТАРТ! Гони по меткам — время пошло")
+
+
+func _race_show_cp() -> void:
+    var i := int(_race["cp"])
+    _race_marker.show_at(RACE_CP[i], "КП %d/%d" % [i + 1, RACE_CP.size()], Color(1.0, 0.35, 0.1))
+    _set_gps(RACE_CP[i], "Гонка: КП %d" % (i + 1), false)
+
+
+func _update_race(delta: float) -> void:
+    if _race.is_empty():
+        return
+    if _driving == null or _driving != _race["car"]:
+        _race_end(false, "Вышел из машины — гонка проиграна")
+        return
+    _race["t"] = float(_race["t"]) + delta
+    if float(_race["t"]) > float(_race["target"]) * 1.8:
+        _race_end(false, "Соперник давно на финише")
+        return
+    var i := int(_race["cp"])
+    var cp: Vector3 = RACE_CP[i]
+    var me: Vector3 = _driving.global_position
+    if Vector2(me.x - cp.x, me.z - cp.z).length() < 13.0:
+        Sfx.play("beep")
+        i += 1
+        _race["cp"] = i
+        if i >= RACE_CP.size():
+            var win := float(_race["t"]) < float(_race["target"])
+            _race_end(win, "Финиш: %.1f с, соперник %.1f с" % [float(_race["t"]), float(_race["target"])])
+            return
+        _race_show_cp()
+
+
+func _race_end(win: bool, why: String) -> void:
+    var bet := int(_race["bet"])
+    _race = {}
+    if _race_marker:
+        _race_marker.visible = false
+    _clear_gps()
+    if win:
+        cash += bet * 2
+        stats["race"] = int(stats.get("race", 0)) + 1
+        skills["driving"] = minf(100.0, float(skills["driving"]) + 2.0)
+        Sfx.play("levelup")
+        _open_dialog("Ночные гонки", "%s\n\nПобеда! Забираешь %s. Вождение +2." % [why, HudScript.format_money(bet * 2)], [["Отлично", _dialog.close]])
+    else:
+        Sfx.play("error")
+        _open_dialog("Ночные гонки", "%s\n\nСтавка %s ушла сопернику." % [why, HudScript.format_money(bet)], [["Эх", _dialog.close]])
+    _save_game()
+
+
+# --- дрифт
+
+func _drift_menu() -> void:
+    if not _race.is_empty() or not _drift.is_empty():
+        return
+    var best := int(stats.get("drift_best", 0))
+    _open_dialog("Дрифт", "60 секунд: проходи повороты боком — чем круче угол и выше скорость, тем больше очков.\nДлинная связка без остановки — множитель до ×2.\nНаграда — 1 ₽ за каждые 5 очков.\n\nТвой рекорд: %d" % best,
+            [["Поехали!", _drift_start], ["Не сейчас", _dialog.close]])
+
+
+func _drift_start() -> void:
+    _dialog.close()
+    if _driving == null:
+        return
+    _drift = {"score": 0.0, "combo": 0.0, "idle": 0.0, "left": DRIFT_TIME, "car": _driving}
+    Sfx.play("beep")
+    _hud.show_toast("Дрифт! Разгонись и заходи в повороты боком (ручник помогает)")
+
+
+func _update_drift(delta: float) -> void:
+    if _drift.is_empty():
+        return
+    if _driving == null or _driving != _drift["car"]:
+        _drift_end()
+        return
+    _drift["left"] = float(_drift["left"]) - delta
+    var v: Vector3 = (_driving as RigidBody3D).linear_velocity
+    var hv := Vector3(v.x, 0, v.z)
+    var spd := hv.length()
+    var fwd: Vector3 = _driving.global_transform.basis.z
+    fwd.y = 0
+    var ang := 0.0
+    if spd > 1.0 and fwd.length() > 0.01:
+        ang = rad_to_deg(hv.normalized().angle_to(fwd.normalized()))
+        if ang > 90.0:
+            ang = 180.0 - ang   # задним ходом не считается дрифтом
+            if hv.dot(fwd) < 0.0:
+                ang = 0.0
+    if spd > 8.0 and ang > 12.0 and ang < 80.0:
+        _drift["combo"] = float(_drift["combo"]) + delta
+        _drift["idle"] = 0.0
+        var mul := 1.0 + minf(float(_drift["combo"]), 5.0) * 0.2
+        _drift["score"] = float(_drift["score"]) + (ang - 10.0) * spd * delta * 0.5 * mul
+    else:
+        _drift["idle"] = float(_drift["idle"]) + delta
+        if float(_drift["idle"]) > 0.7:
+            _drift["combo"] = 0.0
+    if float(_drift["left"]) <= 0.0:
+        _drift_end()
+
+
+func _drift_end() -> void:
+    var score := int(_drift.get("score", 0.0))
+    _drift = {}
+    var prize := mini(score / 5, 15000)
+    cash += prize
+    var best := int(stats.get("drift_best", 0))
+    var rec := ""
+    if score > best:
+        stats["drift_best"] = score
+        rec = "\nНовый рекорд!"
+    if score > 300:
+        skills["driving"] = minf(100.0, float(skills["driving"]) + 1.0)
+    Sfx.play("cash" if prize > 0 else "error")
+    _open_dialog("Дрифт", "Очки: %d%s\nНаграда: %s" % [score, rec, HudScript.format_money(prize)], [["Ещё раз", _drift_menu], ["Хватит", _dialog.close]])
+    _save_game()
+
+
+
+# ================================================================ онлайн: другие игроки и чат
+
+## id -> {"name", "npc", "car", "car_key", "tpos", "tyaw", "txf", "seen"}
+var _remote := {}
+
+
+func _net_start() -> void:
+    Net.player_joined.connect(_on_net_joined)
+    Net.player_left.connect(_on_net_left)
+    Net.states_received.connect(_on_net_states)
+    Net.chat_received.connect(_on_net_chat)
+    Net.lost.connect(_on_net_lost)
+    var nm := passport_name if passport_name != "" else ""
+    Net.hello(nm, {"look": look})
+    _hud.chat("Онлайн: %s. Чат — кнопка с микрофоном, «/g текст» — написать всем." % Net.host_text, "info")
+
+
+func _on_chat_button() -> void:
+    if not Net.online:
+        _hud.toggle_chat_history()
+        return
+    _open_dialog("Чат", "Тебя услышат игроки рядом (60 м). Начни с «/g », чтобы написать всем на сервере.",
+            [["Отправить", _send_chat], ["История", func() -> void:
+                _dialog.close()
+                _hud.toggle_chat_history()], ["Закрыть", _dialog.close]], "Сообщение...")
+
+
+func _send_chat() -> void:
+    var t := _dialog.input_text()
+    _dialog.close()
+    if t != "":
+        Net.say(t)
+
+
+func _on_net_chat(pname: String, text: String, global: bool) -> void:
+    if pname == "":
+        _hud.chat(text, "info")
+    elif global:
+        _hud.chat("[всем] %s: %s" % [pname, text], "shout")
+    else:
+        _hud.chat("%s: %s" % [pname, text], "say")
+
+
+func _on_net_lost() -> void:
+    for id: int in _remote.keys():
+        _on_net_left(id)
+    _hud.chat("Связь с сервером потеряна — играешь офлайн.", "warn")
+    Sfx.play("error")
+
+
+func _on_net_joined(id: int, pname: String, info: Dictionary) -> void:
+    if _remote.has(id):
+        return
+    var lk: Dictionary = info.get("look", {}) if info.get("look", {}) is Dictionary else {}
+    var tex := Clothes.textures(lk)
+    var n = NpcScript.new()
+    n.npc_name = pname
+    n.remote = true
+    n.collide = false
+    n.mark = false
+    n.beard = false
+    n.anim = "idle"
+    n.jacket = String(tex.get("jacket", n.jacket))
+    n.pants = String(tex.get("pants", n.pants))
+    n.shoes = String(tex.get("shoes", n.shoes))
+    var h: Array = Clothes.hat(lk)
+    n.hat = String(h[0])
+    n.hat_col = h[1]
+    n.name_col = Color(0.75, 0.9, 1.0)
+    n.visible = false
+    add_child(n)
+    _remote[id] = {"name": pname, "npc": n, "car": null, "car_key": "", "tpos": Vector3.ZERO, "tyaw": 0.0,
+            "txf": Transform3D(), "seen": false}
+    _hud.chat("%s зашёл в игру" % pname, "time")
+
+
+func _on_net_left(id: int) -> void:
+    if not _remote.has(id):
+        return
+    var r: Dictionary = _remote[id]
+    if is_instance_valid(r["npc"]):
+        (r["npc"] as Node).queue_free()
+    if r["car"] != null and is_instance_valid(r["car"]):
+        (r["car"] as Node).queue_free()
+    _hud.chat("%s вышел из игры" % r["name"], "time")
+    _remote.erase(id)
+
+
+func _on_net_states(list: Array) -> void:
+    for e: Array in list:
+        var id := int(e[0])
+        if not _remote.has(id):
+            continue
+        var st: Array = e[1]
+        var r: Dictionary = _remote[id]
+        r["tpos"] = st[0]
+        r["tyaw"] = float(st[1])
+        r["anim"] = String(st[2])
+        r["aspeed"] = float(st[3])
+        var car: Array = st[4]
+        var key := "" if car.is_empty() else "%s|%s|%s" % [car[0], car[1], car[2]]
+        if key != r["car_key"]:
+            _remote_set_car(r, car, key)
+        if not car.is_empty():
+            r["txf"] = st[5]
+        if not r["seen"]:   # первый раз — сразу на место, без «прилёта» через весь город
+            r["seen"] = true
+            (r["npc"] as Node3D).global_position = st[0]
+            if r["car"] != null:
+                (r["car"] as Node3D).global_transform = st[5]
+
+
+func _remote_set_car(r: Dictionary, car: Array, key: String) -> void:
+    if r["car"] != null and is_instance_valid(r["car"]):
+        (r["car"] as Node).queue_free()
+    r["car"] = null
+    r["car_key"] = key
+    var n: Node3D = r["npc"]
+    if car.is_empty():
+        n.visible = true
+        return
+    var c = CarScene.instantiate()
+    c.kind = String(car[0])
+    c.model_id = String(car[1])
+    c.paint = Color.html(String(car[2]))
+    c.car_name = String(car[3]) if car.size() > 3 else ""
+    c.freeze = true
+    c.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+    add_child(c)
+    var lab := Label3D.new()
+    lab.text = String(r["name"])
+    lab.font_size = 64
+    lab.pixel_size = 0.005
+    lab.outline_size = 12
+    lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+    lab.modulate = Color(0.75, 0.9, 1.0)
+    lab.position = Vector3(0, 2.3, 0)
+    c.add_child(lab)
+    r["car"] = c
+    n.visible = false
+
+
+func _update_online(delta: float) -> void:
+    if not Net.online or _player == null:
+        return
+    # моё состояние
+    var car := []
+    var xf := Transform3D()
+    if _driving != null:
+        car = [String(_driving.kind), String(_driving.model_id), (_driving.paint as Color).to_html(false), String(_driving.car_name)]
+        xf = _driving.global_transform
+    var an := ""
+    var asp := 1.0
+    if _player._anim:
+        an = String(_player._anim.current_animation)
+        asp = _player._anim.speed_scale
+    var yaw: float = _player._visual.global_rotation.y if _player._visual else 0.0
+    Net.send_state(delta, [_player.global_position, yaw, an, asp, car, xf])
+    # другие игроки — плавно к последним данным
+    var k := 1.0 - exp(-10.0 * delta)
+    for id: int in _remote:
+        var r: Dictionary = _remote[id]
+        if not r["seen"]:
+            continue
+        var n: Node3D = r["npc"]
+        if r["car"] != null and is_instance_valid(r["car"]):
+            var c: Node3D = r["car"]
+            c.global_transform = c.global_transform.interpolate_with(r["txf"], k)
+            n.global_position = c.global_position
+            continue
+        if not n.visible:
+            n.visible = true
+        var tp: Vector3 = r["tpos"]
+        if n.global_position.distance_to(tp) > 30.0:
+            n.global_position = tp
+        else:
+            n.global_position = n.global_position.lerp(tp, k)
+        n.rotation.y = lerp_angle(n.rotation.y, float(r["tyaw"]), k)
+        if r.has("anim"):
+            n.play_anim(String(r["anim"]), float(r["aspeed"]))

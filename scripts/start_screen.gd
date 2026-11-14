@@ -15,9 +15,12 @@ const PLAY_RECT := Rect2(540, 375, 600, 200)
 const GOLD := Color(0.95, 0.74, 0.33)
 
 ## Сервера на экране выбора.
+## host — адрес онлайн-сервера ("адрес:порт"); пусто — одиночная игра без сети.
 const SERVERS := [
-    {"name": "1 СЕРВЕР", "info": "Казань · Пятигорск · Бусаево"},
+    {"name": "1 СЕРВЕР", "info": "Казань · Пятигорск · Бусаево", "host": ""},
 ]
+var chosen_host := ""      # куда подключаться (читает main.gd после server_chosen)
+var _addr: LineEdit
 var _font: Font = null
 var _page_main: Control
 var _page_servers: Control
@@ -227,7 +230,59 @@ func _build_servers() -> void:
         info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
         card.add_child(info)
 
+    # свой сервер: адрес (например, от playit.gg) и кнопка «Подключиться»
+    var own := HBoxContainer.new()
+    own.alignment = BoxContainer.ALIGNMENT_CENTER
+    own.add_theme_constant_override("separation", 16)
+    _page_servers.add_child(own)
+    own.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+    own.offset_left = -560
+    own.offset_right = 560
+    own.offset_top = -190
+    own.offset_bottom = -110
+    _addr = LineEdit.new()
+    _addr.placeholder_text = "Свой сервер: адрес:порт"
+    _addr.custom_minimum_size = Vector2(620, 70)
+    _addr.add_theme_font_size_override("font_size", 28)
+    _addr.text = _saved_host()
+    own.add_child(_addr)
+    var go := Button.new()
+    go.text = "ПОДКЛЮЧИТЬСЯ"
+    go.custom_minimum_size = Vector2(320, 70)
+    go.focus_mode = Control.FOCUS_NONE
+    if _font:
+        go.add_theme_font_override("font", _font)
+    go.add_theme_font_size_override("font_size", 28)
+    go.add_theme_stylebox_override("normal", _pill(Color(0.04, 0.05, 0.08, 0.88), GOLD * Color(1, 1, 1, 0.55), 35))
+    go.add_theme_stylebox_override("hover", _pill(Color(0.08, 0.08, 0.10, 0.92), GOLD, 35))
+    go.add_theme_stylebox_override("pressed", _pill(Color(0.14, 0.11, 0.06, 0.95), GOLD, 35))
+    go.pressed.connect(_on_own_server)
+    own.add_child(go)
+
     _build_back()
+
+
+func _saved_host() -> String:
+    var cfg := ConfigFile.new()
+    if cfg.load("user://settings.cfg") == OK:
+        return String(cfg.get_value("net", "host", ""))
+    return ""
+
+
+func _on_own_server() -> void:
+    var h := _addr.text.strip_edges()
+    if h == "":
+        Sfx.play("error")
+        _addr.placeholder_text = "Впиши адрес сервера, например abc.playit.gg:12345"
+        return
+    var cfg := ConfigFile.new()
+    cfg.load("user://settings.cfg")
+    cfg.set_value("net", "host", h)
+    cfg.save("user://settings.cfg")
+    Sfx.play("click")
+    chosen_host = h
+    _show("loading")
+    server_chosen.emit(-1)
 
 
 ## Назад — круглая кнопка слева внизу
@@ -257,6 +312,7 @@ func _on_back() -> void:
 
 func _on_server(i: int) -> void:
     Sfx.play("click")
+    chosen_host = String(SERVERS[i].get("host", "")) if i >= 0 and i < SERVERS.size() else ""
     _show("loading")
     server_chosen.emit(i)
 

@@ -14,6 +14,7 @@ const SOUNDS := [
     "step", "step2", "step3", "hit", "swing", "eat", "drink", "heal", "faint", "heartbeat",
     "shot", "shot_heavy", "horn", "train_horn", "station", "whistle", "car_door", "lock", "engine_start", "scooter_start",
     "door", "pigeon", "sparrow", "crow", "dog", "crickets", "rumble", "rain", "thunder", "siren",
+    "firework", "beep",
 ]
 const LOOPS := ["crickets", "rumble", "rain", "siren"]
 

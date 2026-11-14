@@ -80,6 +80,32 @@ const HAND_DRINK := {
     "neck_01": Vector3(0, 0.94, -0.33), "spine_03": Vector3(0, 0.98, -0.18),
 }
 
+## танец на дискотеке: покачивание, руки вверх-вниз попеременно
+const DANCE_A := {
+    "pelvis_pos": Vector3(0.03, 0.9, 0.0),
+    "spine_03": Vector3(-0.12, 0.99, 0.05), "neck_01": Vector3(0.1, 1, 0.05),
+    "thigh_l": Vector3(0.14, -0.97, 0.18), "calf_l": Vector3(0.03, -0.97, -0.12),
+    "thigh_r": Vector3(-0.12, -0.99, 0.0), "calf_r": Vector3(-0.02, -1, 0.0),
+    "upperarm_l": Vector3(0.55, 0.75, 0.3), "lowerarm_l": Vector3(0.1, 0.95, 0.25), "hand_l": Vector3(0.0, 1, 0.1),
+    "upperarm_r": Vector3(-0.5, -0.6, 0.6), "lowerarm_r": Vector3(0.3, 0.4, 0.85), "hand_r": Vector3(0.2, 0.3, 0.9),
+}
+const DANCE_B := {
+    "pelvis_pos": Vector3(-0.03, 0.9, 0.0),
+    "spine_03": Vector3(0.12, 0.99, 0.05), "neck_01": Vector3(-0.1, 1, 0.05),
+    "thigh_l": Vector3(0.12, -0.99, 0.0), "calf_l": Vector3(0.02, -1, 0.0),
+    "thigh_r": Vector3(-0.14, -0.97, 0.18), "calf_r": Vector3(-0.03, -0.97, -0.12),
+    "upperarm_l": Vector3(0.5, -0.6, 0.6), "lowerarm_l": Vector3(-0.3, 0.4, 0.85), "hand_l": Vector3(-0.2, 0.3, 0.9),
+    "upperarm_r": Vector3(-0.55, 0.75, 0.3), "lowerarm_r": Vector3(-0.1, 0.95, 0.25), "hand_r": Vector3(0.0, 1, 0.1),
+}
+const DANCE_LOW := {
+    "pelvis_pos": Vector3(0, 0.84, -0.03),
+    "spine_03": Vector3(0, 0.98, 0.15),
+    "thigh_l": Vector3(0.16, -0.9, 0.38), "calf_l": Vector3(0.03, -0.95, -0.3),
+    "thigh_r": Vector3(-0.16, -0.9, 0.38), "calf_r": Vector3(-0.03, -0.95, -0.3),
+    "upperarm_l": Vector3(0.7, -0.5, 0.5), "lowerarm_l": Vector3(-0.2, 0.6, 0.8),
+    "upperarm_r": Vector3(-0.7, -0.5, 0.5), "lowerarm_r": Vector3(0.2, 0.6, 0.8),
+}
+
 
 ## Добавить анимации в AnimationPlayer модели.
 static func install(ap: AnimationPlayer, sk: Skeleton3D) -> void:
@@ -98,6 +124,8 @@ static func install(ap: AnimationPlayer, sk: Skeleton3D) -> void:
             [0.46, KICK_CHAMBER], [0.6, GUARD]], 0.6, false))
     lib.add_animation("Anim_Eat", make(sk, prefix, [[0.0, ARMS_DOWN], [0.35, HAND_MOUTH], [0.6, HAND_CHEW], [0.85, HAND_CHEW],
             [1.1, HAND_MOUTH], [1.35, HAND_CHEW], [1.6, HAND_CHEW], [1.9, ARMS_DOWN]], 1.9, false))
+    lib.add_animation("Anim_Dance", make(sk, prefix, [[0.0, DANCE_A], [0.25, DANCE_LOW], [0.5, DANCE_B], [0.75, DANCE_LOW],
+            [1.0, DANCE_A]], 1.0, true))
     lib.add_animation("Anim_Drink", make(sk, prefix, [[0.0, ARMS_DOWN], [0.4, HAND_MOUTH], [0.7, HAND_DRINK], [1.5, HAND_DRINK],
             [1.8, HAND_MOUTH], [2.1, ARMS_DOWN]], 2.1, false))
 

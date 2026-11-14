@@ -26,6 +26,13 @@ const SLOTS := [
         ["вельветовый пиджак", Color(1.0, 1.0, 1.0), 2400, "cloth_corduroy"],
         ["рубашка в клетку", Color(1.0, 1.0, 1.0), 800, "cloth_check_blue", "short"],
         ["рубашка белая", Color(1.0, 1.0, 1.0), 700, "cloth_cotton_white", "short"],
+        ["костюм «три полоски» чёрный", Color(1.0, 1.0, 1.0), 3500, "ts_black", "lampas"],
+        ["олимпийка красная", Color(1.0, 1.0, 1.0), 2400, "ts_red", "lampas"],
+        ["олимпийка зелёная", Color(1.0, 1.0, 1.0), 2400, "ts_green", "lampas"],
+        ["куртка «Аляска»", Color(1.0, 1.0, 1.0), 4500, "cloth_alyaska"],
+        ["дублёнка", Color(1.0, 1.0, 1.0), 7000, "cloth_dublenka"],
+        ["пальто тёмное", Color(1.0, 1.0, 1.0), 5000, "cloth_coat_dark"],
+        ["костюм серый", Color(1.0, 1.0, 1.0), 4000, "cloth_suit_gray"],
     ]},
     {"id": "pants", "name": "Штаны", "items": [
         ["джинсы", Color(1.0, 1.0, 1.0), 0, "cloth_denim_blue"],
@@ -39,6 +46,7 @@ const SLOTS := [
         ["трико", Color(1.0, 1.0, 1.0), 500, "cloth_jersey_gray"],
         ["брюки чёрные", Color(1.0, 1.0, 1.0), 1400, "cloth_wool_black"],
         ["брюки коричневые", Color(1.0, 1.0, 1.0), 1300, "cloth_trousers_brown"],
+        ["спортивные «три полоски»", Color(1.0, 1.0, 1.0), 1500, "ts_black"],
     ]},
     {"id": "shoes", "name": "Обувь", "items": [
         ["ботинки коричневые", Color(1.0, 1.0, 1.0), 0, "cloth_leather_brown"],
@@ -59,6 +67,15 @@ const SLOTS := [
         ["седые", Color(0.70, 0.70, 0.70), 400],
         ["синие", Color(0.15, 0.30, 0.75), 900],
     ]},
+    {"id": "hat", "name": "Шапки", "items": [
+        ["без шапки", Color(0, 0, 0, 0), 0, "", ""],
+        ["кепка-восьмиклинка", Color(0.30, 0.28, 0.26), 600, "", "kepka"],
+        ["кепка чёрная", Color(0.10, 0.10, 0.11), 600, "", "kepka"],
+        ["шапка-«петушок» синяя", Color(0.15, 0.30, 0.75), 400, "", "petushok"],
+        ["шапка-«петушок» красная", Color(0.75, 0.12, 0.10), 400, "", "petushok"],
+        ["ондатровая шапка", Color(0.34, 0.24, 0.17), 5000, "", "ondatra"],
+        ["шляпа", Color(0.22, 0.22, 0.24), 1800, "", "fedora"],
+    ]},
     {"id": "skin", "name": "Кожа", "items": [
         ["светлая", Color(0.87, 0.68, 0.55), 0],
         ["бледная", Color(0.95, 0.80, 0.70), 0],
@@ -66,6 +83,16 @@ const SLOTS := [
         ["тёмная", Color(0.45, 0.30, 0.20), 0],
     ]},
 ]
+
+
+## Головной убор из раздела «Шапки»: [вид для hats.gd, цвет] (вид "" — без шапки).
+static func hat(look: Dictionary) -> Array:
+    for slot: Dictionary in SLOTS:
+        if slot["id"] == "hat":
+            var items: Array = slot["items"]
+            var item: Array = items[clampi(int(look.get("hat", 0)), 0, items.size() - 1)]
+            return [String(item[4]), item[1]]
+    return ["", Color(0, 0, 0, 0)]
 
 
 static func default_look() -> Dictionary:

@@ -79,9 +79,46 @@ func play_radio() -> void:
     _start(String(STATIONS[station]["file"]), true)
 
 
-## Саундтрек ситуации (например, "score_chase" при розыске). Радио в машине важнее.
+## Радиола дома: следующая станция по кругу, после последней — выкл. Возвращает подсказку.
+var home_station := -1
+
+
+func home_next() -> String:
+    home_station += 1
+    if home_station >= STATIONS.size():
+        home_station = -1
+        stop()
+        return "Радиола выключена"
+    _mode = "home"
+    _player.stop()
+    _start(String(STATIONS[home_station]["file"]), true)
+    return "Радиола: " + String(STATIONS[home_station]["name"])
+
+
+func stop_home() -> void:
+    if _mode == "home":
+        home_station = -1
+        stop()
+
+
+## Музыка места (дискотека в ДК): важнее всего, пока игрок внутри.
+func play_place(file: String) -> void:
+    if _mode == "place" and _score == file:
+        return
+    _mode = "place"
+    _score = file
+    _player.stop()
+    _start(file, true)
+
+
+func stop_place() -> void:
+    if _mode == "place":
+        stop()
+
+
+## Саундтрек ситуации (например, "score_chase" при розыске). Радио в машине и радиола важнее.
 func play_score(file: String) -> void:
-    if _mode == "radio" or (_mode == "score" and _score == file):
+    if _mode == "radio" or _mode == "home" or _mode == "place" or (_mode == "score" and _score == file):
         return
     _mode = "score"
     _score = file
@@ -130,4 +167,8 @@ func _process(delta: float) -> void:
         base = 0.55
     elif _mode == "score":
         base = 0.45
+    elif _mode == "home":
+        base = 0.5
+    elif _mode == "place":
+        base = 0.75
     _player.volume_db = linear_to_db(maxf(0.0001, _level * volume * base))

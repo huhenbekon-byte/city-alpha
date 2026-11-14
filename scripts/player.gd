@@ -405,7 +405,7 @@ func _setup_model() -> void:
                 if _anim_map.has(key):
                     Poses.fix_lean(_anim, sk, _anim_map[key], 0.35)
         for pk: Array in [["squat", "Pose_Squat"], ["salute", "Pose_Salute"], ["rest", "Pose_Rest"], ["guard", "Pose_Guard"],
-                ["land", "Anim_Land"], ["kick", "Anim_Kick"], ["eat", "Anim_Eat"], ["drink", "Anim_Drink"]]:
+                ["land", "Anim_Land"], ["kick", "Anim_Kick"], ["eat", "Anim_Eat"], ["drink", "Anim_Drink"], ["dance", "Anim_Dance"]]:
             if _anim.has_animation(pk[1]):
                 _anim_map[pk[0]] = pk[1]
     for an in _anim.get_animation_list():

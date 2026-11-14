@@ -16,6 +16,7 @@ config/quit_on_go_back=false
 
 Sfx="*res://scripts/sfx.gd"
 Music="*res://scripts/music.gd"
+Net="*res://scripts/net.gd"
 
 [display]
 

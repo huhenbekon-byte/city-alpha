@@ -194,6 +194,7 @@ func load_settings() -> void:
 
 func save_settings() -> void:
     var cfg := ConfigFile.new()
+    cfg.load(SETTINGS_PATH)   # не теряем другие разделы (адрес сервера)
     for key: String in settings.keys():
         cfg.set_value("settings", key, settings[key])
     cfg.save(SETTINGS_PATH)

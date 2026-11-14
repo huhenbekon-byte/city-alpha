@@ -496,6 +496,36 @@ def siren():
     return A.norm(s, 0.6)
 
 
+
+def firework():
+    """Салют: свист взлетающей ракеты, хлопок и треск рассыпающихся искр."""
+    L = 3.2
+    x = buf(L)
+    n = int(0.9 * SR)
+    t = t_(n)
+    f = 900 + 900 * t / 0.9
+    wh = bp(noise(n), 700, 2600) * 0.25 + osc_f(f, 'sine') * 0.08
+    put(x, 0.0, wh * np.minimum(1, t * 6) * (1 - t / 0.9) ** 0.5)
+    n = int(2.2 * SR)
+    t = t_(n)
+    bang = lp(noise(n), 900) * np.exp(-t * 7) * 1.4 + lp(brown(n), 160) * np.exp(-t * 3) * 2.0
+    put(x, 0.95, bang)
+    for k in range(70):
+        at = 1.05 + rng.uniform(0, 1.6)
+        m = int(0.03 * SR)
+        put(x, at, hp(noise(m), 1500) * np.exp(-t_(m) * 120), rng.uniform(0.05, 0.18))
+    x = A.reverb(x, 0.8, 0.3, 2500, 0.8)
+    return finish(x, 0.85, 5000, 0.01, 0.3)
+
+
+def beep():
+    """Светофор старта гонки: короткий электронный «пик»."""
+    n = int(0.22 * SR)
+    t = t_(n)
+    s = sine(880, n) * 0.6 + osc_f(np.full(n, 880.0), 'sq') * 0.12
+    return finish(s * np.exp(-t * 6) * np.minimum(1, t * 200), 0.6, 4000)
+
+
 SOUNDS = {
     'click': click, 'notify': notify, 'error': error, 'coin': coin, 'cash': cash, 'levelup': levelup,
     'phone': phone, 'radio_tune': radio_tune,
@@ -506,6 +536,7 @@ SOUNDS = {
     'car_door': car_door, 'lock': lock, 'engine_start': lambda: engine_start(False), 'scooter_start': lambda: engine_start(True),
     'door': door, 'pigeon': pigeon, 'sparrow': sparrow, 'crow': crow, 'dog': dog,
     'crickets': crickets, 'rumble': rumble, 'rain': rain, 'thunder': thunder, 'siren': siren,
+    'firework': firework, 'beep': beep,
 }
 
 if __name__ == '__main__':

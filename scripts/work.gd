@@ -243,8 +243,14 @@ func _new_truck_order(from: Vector3) -> void:
         to = drops[(drops.find(to) + 1) % drops.size()]
     var dist := _dist(from, to)
     _reward = int(round((900.0 + dist * 2.5) / 10.0)) * 10
+    var intercity := (from.x < -700.0) != (to.x < -700.0)   # Пятигорск — западнее -700
+    if intercity:
+        _reward = int(_reward * 1.4 / 10.0) * 10
     _set_target(to, "РАЗГРУЗКА", Color(0.2, 1.0, 0.4))
-    message.emit("Новый груз: %d м, оплата %d ₽" % [int(dist), _reward])
+    if intercity:
+        message.emit("Межгород! Рейс %s: %d м, оплата %d ₽" % ["Казань → Пятигорск" if to.x < -700.0 else "Пятигорск → Казань", int(dist), _reward])
+    else:
+        message.emit("Новый груз: %d м, оплата %d ₽" % [int(dist), _reward])
 
 
 func _new_tree() -> void:

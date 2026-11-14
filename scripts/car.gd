@@ -71,6 +71,10 @@ var _headlight: SpotLight3D
 var _night := false
 var lights_override := -1      # -1 — фары по времени суток, 0 — выключены, 1 — включены
 var locked := false            # двери закрыты на замок
+var freshener := false         # тюнинг: «ёлочка» на зеркале
+var loud := false              # тюнинг: прямоток — громче и басовитей
+var lowered := false           # тюнинг: занижение
+var _fresh_node: Node3D = null
 var hand_on := false           # ручник (для лампы на спидометре)
 var braking := false
 
@@ -128,12 +132,16 @@ func _ready() -> void:
 
     CarModel.add_collision(self, kind)
     _tail_mat = CarModel.make_tail_material()
-    _model_info = CarModel.model_info(model_id) if kind == "car" else {}
+    # готовая модель с 4 колёсами — у легковых, автобусов и грузовиков; у мотоцикла колёса в кузове
+    _model_info = CarModel.model_info(model_id) if kind != "moto" else {}
     if not _model_info.is_empty():
         _setup_model()
     else:
         _body_mi = MeshInstance3D.new()
         _body_mi.mesh = CarModel.scooter_mesh(paint, _tail_mat) if scooter else CarModel.body_mesh(paint, _tail_mat, kind)
+        var moto_model := kind == "moto" and not scooter and CarModel.has_model(model_id)
+        if moto_model:   # мотоцикл ИЖ: модель целиком, физические колёса невидимые
+            _body_mi.mesh = CarModel.model_mesh(model_id, paint)
         add_child(_body_mi)
         if scooter:
             # физически 4 колеса рядом (не падает), видно одно узкое спереди и одно сзади
@@ -147,6 +155,9 @@ func _ready() -> void:
         else:
             for spot: Array in CarModel.wheel_spots(kind):
                 _add_wheel(spot[0], spot[1])
+            if kind == "moto" and CarModel.has_model(model_id):
+                for wm in _wheel_mis:
+                    wm.visible = false
 
     _build_livery()
     if kind == "car":
@@ -583,7 +594,9 @@ func _fill_engine_sound() -> void:
     var cut := (380.0 + _rpm * 900.0 * eng_load) * (1.15 if small else 1.0)
     var k := clampf(TAU * cut / MIX_RATE, 0.01, 0.9)
     var inc := fire / MIX_RATE
-    var amp := (0.22 + _rpm * 0.15) * (0.8 + 0.2 * eng_load)
+    var amp := (0.22 + _rpm * 0.15) * (0.8 + 0.2 * eng_load) * (1.55 if loud else 1.0)
+    if loud:
+        k *= 0.8   # прямоток: ниже и басовитей
     var n := _playback.get_frames_available()
     if n <= 0:
         return
@@ -787,6 +800,35 @@ func apply_tuning() -> void:
                 mi.set_surface_override_material(i, custom)
     for l in _plates:
         l.text = plate_text
+    # занижение: кузов ниже на 7 см
+    if not _body_mi.has_meta("base_y"):
+        _body_mi.set_meta("base_y", _body_mi.position.y)
+    _body_mi.position.y = float(_body_mi.get_meta("base_y")) - (0.07 if lowered else 0.0)
+    # «ёлочка» у лобового стекла
+    if freshener and _fresh_node == null:
+        var ab := _body_mi.get_aabb()
+        _fresh_node = Node3D.new()
+        var cone := CylinderMesh.new()
+        cone.top_radius = 0.0
+        cone.bottom_radius = 0.045
+        cone.height = 0.12
+        var m := StandardMaterial3D.new()
+        m.albedo_color = Color(0.1, 0.55, 0.2)
+        var mi := MeshInstance3D.new()
+        mi.mesh = cone
+        mi.material_override = m
+        _fresh_node.add_child(mi)
+        var cord := MeshInstance3D.new()
+        var bm := BoxMesh.new()
+        bm.size = Vector3(0.005, 0.12, 0.005)
+        cord.mesh = bm
+        cord.position = Vector3(0, 0.11, 0)
+        _fresh_node.add_child(cord)
+        _fresh_node.position = Vector3(0.0, _body_mi.position.y + ab.end.y - 0.38, ab.end.z * 0.3)
+        add_child(_fresh_node)
+    elif not freshener and _fresh_node != null:
+        _fresh_node.queue_free()
+        _fresh_node = null
 
 
 ## Удар: машина портится. Возвращает true, если сломалась совсем.
@@ -926,7 +968,7 @@ func driver_seat() -> Array:
     var roof := box.position.y + box.size.y
     var floor_y := box.position.y + 0.06
     var hip_z := front_z - 1.3
-    if model_id == "uaz452":   # «буханка»: кабина над передней осью
+    if model_id == "uaz452" or model_id == "uaz452n":   # «буханка»: кабина над передней осью
         floor_y = wheel_y + 0.25
         hip_z = front_z - 0.35
     var sc := clampf((roof - 0.14 - floor_y) / 1.42, 0.62, 1.0)
