@@ -1,5 +1,5 @@
 extends Node
-## Музыка: темы главного меню, радио в машине (11 станций) и саундтрек погони.
+## Музыка: темы главного меню, радио в машине (12 станций) и саундтрек погони.
 ## Глобальный Music. Радио «живое»: включаешь станцию — играет с того места, где она сейчас в эфире.
 ## Новые треки сочинены и синтезированы скриптом tools/audio/gen_music.py.
 
@@ -15,7 +15,12 @@ const STATIONS := [
     {"name": "Ночной драйв FM", "file": "radio_synthwave"},
     {"name": "Район FM", "file": "radio_phonk"},
     {"name": "Лоу-фай 101", "file": "radio_lofi"},
+    {"name": "Дискотека ДК", "file": "club"},
 ]
+## Плейлисты: песни идут по очереди (не по кругу одна). Песни для клуба ДК сделал автор игры (Suno, TangoBead).
+const LISTS := {
+    "club": ["club_neposter", "club_boz_astynda", "club_synthwave", "club_holodno"],
+}
 const MENU_THEMES := ["menu2", "menu"]
 
 var volume := 0.6          # 0..1, из настроек
@@ -27,6 +32,8 @@ var _score := ""
 var _target := 0.0         # громкость, к которой плавно идём (0..1)
 var _level := 0.0
 var _menu_i := 0
+var _list := ""            # играющий плейлист ("" — одиночный трек по кругу)
+var _list_i := 0
 
 
 func _ready() -> void:
@@ -35,6 +42,7 @@ func _ready() -> void:
     if AudioServer.get_bus_index("Music") != -1:
         _player.bus = "Music"
     add_child(_player)
+    _player.finished.connect(_on_finished)
     _menu_i = randi() % MENU_THEMES.size()
 
 
@@ -43,12 +51,16 @@ func _stream(file: String) -> AudioStream:
         var path := "res://music/%s.ogg" % file
         var s: AudioStream = load(path) if ResourceLoader.exists(path) else null
         if s is AudioStreamOggVorbis:
-            (s as AudioStreamOggVorbis).loop = true
+            (s as AudioStreamOggVorbis).loop = not file.begins_with("club_")   # песни плейлиста не зацикливаем
         _streams[file] = s
     return _streams[file]
 
 
 func _start(file: String, live: bool) -> void:
+    if LISTS.has(file):
+        _start_list(file, live)
+        return
+    _list = ""
     var s := _stream(file)
     if s == null:
         _player.stop()
@@ -61,6 +73,51 @@ func _start(file: String, live: bool) -> void:
         _player.play(from)
         _level = 0.0
     _target = 1.0
+
+
+## Плейлист «в эфире»: с какой песни и секунды сейчас идёт, если live (как у станций); дальше — по очереди.
+func _start_list(key: String, live: bool) -> void:
+    var files: Array = LISTS[key]
+    if _list == key and _player.playing:
+        _target = 1.0
+        return
+    _list = key
+    _list_i = 0
+    var from := 0.0
+    if live:
+        var total := 0.0
+        for fl: String in files:
+            var st := _stream(fl)
+            total += st.get_length() if st else 0.0
+        var t := fmod(Time.get_ticks_msec() / 1000.0, maxf(1.0, total))
+        for i in files.size():
+            var st := _stream(String(files[i]))
+            var ln := st.get_length() if st else 0.0
+            if t < ln:
+                _list_i = i
+                from = t
+                break
+            t -= ln
+    var s := _stream(String(files[_list_i]))
+    if s == null:
+        _player.stop()
+        return
+    _player.stream = s
+    _player.play(from)
+    _level = 0.0
+    _target = 1.0
+
+
+## Песня плейлиста кончилась — следующая.
+func _on_finished() -> void:
+    if _list == "" or _target <= 0.0:
+        return
+    var files: Array = LISTS[_list]
+    _list_i = (_list_i + 1) % files.size()
+    var s := _stream(String(files[_list_i]))
+    if s:
+        _player.stream = s
+        _player.play()
 
 
 ## Тема меню: при каждом заходе в меню — следующая из двух.
@@ -132,6 +189,7 @@ func stop_score() -> void:
 
 ## Плавно выключить (вышли из машины, начали игру).
 func stop() -> void:
+    _list = ""
     _mode = ""
     _score = ""
     _target = 0.0

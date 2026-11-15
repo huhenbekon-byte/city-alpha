@@ -83,6 +83,7 @@ var market := Vector3.ZERO            # вход в рынок Пятигорс�
 var autosalon := Vector3.ZERO         # автосалон Казани (машины)
 var city_hall := Vector3.ZERO         # мэрия (паспорт)
 var driving_school := Vector3.ZERO    # автошкола
+var atm_faces: Array[Vector3] = []   # куда смотрит каждый банкомат (для проверки)
 var atms: Array[Vector3] = []         # банкоматы (где стоять)
 var fuel_pumps: Array[Vector3] = []   # колонки АЗС (где встать машиной)
 var gas_shops: Array[Vector3] = []    # магазины при АЗС (вход пешком — бизнес)
@@ -1563,6 +1564,52 @@ func _vc_mat(rough: float) -> StandardMaterial3D:
     return m
 
 
+## Есть ли картинка textures/<name>.png (листы автора: textures/sheet3/...).
+func _has_tex(tex_name: String) -> bool:
+    return ResourceLoader.exists("res://textures/%s.png" % tex_name)
+
+
+## Картинка на плоской табличке лицом в сторону facing (QuadMesh: без искажений, верх — вверху).
+## cut — прозрачный фон (вырезанный предмет), unshaded — светится сама (экраны, вывески).
+func _tex_quad(tex_name: String, size: Vector2, pos: Vector3, facing: Vector3, cut := false,
+        unshaded := false, parent: Node = null) -> MeshInstance3D:
+    var key := "q|%s|%s|%s" % [tex_name, cut, unshaded]
+    var m: StandardMaterial3D = _fmat.get(key)
+    if m == null:
+        var t := _tex_mip("res://textures/%s.png" % tex_name)
+        if t == null:
+            return null
+        m = StandardMaterial3D.new()
+        m.albedo_texture = t
+        m.roughness = 0.8
+        if cut:
+            m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+            m.alpha_scissor_threshold = 0.5
+            m.cull_mode = BaseMaterial3D.CULL_DISABLED
+        if unshaded:
+            m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+        _fmat[key] = m
+    var mi := MeshInstance3D.new()
+    var qm := QuadMesh.new()
+    qm.size = size
+    mi.mesh = qm
+    mi.material_override = m
+    mi.position = pos
+    mi.rotation.y = atan2(facing.x, facing.z)
+    (parent if parent else self).add_child(mi)
+    return mi
+
+
+## Киоск-будка: корпус цвета col и картинка спереди (вырезанная с прозрачным фоном).
+func _tex_kiosk(p: Vector3, facing: Vector3, tex_name: String, size: Vector3, col: Color) -> void:
+    var yaw := atan2(facing.x, facing.z)
+    var b := Basis(Vector3.UP, yaw)
+    _solid(Vector3(size.x * 0.9, size.y * 0.92, size.z), p + Vector3(0, size.y * 0.46, 0), _mat(col, 0.6), yaw)
+    _deco(Vector3(size.x, 0.12, size.z + 0.2), p + b * Vector3(0, size.y * 0.92 + 0.06, 0.1), _m["roof"], yaw)
+    _tex_quad(tex_name, Vector2(size.x, size.y), p + b * Vector3(0, size.y * 0.5, size.z * 0.5 + 0.02), facing, true)
+    building_rects.append(Rect2(p.x - size.x * 0.5, p.z - size.x * 0.5, size.x, size.x))
+
+
 func _box_mesh(s: Vector3) -> BoxMesh:
     var m := BoxMesh.new()
     m.size = s
@@ -1598,6 +1645,29 @@ func _atm(p: Vector3, facing: Vector3) -> void:
     var yaw := atan2(facing.x, facing.z)
     var b := Basis(Vector3.UP, yaw)
     var base := Vector3(p.x, SIDE_H, p.z)
+    if _tex_mip("res://textures/atm_front.png") != null:
+        # банкомат «Гострудсберкассы СССР»: корпус, лицевая панель с экраном и задняя стенка (textures/atm_*)
+        const S := Vector3(0.92, 1.85, 0.6)
+        if not _fmat.has("atm"):
+            var front := _fit_mat("atm_front", Vector3(S.x, S.y, 0.01), Color(0.3, 0.45, 0.3))
+            var rear := _fit_mat("atm_rear", Vector3(S.x, S.y, 0.01), Color(0.3, 0.45, 0.3))
+            var screen := _fit_mat("atm_screen", Vector3(0.5, 0.424, 0.01), Color(0.1, 0.25, 0.1))
+            screen.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED   # экран светится и днём, и ночью
+            for m: StandardMaterial3D in [front, rear, screen]:
+                m.uv1_scale.y = -m.uv1_scale.y      # тонкая пластина: иначе картинка вверх ногами
+            front.roughness = 0.6
+            _fmat["atm"] = [_fit_mat("atm_side", S, Color(0.3, 0.45, 0.3)), front, rear, screen]
+        var ms: Array = _fmat["atm"]
+        _solid(S, base + Vector3(0, S.y * 0.5, 0), ms[0], yaw)
+        _deco(Vector3(S.x, S.y, 0.01), base + b * Vector3(0, S.y * 0.5, S.z * 0.5 + 0.006), ms[1], yaw)
+        _deco(Vector3(S.x, S.y, 0.01), base + b * Vector3(0, S.y * 0.5, -S.z * 0.5 - 0.006), ms[2], yaw + PI)
+        _deco(Vector3(0.5, 0.424, 0.01), base + b * Vector3(0, 1.455, S.z * 0.5 + 0.012), ms[3], yaw)
+        _deco(Vector3(S.x, 0.24, 0.1), base + b * Vector3(0, S.y + 0.12, 0.2), _mat(Color(0.16, 0.3, 0.2), 0.6), yaw)
+        _label("БАНКОМАТ", base + b * Vector3(0, S.y + 0.12, 0.256), facing, 28, Color(1, 1, 1))
+        atms.append(base + facing * 1.1)
+        atm_faces.append(facing)
+        _occupy(base, 1.5, 1.5)
+        return
     _solid(Vector3(0.9, 1.9, 0.6), base + Vector3(0, 0.95, 0), _tinted("painted_metal", Color(0.35, 0.52, 0.90), 1.0), yaw)
     var screen := _mat(Color(0.3, 0.6, 1.0), 0.2)
     screen.emission_enabled = true
@@ -1677,7 +1747,10 @@ func _gas_station(c: Vector3, along_x: bool) -> void:
     var axis := Vector3(1, 0, 0) if along_x else Vector3(0, 0, 1)
     var perp := Vector3(-axis.z, 0, axis.x)
     var y := c.y
-    _flat(c, Vector2(30, 24) if along_x else Vector2(24, 30), _m["yard_asphalt"], y + 0.012)
+    var ground: Material = _m["yard_asphalt"]
+    if _has_tex("sheet3/gas_floor"):   # бетон с пятнами масла, 6 м на повтор
+        ground = _fit_plane("sheet3/gas_floor", Vector2(5.0, 4.0) if along_x else Vector2(4.0, 5.0), Color(0.5, 0.5, 0.5))
+    _flat(c, Vector2(30, 24) if along_x else Vector2(24, 30), ground, y + 0.012)
     if _props_ok.has("gas_station"):
         _gas_station_model(c, along_x)
         _occupy(c, 30.0, 30.0)
@@ -1722,6 +1795,22 @@ func _gas_station_model(c: Vector3, along_x: bool) -> void:
     _collider(Vector3(3.45, 3.5, 5.0), kiosk + Vector3(0, 1.75, 0), yaw)
     gas_shops.append(g + b * Vector3(-2.9, 0, -9.8))
     building_rects.append(Rect2(kiosk.x - 2.6, kiosk.z - 2.6, 5.2, 5.2))
+    if _has_tex("sheet3/azs_front"):
+        # будка по картинкам: витрина с дверью и «АЗС» спереди, окно и дверь сбоку, профлист со служебным входом сзади
+        var fx := b * Vector3(-1, 0, 0)
+        var fz := b * Vector3(0, 0, 1)
+        _tex_quad("sheet3/azs_front", Vector2(4.99, 3.48), g + b * Vector3(-1.93, 1.77, -9.765), fx)
+        _tex_quad("sheet3/azs_side", Vector2(3.46, 3.48), g + b * Vector3(-0.17, 1.77, -12.29), -fz)
+        _tex_quad("sheet3/azs_side", Vector2(3.46, 3.48), g + b * Vector3(-0.17, 1.77, -7.24), fz)
+        var back := _fit_plane("sheet3/corrugated_blue", Vector2(2.0, 1.0), Color(0.3, 0.45, 0.6))
+        var bq := _tex_quad("sheet3/azs_side", Vector2(4.99, 3.48), g + b * Vector3(1.59, 1.77, -9.765), -fx)
+        if bq:
+            bq.material_override = back
+        _tex_quad("sheet3/door_service", Vector2(1.0, 2.0), g + b * Vector3(1.60, 1.0, -9.765), -fx, true)
+        # табло цен и пожарный стенд у будки
+        _tex_quad("sheet3/price_board", Vector2(1.2, 1.5), g + b * Vector3(-2.7, 0.75, -13.2), fx, true)
+        _collider(Vector3(0.3, 1.5, 1.2), g + b * Vector3(-2.7, 0.75, -13.2), yaw)
+        _f_fire_stand(g + b * Vector3(-2.3, 0, -6.5), fx)
 
 
 ## За городом: две АЗС на трассах, лес с лесопилкой, точки для дальнобоя.
@@ -2031,6 +2120,8 @@ func _tpl_faction(fid: String, to_center: Vector2) -> void:
                 _deco(Vector3(2.2, 1.35, 0.04), fp + Vector3(0, 8.15, 0) + _fb * Vector3(1.15 * signf(fx), 0, 0), flag, yaw)
         "police":
             _deco(Vector3(BW + 0.1, 0.45, 0.05), _fp(0, -3.96) + Vector3(0, 3.3, 0), _mat(Color(0.12, 0.25, 0.65), 0.6), yaw)
+            for mx: float in [-9.0, 9.0]:   # по бокам от козырька над входом
+                _tex_quad("sheet3/sign_militia", Vector2(2.6, 0.61), _fp(mx, -3.925) + Vector3(0, 3.3, 0), front)
         "hospital":
             if ResourceLoader.exists("res://textures/obj_red_cross.png"):
                 var cross := _fit_mat("obj_red_cross", Vector3(3.4, 3.4, 0.12), Color.WHITE)
@@ -2553,30 +2644,53 @@ func _interior_extras(fk: String, o: Vector3, W: float, D: float, H: float) -> v
         "fire":
             # пожарный щит: топор, багор, ведро-конус, лом; огнетушители; ящик с песком; колокол тревоги
             var sp := o + Vector3(-W * 0.5 + 0.24, 1.6, -2.5)
-            _deco(Vector3(0.04, 1.5, 2.2), sp, red)
-            _label("ПОЖАРНЫЙ ЩИТ", sp + Vector3(0.04, 0.6, 0), Vector3(1, 0, 0), 28, Color(1, 1, 1))
-            _deco(Vector3(0.06, 0.06, 1.8), sp + Vector3(0.06, 0.25, 0), _m["wood"])                 # багор
-            _deco(Vector3(0.06, 0.5, 0.06), sp + Vector3(0.06, -0.2, -0.6), _m["wood"])              # топор
-            _deco(Vector3(0.06, 0.12, 0.25), sp + Vector3(0.06, 0.02, -0.6), _m["metal"])
-            var cone := MeshInstance3D.new()
-            cone.mesh = _cyl_mesh(0.0, 0.15, 0.35, 12)
-            cone.material_override = red
-            cone.position = sp + Vector3(0.18, -0.25, 0.5)
-            cone.rotation.x = PI
-            add_child(cone)
+            if _has_tex("sheet3/fire_board"):
+                _tex_quad("sheet3/fire_board", Vector2(1.7, 1.7), sp + Vector3(0.0, 0, 0), Vector3(1, 0, 0))
+            else:
+                _f_fire_board_old(sp, red)
             for ex in 3:
                 var ext := o + Vector3(-1.4 + ex * 0.45, 0, D * 0.5 - 0.5)
                 _mdeco(_cyl_mesh(0.09, 0.09, 0.55, 12), ext + Vector3(0, 0.3, 0), red)
                 _mdeco(_cyl_mesh(0.03, 0.05, 0.1, 8), ext + Vector3(0, 0.62, 0), _fm("black"))
-            var sb := o + Vector3(-W * 0.5 + 0.8, 0, 1.2)
-            _solid(Vector3(0.9, 0.7, 0.6), sb + Vector3(0, 0.35, 0), red)
-            _label("ПЕСОК", sb + Vector3(0.46, 0.4, 0), Vector3(1, 0, 0), 30, Color(1, 1, 1))
-            var bell := MeshInstance3D.new()
-            bell.mesh = _cyl_mesh(0.06, 0.22, 0.28, 16)
-            bell.material_override = _mat(Color(0.85, 0.65, 0.2), 0.3)
-            bell.position = o + Vector3(3.5, 3.0, D * 0.5 - 0.35)
-            add_child(bell)
-            _stand(o + Vector3(7.0, 2.2, D * 0.5 - 0.24), Vector3(0, 0, -1), 2.6, 1.3, "БОЕВОЙ РАСЧЁТ", 6, Color(0.15, 0.15, 0.17))
+            _f_fire_rest(o, W, D, red)
+
+
+## Старый пожарный щит из ящиков (если нет картинки).
+func _f_fire_board_old(sp: Vector3, red: Material) -> void:
+    _deco(Vector3(0.04, 1.5, 2.2), sp, red)
+    _label("ПОЖАРНЫЙ ЩИТ", sp + Vector3(0.04, 0.6, 0), Vector3(1, 0, 0), 28, Color(1, 1, 1))
+    _deco(Vector3(0.06, 0.06, 1.8), sp + Vector3(0.06, 0.25, 0), _m["wood"])                 # багор
+    _deco(Vector3(0.06, 0.5, 0.06), sp + Vector3(0.06, -0.2, -0.6), _m["wood"])              # топор
+    _deco(Vector3(0.06, 0.12, 0.25), sp + Vector3(0.06, 0.02, -0.6), _m["metal"])
+    var cone := MeshInstance3D.new()
+    cone.mesh = _cyl_mesh(0.0, 0.15, 0.35, 12)
+    cone.material_override = red
+    cone.position = sp + Vector3(0.18, -0.25, 0.5)
+    cone.rotation.x = PI
+    add_child(cone)
+
+
+## Ящик с песком, колокол и стенд «Боевой расчёт» в пожарной части.
+func _f_fire_rest(o: Vector3, W: float, D: float, red: Material) -> void:
+    var sb := o + Vector3(-W * 0.5 + 0.8, 0, 1.2)
+    if _has_tex("sheet3/fire_stand"):   # стенд: огнетушитель и ящик «ПЕСОК»
+        _f_fire_stand(sb, Vector3(1, 0, 0))
+    else:
+        _solid(Vector3(0.9, 0.7, 0.6), sb + Vector3(0, 0.35, 0), red)
+        _label("ПЕСОК", sb + Vector3(0.46, 0.4, 0), Vector3(1, 0, 0), 30, Color(1, 1, 1))
+    var bell := MeshInstance3D.new()
+    bell.mesh = _cyl_mesh(0.06, 0.22, 0.28, 16)
+    bell.material_override = _mat(Color(0.85, 0.65, 0.2), 0.3)
+    bell.position = o + Vector3(3.5, 3.0, D * 0.5 - 0.35)
+    add_child(bell)
+    _stand(o + Vector3(7.0, 2.2, D * 0.5 - 0.24), Vector3(0, 0, -1), 2.6, 1.3, "БОЕВОЙ РАСЧЁТ", 6, Color(0.15, 0.15, 0.17))
+
+
+## Пожарный стенд (огнетушитель и ящик с песком) лицом в сторону facing.
+func _f_fire_stand(p: Vector3, facing: Vector3) -> void:
+    var yaw := atan2(facing.x, facing.z)
+    _solid(Vector3(0.66, 1.2, 0.4), p + Vector3(0, 0.6, 0), _mat(Color(0.62, 0.1, 0.08), 0.6), yaw)
+    _tex_quad("sheet3/fire_stand", Vector2(0.72, 1.26), p + Basis(Vector3.UP, yaw) * Vector3(0, 0.63, 0.21), facing, true)
 
 
 ## «Качалка» в гараже ОПГ: штанга на стойках, скамья, гантели, груша, магнитофон и плакат.
@@ -2601,7 +2715,14 @@ func _gang_gym(o: Vector3, W: float, D: float, accent: Color) -> void:
     # груша на цепи
     var bp := o + Vector3(6.5, 0, 4.5)
     _deco(Vector3(0.02, 1.4, 0.02), bp + Vector3(0, 3.9, 0), _m["metal"])
-    _mdeco(_cyl_mesh(0.2, 0.2, 1.0, 14), bp + Vector3(0, 2.7, 0), _mat(Color(0.45, 0.12, 0.08), 0.6))
+    var bag := _mat(Color(0.45, 0.12, 0.08), 0.6)
+    var bag_tex := _tex_mip("res://textures/sheet3/leather_bag.png")
+    if bag_tex:   # потёртая кожа по кругу
+        bag.albedo_color = Color.WHITE
+        bag.albedo_texture = bag_tex
+        bag.uv1_scale = Vector3(2.0, 1.0, 1.0)
+        bag.roughness = 0.5
+    _mdeco(_cyl_mesh(0.2, 0.2, 1.0, 14), bp + Vector3(0, 2.7, 0), bag)
     _collider(Vector3(0.4, 1.0, 0.4), bp + Vector3(0, 2.7, 0))
     # магнитофон «Электроника» на ящике и плакаты
     var tp := o + Vector3(-W * 0.5 + 1.0, 0, 0.8)
@@ -3186,6 +3307,9 @@ func _fm(key: String) -> Material:
             m = _tinted("wood_planks", Color(1.0, 0.90, 0.75), 1.0)
         "lacquer":   # полированная «стенка»
             m = _mat(Color(0.32, 0.17, 0.09), 0.25)
+            if _has_tex("sheet3/wood_lacquer"):
+                m = _tinted("sheet3/wood_lacquer", Color.WHITE, 1.0).duplicate() as StandardMaterial3D
+                m.roughness = 0.25
             var t := _tex_mip("res://textures/mat_lacquer.png")
             if t == null:
                 t = _tex_mip("res://textures/wood_planks.png")
@@ -3497,14 +3621,23 @@ func _f_clock(p: Vector3, yaw: float) -> void:
 
 func _f_picture(p: Vector3, yaw: float, w := 1.0, h := 0.6) -> void:
     _deco(Vector3(w + 0.08, h + 0.08, 0.03), p, _fm("wood_dark"), yaw)
-    var m := _fmat.get("picture_m") as StandardMaterial3D
+    var key := "picture_m|%.2f" % (w / h)
+    var m := _fmat.get(key) as StandardMaterial3D
     if m == null:
         m = _mat(Color(0.5, 0.6, 0.7), 0.6)
-        var t := _tex_mip("res://textures/window_view.png")
-        if t:
-            m.albedo_color = Color(1.0, 0.95, 0.85)
+        var t := _tex_mip("res://textures/sheet3/painting_birch.png")
+        if t:   # квадратная картина: середина под пропорции рамы
+            m.albedo_color = Color.WHITE
             m.albedo_texture = t
-        _fmat["picture_m"] = m
+            var k := h / w
+            m.uv1_scale = Vector3(1.0, k, 1.0) if k < 1.0 else Vector3(1.0 / k, 1.0, 1.0)
+            m.uv1_offset = Vector3(0.0, (1.0 - k) * 0.5, 0.0) if k < 1.0 else Vector3((1.0 - 1.0 / k) * 0.5, 0.0, 0.0)
+        else:
+            t = _tex_mip("res://textures/window_view.png")
+            if t:
+                m.albedo_color = Color(1.0, 0.95, 0.85)
+                m.albedo_texture = t
+        _fmat[key] = m
     var mi := MeshInstance3D.new()
     var qm := QuadMesh.new()
     qm.size = Vector2(w, h)
@@ -4406,6 +4539,8 @@ func _build_station(c: Vector3, id: String, title: String, rail_x0: float, rail_
     var white: Material = _m["white"]
     var cream := _mat(Color(0.93, 0.88, 0.74), 0.8)
     var roof := _mat(Color(0.32, 0.42, 0.38), 0.6)     # зелёная медь
+    if _has_tex("sheet3/roof_copper"):
+        roof = _tinted("sheet3/roof_copper", Color.WHITE, 2.0)
     var gold := _mat(Color(0.95, 0.75, 0.25), 0.35)
     gold.metallic = 0.7
     # площадь
@@ -4434,6 +4569,8 @@ func _build_station(c: Vector3, id: String, title: String, rail_x0: float, rail_
     # двери и окна первого этажа за колоннами
     for k in 3:
         _deco(Vector3(2.4, 4.2, 0.12), Vector3(c.x - 6.0 + k * 6.0, 2.3, fz + 0.06), _m["vitrine"])
+        # деревянные двери с латунными ручками, над ними остаётся стекло фрамуги
+        _tex_quad("sheet3/door_station", Vector2(2.4, 2.9), Vector3(c.x - 6.0 + k * 6.0, 1.65, fz + 0.125), front)
     _label("ВОКЗАЛ", Vector3(c.x, 10.8, fz + 4.95), front, 360, Color(0.95, 0.78, 0.25))
     # часовая башня со шпилем и звездой
     _solid(Vector3(8, 9, 8), Vector3(c.x, 20.5, c.z + 2.0), wall)
@@ -4462,7 +4599,12 @@ func _build_station(c: Vector3, id: String, title: String, rail_x0: float, rail_
         _deco(Vector3(22.4, 0.9, 14.4), wc + Vector3(0, 0.45, 0), _m["granite"])
         for k in 4:   # пилястры
             _deco(Vector3(0.8, 9.6, 0.3), wc + Vector3(-8.25 + k * 5.5, 4.8, 7.12), white)
-        _deco(Vector3(2.2, 3.2, 0.12), wc + Vector3(0, 1.7, 7.06), _m["vitrine"])
+        if _has_tex("sheet3/vokzal_window"):   # арочные окна в два ряда между пилястрами
+            for wx: float in [-5.5, 0.0, 5.5]:
+                for wy: float in [1.9, 6.4]:
+                    _tex_quad("sheet3/vokzal_window", Vector2(2.0, 3.1), wc + Vector3(wx, wy, 7.08), front)
+        else:
+            _deco(Vector3(2.2, 3.2, 0.12), wc + Vector3(0, 1.7, 7.06), _m["vitrine"])
     _label(sx_text(-1.0), Vector3(c.x - 27.0, 8.6, c.z + 8.12), front, 110, Color(0.25, 0.22, 0.2))
     _label(sx_text(1.0), Vector3(c.x + 27.0, 8.6, c.z + 8.12), front, 110, Color(0.25, 0.22, 0.2))
     building_rects.append(Rect2(c.x - 38.0, c.z - 8.0, 76.0, 16.0))
@@ -4494,12 +4636,17 @@ func _build_station(c: Vector3, id: String, title: String, rail_x0: float, rail_
     rail.metallic = 0.8
     var sleeper := _mat(Color(0.28, 0.22, 0.17), 0.9)
     _batch("sleeper", _box_mesh(Vector3(0.25, 0.1, 2.6)), sleeper, 160.0)
+    var track: StandardMaterial3D = null
+    if _has_tex("sheet3/rail_track"):   # шпалы и щебень картинкой: 2.74 м на повтор, рельсы картинки под настоящими
+        track = _fit_plane("sheet3/rail_track", Vector2((rail_x1 - rail_x0) / 2.74, 1.0), Color(0.3, 0.28, 0.25))
     for tz: float in [pz - 6.0, pz - 11.0]:
         _flat(Vector3((rail_x0 + rail_x1) * 0.5, 0, tz), Vector2(rail_x1 - rail_x0, 3.4), _m["gravel"], 0.02)
+        if track:
+            _flat(Vector3((rail_x0 + rail_x1) * 0.5, 0, tz), Vector2(rail_x1 - rail_x0, 2.74), track, 0.026)
         for rx: float in [-0.76, 0.76]:
             _deco(Vector3(rail_x1 - rail_x0, 0.15, 0.1), Vector3((rail_x0 + rail_x1) * 0.5, 0.2, tz + rx), rail)
         var sx0 := rail_x0
-        while sx0 < rail_x1:
+        while sx0 < rail_x1 and track == null:
             _put("sleeper", Vector3(sx0, 0.07, tz))
             sx0 += 1.6
     # электричка ходит по расписанию (scripts/train.gd, создаёт main.gd)
@@ -4642,6 +4789,8 @@ func _station_life(c: Vector3) -> void:
     galya_pos = bp + Vector3(0, 0.27, -0.25)
     kassa_point = bp + Vector3(0, 0, 2.6)
     building_rects.append(Rect2(bp.x - 1.5, bp.z - 1.3, 3.0, 2.6))
+    if _has_tex("sheet3/kiosk_spravki"):   # справочное бюро рядом с кассой
+        _tex_kiosk(bp + Vector3(5.0, 0, 0.3), Vector3(0, 0, 1), "sheet3/kiosk_spravki", Vector3(2.2, 2.5, 1.6), Color(0.42, 0.5, 0.58))
     # буфет: пирожки, беляши, чай
     _kiosk(Vector3(c.x + 28.0, 0, c.z + 15), Vector3(0, 0, 1), "БУФЕТ", Color(0.75, 0.35, 0.15))
     # такси: две жёлтые «Волги» и таксист
@@ -4711,6 +4860,8 @@ func _scooter_rent(rp: Vector3) -> void:
     _deco(Vector3(0.9, 0.6, 0.04), bp + Vector3(0, 1.75, -0.2), white)
     _label("20 минут — 150 ₽\nНовичкам —\nбесплатно!", bp + Vector3(0, 1.75, -0.17), Vector3(0, 0, 1), 34, Color(0.1, 0.1, 0.12))
     building_rects.append(Rect2(bp.x - 0.45, bp.z - 0.3, 0.9, 0.6))
+    if _has_tex("sheet3/kiosk_prokat"):   # будка проката с другой стороны навеса
+        _tex_kiosk(rp + Vector3(-5.2, 0, 0.4), Vector3(0, 0, 1), "sheet3/kiosk_prokat", Vector3(1.7, 2.2, 1.4), Color(0.92, 0.9, 0.86))
     gena_pos = bp + Vector3(0, 0, -0.9)
     scooter_point = bp + Vector3(0, 0, 1.4)
     scooter_slots.clear()
@@ -4774,6 +4925,7 @@ func _dk(c: Vector3) -> void:
     tri.position = base + Vector3(0, 9.0, 5.0)
     add_child(tri)
     _deco(Vector3(2.6, 3.2, 0.1), base + Vector3(0, 1.85, 3.03), _mat(Color(0.32, 0.2, 0.12), 0.6))   # дверь
+    _tex_quad("sheet3/door_dk", Vector2(2.6, 3.2), base + Vector3(0, 1.85, 3.09), Vector3(0, 0, 1))
     for x: float in [-8.0, -4.5, 4.5, 8.0]:
         _deco(Vector3(2.0, 2.4, 0.06), base + Vector3(x, 5.6, 3.02), _m["glass"])
         _deco(Vector3(2.0, 2.0, 0.06), base + Vector3(x, 2.0, 3.02), _m["glass"])
@@ -4782,6 +4934,10 @@ func _dk(c: Vector3) -> void:
     for sx: float in [-1.0, 1.0]:
         var ap := base + Vector3(sx * 10.0, 0, 6.2)
         _solid(Vector3(1.6, 2.4, 0.2), ap + Vector3(0, 1.2, 0), _mat(Color(0.25, 0.2, 0.18), 0.7))
+        var poster := "sheet3/poster_cinema" if sx < 0 else "sheet3/poster_concert"
+        if _has_tex(poster):
+            _tex_quad(poster, Vector2(1.4, 1.8), ap + Vector3(0, 1.3, 0.11), Vector3(0, 0, 1))
+            continue
         _deco(Vector3(1.4, 1.8, 0.04), ap + Vector3(0, 1.4, 0.12), _mat(Color(0.95, 0.9, 0.75), 0.8))
         _label("КИНО" if sx < 0 else "ДИСКОТЕКА", ap + Vector3(0, 2.0, 0.15), Vector3(0, 0, 1), 48, Color(0.75, 0.1, 0.08))
         _label("сеансы\nкаждый час" if sx < 0 else "по вечерам\nс 19:00", ap + Vector3(0, 1.3, 0.15), Vector3(0, 0, 1), 34, Color(0.15, 0.15, 0.2))
@@ -4810,6 +4966,11 @@ func _build_dk_interiors() -> void:
     var scr_mat := _glow(Color(0.85, 0.85, 0.9), 0.6)
     var scr := _deco(Vector3(14, 6, 0.06), o + Vector3(0, 3.8, -d * 0.5 + 0.3), scr_mat)
     _deco(Vector3(15, 0.4, 0.3), o + Vector3(0, 0.6, -d * 0.5 + 0.4), _mat(Color(0.3, 0.05, 0.05), 0.8))   # сцена
+    if _has_tex("sheet3/curtain"):   # бархатный занавес по бокам экрана и сверху, деревянная сцена
+        for sx: float in [-1.0, 1.0]:
+            _tex_quad("sheet3/curtain", Vector2(3.0, 6.6), o + Vector3(sx * 8.5, 3.3, -d * 0.5 + 0.42), Vector3(0, 0, 1))
+        _tex_quad("sheet3/curtain", Vector2(w - 0.5, 1.0), o + Vector3(0, h - 0.5, -d * 0.5 + 0.45), Vector3(0, 0, 1))
+        _deco(Vector3(15, 0.05, 1.6), o + Vector3(0, 0.82, -d * 0.5 + 1.1), _tinted("sheet3/stage_floor", Color.WHITE, 2.0))
     var lab := Label3D.new()
     lab.text = ""
     lab.font_size = 96
@@ -4836,6 +4997,7 @@ func _build_dk_interiors() -> void:
     scr_light.light_energy = 0.5
     add_child(scr_light)
     _deco(Vector3(2.4, 2.8, 0.08), o + Vector3(0, 1.4, d * 0.5 - 0.22), _mat(Color(0.32, 0.2, 0.12), 0.6))
+    _tex_quad("sheet3/door_station", Vector2(2.4, 2.8), o + Vector3(0, 1.4, d * 0.5 - 0.27), Vector3(0, 0, -1))
     _label("ВЫХОД", o + Vector3(0, 3.2, d * 0.5 - 0.25), Vector3(0, 0, -1), 64, Color(0.3, 0.9, 0.4))
     dk["cinema_spawn"] = o + Vector3(0, 0.3, d * 0.5 - 2.2)
     dk["cinema_exit"] = o + Vector3(0, 0, d * 0.5 - 1.2)
@@ -4909,6 +5071,7 @@ func _build_dk_interiors() -> void:
     _solid(Vector3(1.0, 1.1, 5.0), o + Vector3(w * 0.5 - 1.6, 0.55, 3.0), _mat(Color(0.35, 0.22, 0.12), 0.6))
     _label("БАР", o + Vector3(w * 0.5 - 0.25, 3.0, 3.0), Vector3(-1, 0, 0), 90, Color(1.0, 0.8, 0.2))
     _deco(Vector3(2.4, 2.8, 0.08), o + Vector3(0, 1.4, d * 0.5 - 0.22), _mat(Color(0.32, 0.2, 0.12), 0.6))
+    _tex_quad("sheet3/door_station", Vector2(2.4, 2.8), o + Vector3(0, 1.4, d * 0.5 - 0.27), Vector3(0, 0, -1))
     _label("ВЫХОД", o + Vector3(0, 3.2, d * 0.5 - 0.25), Vector3(0, 0, -1), 64, Color(0.3, 0.9, 0.4))
     dk["disco_spawn"] = o + Vector3(0, 0.3, d * 0.5 - 2.2)
     dk["disco_exit"] = o + Vector3(0, 0, d * 0.5 - 1.2)
@@ -4928,11 +5091,15 @@ func _metro_pavilion(c: Vector3, facing: Vector3, st_name: String) -> void:
     var yaw := atan2(facing.x, facing.z)
     var b := Basis(Vector3.UP, yaw)
     var stone := _tinted("plaster", Color(0.85, 0.82, 0.78), 2.0)
+    if _has_tex("granite"):
+        stone = _tinted("granite", Color(0.85, 0.85, 0.85), 1.5)
     _solid(Vector3(0.3, 2.8, 3.0), base + b * Vector3(-1.85, 1.4, 0), stone, yaw)
     _solid(Vector3(0.3, 2.8, 3.0), base + b * Vector3(1.85, 1.4, 0), stone, yaw)
     _solid(Vector3(4.0, 2.8, 0.3), base + b * Vector3(0, 1.4, -1.35), stone, yaw)
     _deco(Vector3(4.4, 0.3, 3.4), base + b * Vector3(0, 2.95, 0), _mat(Color(0.75, 0.1, 0.1), 0.5), yaw)
     _deco(Vector3(3.4, 0.05, 2.6), base + b * Vector3(0, 0.03, -0.1), _mat(Color(0.05, 0.05, 0.06), 0.9), yaw)   # спуск
+    # гранитная стена с красной «М» напротив входа
+    _tex_quad("sheet3/metro_wall", Vector2(3.7, 2.8), base + b * Vector3(0, 1.4, -1.19), facing)
     var m := _glow(Color(0.95, 0.1, 0.1), 1.5)
     _deco(Vector3(0.9, 0.9, 0.1), base + b * Vector3(1.3, 3.65, 1.0), m, yaw)
     _label("М", base + b * Vector3(1.3, 3.65, 1.07), facing, 150, Color.WHITE)
@@ -4997,6 +5164,19 @@ func _build_festive() -> void:
             cone.material_override = green
             cone.position = t0 + Vector3(0, 1.8 + lvl * 1.6, 0)
             tree_root.add_child(cone)
+        if _has_tex("sheet3/banner_newyear"):   # растяжка «С НОВЫМ ГОДОМ!» на двух столбах сбоку от ёлки
+            var to_c := (org - t0)
+            to_c.y = 0.0
+            to_c = to_c.normalized()
+            var side := Vector3(-to_c.z, 0, to_c.x)
+            var bpos := t0 + side * 7.0 + to_c * 1.0
+            for s2: float in [-1.0, 1.0]:
+                var bpm := MeshInstance3D.new()
+                bpm.mesh = _cyl_mesh(0.06, 0.07, 4.6, 6)
+                bpm.material_override = pole
+                bpm.position = bpos + side * (1.85 * s2) + Vector3(0, 2.3, 0)
+                tree_root.add_child(bpm)
+            _tex_quad("sheet3/banner_newyear", Vector2(3.5, 2.8), bpos + Vector3(0, 3.0, 0), to_c, true, false, tree_root)
         var star := MeshInstance3D.new()
         var ss := SphereMesh.new()
         ss.radius = 0.45

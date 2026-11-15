@@ -6296,7 +6296,7 @@ func _dk_disco() -> void:
     _dk_room = "disco"
     _dance_acc = 0.0
     _warp(_city.dk["disco_spawn"], Vector3(0, 0, -1))
-    Music.play_place("radio_disco")
+    Music.play_place("club")
     _hud.show_toast("Дискотека «80»! Встань в центр зала и жми «ТАНЦЕВАТЬ»")
 
 
