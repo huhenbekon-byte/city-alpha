@@ -715,7 +715,7 @@ func _show_crash_report() -> void:
     if Net.authed:
         Net.send_msg({"t": "crash", "dev": OS.get_model_name(), "log": rep.right(6000)})
     var lines := rep.split("\n")
-    var short := "\n".join(lines.slice(maxi(0, lines.size() - 18)))
+    var short := "\n".join(lines.slice(maxi(0, lines.size() - 12)))
     _open_dialog("Игра закрылась в прошлый раз", ("Журнал отправлен разработчику. " if Net.authed else "") +
             "Сделай скриншот и пришли его — так найдём причину:\n\n" + short, [["Понятно", _dialog.close]])
 
@@ -1156,10 +1156,40 @@ func _toggle_vehicle() -> void:
         _seat_driver()
 
 
+var _bench_sitters: Array[Vector3] = []   # где на лавках уже сидят люди (НПС)
+
+
 func _sit_bench(i: int) -> void:
     var bn: Array = _city.benches[i]
-    if _player.seated == "" and _player.sit_at(bn[0], bn[1]):
+    var center: Vector3 = bn[0]
+    var f: Vector3 = bn[1]
+    # место занято — садимся рядом (слева или справа), а не на колени
+    var side := Vector3(-f.z, 0, f.x).normalized()
+    var best := center
+    var best_d := _sitter_gap(center)
+    if best_d < 0.55:
+        for cand: Vector3 in [center + side * 0.68, center - side * 0.68]:
+            var d := _sitter_gap(cand)
+            if d > best_d:
+                best_d = d
+                best = cand
+        if best_d < 0.5:
+            _hud.show_toast("Лавочка занята")
+            return
+    if _player.seated == "" and _player.sit_at(best, f):
         _hud.show_toast("Сидишь на лавочке. Пошевели джойстиком, чтобы встать")
+
+
+func _sitter_gap(p: Vector3) -> float:
+    var d := 99.0
+    for s: Vector3 in _bench_sitters:
+        d = minf(d, Vector2(s.x - p.x, s.z - p.z).length())
+    for id: int in _remote:   # другие игроки, сидящие на этой лавке
+        var r: Dictionary = _remote[id]
+        if String(r.get("anim", "")).to_lower().contains("sit") and r["npc"] != null:
+            var q: Vector3 = (r["npc"] as Node3D).global_position
+            d = minf(d, Vector2(q.x - p.x, q.z - p.z).length())
+    return d
 
 
 ## Водитель виден в машине: модель игрока садится за руль с анимацией вождения.
@@ -4817,6 +4847,8 @@ func _spawn_station_life() -> void:
         n.beard = k % 4 == 2
         n.alt_hair = k % 5 == 3
         var sit := String(p[2]) == "sit"
+        if sit:
+            _bench_sitters.append(p[0])
         n.anim = "sitting_idle" if sit else ("idle_talking" if k % 3 == 2 else "idle")
         n.suitcase = not sit
         n.collide = not sit
@@ -6687,8 +6719,14 @@ func _use_account(nick: String, save_text: String) -> void:
         DirAccess.remove_absolute(ProjectSettings.globalize_path(_save_path))   # новый аккаунт — с нуля
 
 
+var _diag_frames := 0
+var _diag_t := 0.0
+var _diag_start := 0.0
+
+
 func _net_start() -> void:
     Crash.mark("онлайн: старт")
+    _diag_start = Time.get_ticks_msec() / 1000.0
     Net.server_msg.connect(_on_server_msg)
     _apply_profile(Net.profile)
     _net_point = {"pos": Vector3(0, -1000, 0), "r": 2.2, "text": "ИГРОК", "cb": _open_player_menu, "car": false}
@@ -6842,6 +6880,7 @@ func _on_net_states(list: Array) -> void:
             r["tt"] = now
             r["txf"] = nxf
         if not r["seen"]:   # первый раз — сразу на место, без «прилёта» через весь город
+            Crash.mark("игрок %s: место, анимация %s, машина %s" % [r["name"], r["anim"], str(car)])
             r["seen"] = true
             (r["npc"] as Node3D).global_position = st[0]
             if r["car"] != null:
@@ -6858,6 +6897,9 @@ func _remote_set_car(r: Dictionary, car: Array, key: String) -> void:
         n.visible = true
         return
     r["car"] = _make_remote_car(car, String(r["name"]))
+    var seat: Array = r["car"].driver_seat()
+    if seat.size() == 2:   # другой игрок за рулём — виден водитель
+        preload("res://scripts/driver_mesh.gd").seat_in(r["car"], seat[0], float(seat[1]), "passerby")
     n.visible = false
 
 
@@ -7047,6 +7089,8 @@ func _update_online(delta: float) -> void:
             n.global_position = c.global_position
             continue
         if not n.visible:
+            Crash.mark("игрок %s: показан" % r["name"])
+            _diag_frames = 4
             n.visible = true
         var tp: Vector3 = r["tpos"]
         if n.global_position.distance_to(tp) > 30.0:
@@ -7055,7 +7099,20 @@ func _update_online(delta: float) -> void:
             n.global_position = n.global_position.lerp(tp, k)
         n.rotation.y = lerp_angle(n.rotation.y, float(r["tyaw"]), k)
         if r.has("anim"):
+            if String(r["anim"]) != String(r.get("anim_logged", "")):
+                r["anim_logged"] = String(r["anim"])
+                Crash.mark("игрок %s: анимация %s" % [r["name"], r["anim"]])
             n.play_anim(String(r["anim"]), float(r["aspeed"]))
+    if _diag_frames > 0:   # первые кадры после появления игрока — где именно падает
+        _diag_frames -= 1
+        Crash.mark("кадр после показа игрока, осталось %d" % _diag_frames)
+    _diag_t += delta
+    if _diag_t > 2.0 and Time.get_ticks_msec() / 1000.0 - _diag_start < 40.0:
+        _diag_t = 0.0
+        Crash.mark("память %d МБ, видео %d МБ, FPS %d, игроков %d" % [
+                int(Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0),
+                int(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0),
+                Engine.get_frames_per_second(), _remote.size()])
 
 
 

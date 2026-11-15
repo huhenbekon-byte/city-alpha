@@ -36,6 +36,8 @@ var _far_t := 0.0
 
 
 func _ready() -> void:
+    if not remote:
+        add_to_group("npc_block")   # прохожие обходят стоящих людей
     if collide:
         var body := StaticBody3D.new()
         var cs := CollisionShape3D.new()

@@ -7,6 +7,7 @@ signal honk(pos: Vector3)
 
 const CityBuilder := preload("res://scripts/city_builder.gd")
 const CarModel := preload("res://scripts/car_model.gd")
+const DriverMesh := preload("res://scripts/driver_mesh.gd")
 
 const COUNT := 22
 const LANE := 3.5          # смещение полосы от оси дороги
@@ -34,8 +35,9 @@ func setup() -> void:
     var meshes := {}
     for i in COUNT:
         var ci := _rng.randi() % COLORS.size()
+        var model_id: String = ["vaz2106", "moskvich", "vaz2108", "volga", "vaz2101", "uaz469", "vaz2106", "uaz452n"][ci % 8]
         if not meshes.has(ci):
-            meshes[ci] = CarModel.parked_mesh(COLORS[ci], ["vaz2106", "moskvich", "vaz2108", "volga", "vaz2101", "uaz469", "vaz2106", "uaz452n"][ci % 8])
+            meshes[ci] = CarModel.parked_mesh(COLORS[ci], model_id)
         var body := AnimatableBody3D.new()
         body.sync_to_physics = true
         CarModel.add_collision(body)
@@ -43,6 +45,9 @@ func setup() -> void:
         mi.mesh = meshes[ci]
         body.add_child(mi)
         add_child(body)
+        # за рулём — водитель (запечённая модель, видна только вблизи)
+        var seat := DriverMesh.seat_for_mesh(meshes[ci], model_id)
+        DriverMesh.seat_in(body, seat[0], seat[1], DriverMesh.OUTFITS[i % DriverMesh.OUTFITS.size()])
 
         var a := {"body": body, "dir": Vector3.ZERO, "inter": Vector3.ZERO, "speed": CRUISE,
                 "t": 0.0, "seg": {}, "blocked": 0.0, "ghost": 0.0,

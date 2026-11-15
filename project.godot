@@ -11,6 +11,7 @@ run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3", "Mobile")
 config/icon="res://icon.png"
 config/quit_on_go_back=false
+run/flush_stdout_on_print=true
 
 [autoload]
 

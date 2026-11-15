@@ -75,6 +75,11 @@ static func place_hat(h: Node3D, female := false) -> void:
         h.scale = Vector3(0.8, 0.82, 0.84)
     else:
         h.position = Vector3(0, 0.16, 0.008)
+    if h.has_meta("snug") and (human_f() if female else human()):
+        # вязаная шапка облегает голову: уже и ниже, отворот на лбу
+        h.position.y -= 0.03
+        h.position.z += 0.004
+        h.scale *= Vector3(0.72, 0.8, 0.74)
 
 
 static func set_hair(mat: ShaderMaterial, hair: Color, on := true) -> void:

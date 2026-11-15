@@ -30,6 +30,7 @@ static func build(kind: String, col := Color(0, 0, 0, 0)) -> Node3D:
             _fedora(root, col if col.a > 0.0 else Color(0.22, 0.22, 0.24))
         "petushok":
             _petushok(root, col if col.a > 0.0 else Color(0.15, 0.3, 0.75))
+            root.set_meta("snug", true)   # вязаная — плотно по голове (place_hat в outfits.gd)
         "kepka":
             _kepka(root, col if col.a > 0.0 else Color(0.30, 0.28, 0.26))
         "ondatra":
@@ -76,17 +77,49 @@ static func _fedora(root: Node3D, c: Color) -> void:
 
 
 static func _petushok(root: Node3D, c: Color) -> void:
+    # вязаная шапка 80-х: плотный купол, отворот с полосками, сверху «гребешок» и помпон
     var stripe := Color(0.95, 0.95, 0.93) if c.v < 0.7 else Color(0.1, 0.1, 0.12)
-    _part(root, _cyl(0.122, 0.121, 0.055), c, Vector3(0, 0.0, -0.004), Vector3(1.0, 1.0, 1.08))             # отворот
-    _part(root, _cyl(0.124, 0.124, 0.014), stripe, Vector3(0, 0.012, -0.004), Vector3(1.0, 1.0, 1.08))       # полоска
-    var cone := _cyl(0.03, 0.118, 0.17)
-    var top := _part(root, cone, c, Vector3(0, 0.11, -0.03), Vector3(1.0, 1.0, 1.05))
-    top.rotation.x = deg_to_rad(-14.0)                                                                       # «гребень» назад
-    _part(root, _cyl(0.07, 0.085, 0.02), stripe, Vector3(0, 0.1, -0.026), Vector3(1.0, 1.0, 1.05))
+    _knit_part(root, _cyl(0.121, 0.118, 0.062), c, Vector3(0, 0.004, -0.004), Vector3(1.0, 1.0, 1.08), 40.0)  # отворот
+    for y: float in [-0.006, 0.016]:
+        _knit_part(root, _cyl(0.1225, 0.1225, 0.008), stripe, Vector3(0, y, -0.004), Vector3(1.0, 1.0, 1.08), 40.0)
+    var dome := SphereMesh.new()
+    dome.radius = 0.118
+    dome.height = 0.236
+    dome.is_hemisphere = true
+    dome.radial_segments = 24
+    dome.rings = 8
+    _knit_part(root, dome, c, Vector3(0, 0.03, -0.006), Vector3(1.0, 0.8, 1.08), 40.0)                    # купол
+    var crest := SphereMesh.new()
+    crest.radius = 0.1
+    crest.height = 0.2
+    crest.radial_segments = 20
+    crest.rings = 8
+    _knit_part(root, crest, c, Vector3(0, 0.095, -0.02), Vector3(0.3, 0.42, 0.95), 24.0)                   # гребешок
     var pom := SphereMesh.new()
-    pom.radius = 0.035
-    pom.height = 0.07
-    _part(root, pom, stripe, Vector3(0, 0.2, -0.055), Vector3.ONE)
+    pom.radius = 0.032
+    pom.height = 0.064
+    _knit_part(root, pom, stripe, Vector3(0, 0.15, -0.045), Vector3.ONE, 8.0)                                # помпон
+
+
+## Вязка: вертикальные «косички» (полосы светлее/темнее), общая картинка на все шапки.
+static var _knit_tex: ImageTexture = null
+
+
+static func _knit_part(parent: Node3D, mesh: Mesh, col: Color, pos: Vector3, scl: Vector3, ribs: float) -> MeshInstance3D:
+    if _knit_tex == null:
+        var img := Image.create(32, 8, false, Image.FORMAT_RGB8)
+        for x in 32:
+            var k := 0.82 + 0.18 * (0.5 + 0.5 * sin(x / 32.0 * TAU * 2.0))
+            for y in 8:
+                var n := k * (0.96 + 0.04 * ((x * 7 + y * 13) % 5) / 4.0)
+                img.set_pixel(x, y, Color(n, n, n))
+        _knit_tex = ImageTexture.create_from_image(img)
+    var mi := _part(parent, mesh, col, pos, scl)
+    var m := mi.material_override as StandardMaterial3D
+    m.albedo_texture = _knit_tex
+    m.uv1_scale = Vector3(ribs / 2.0, 1, 1)
+    m.roughness = 0.95
+    return mi
 
 
 static func _kepka(root: Node3D, c: Color) -> void:

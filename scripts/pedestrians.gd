@@ -67,7 +67,19 @@ func setup() -> void:
         _peds.append(p)
 
 
+var _blockers: Array[Vector3] = []   # стоящие люди (НПС) рядом — их обходят
+var _blk_t := 0.0
+
+
 func _process(delta: float) -> void:
+    _blk_t -= delta
+    if _blk_t <= 0.0:
+        _blk_t = 0.5
+        _blockers.clear()
+        for n: Node in get_tree().get_nodes_in_group("npc_block"):
+            var n3 := n as Node3D
+            if n3 and n3.is_visible_in_tree() and n3.global_position.distance_to(focus) < 80.0:
+                _blockers.append(n3.global_position)
     for p: Dictionary in _peds:
         var root: Node3D = p["root"]
         var pos: Vector3 = p["pos"]
@@ -132,6 +144,36 @@ func _process(delta: float) -> void:
                 pos += dir * step
             p["phase"] = float(p["phase"]) + step * 3.2
         p["pos"] = pos
+        # своя полоса справа и обход встречных прохожих и стоящих людей (не проходят друг сквозь друга)
+        var right := Vector3(-dir.z, 0, dir.x)
+        var side: float = p.get("side", 0.55)
+        if pos.distance_to(focus) < 70.0:
+            var tgt := 0.55
+            var vp: Vector3 = pos + right * side
+            for o: Dictionary in _peds:
+                if o == p or o["down"]:
+                    continue
+                var rel: Vector3 = (o.get("vpos", o["pos"]) as Vector3) - vp
+                rel.y = 0.0
+                if rel.length_squared() > 6.0:
+                    continue
+                var ahead := rel.dot(dir)
+                var lat := rel.dot(right)
+                if ahead > -0.3 and ahead < 2.0 and absf(lat) < 0.75:
+                    tgt -= (signf(lat) if absf(lat) > 0.05 else -1.0) * 0.9
+            for ob: Vector3 in _blockers:
+                var rel2 := ob - vp
+                rel2.y = 0.0
+                if rel2.length_squared() > 9.0:
+                    continue
+                var ahead2 := rel2.dot(dir)
+                var lat2 := rel2.dot(right)
+                if ahead2 > -0.4 and ahead2 < 2.6 and absf(lat2) < 0.95:
+                    tgt -= (signf(lat2) if absf(lat2) > 0.05 else -1.0) * 1.2
+            side = move_toward(side, clampf(tgt, -1.5, 1.6), 1.6 * delta)
+            p["side"] = side
+        p["vpos"] = pos + right * side
+        pos = p["vpos"]
 
         var far := pos.distance_to(focus)
         if far > 260.0:          # игрок ушёл далеко или уехал в другой город — прохожие «переселяются» к нему
@@ -422,7 +464,7 @@ func scare(from: Vector3, radius: float) -> void:
     for p: Dictionary in _peds:
         if p["down"]:
             continue
-        var pos: Vector3 = p["pos"]
+        var pos: Vector3 = p.get("vpos", p["pos"])
         if pos.distance_to(from) > radius:
             continue
         var was: float = p["fear"]
@@ -477,7 +519,7 @@ func hit(origin: Vector3, dir: Vector3, max_range: float, cone_deg: float) -> Ve
     for p: Dictionary in _peds:
         if p["down"]:
             continue
-        var pos: Vector3 = p["pos"]
+        var pos: Vector3 = p.get("vpos", p["pos"])
         var to := pos + Vector3(0, 1.1, 0) - origin
         var d := to.length()
         if d > best_d or d < 0.05:
@@ -490,5 +532,5 @@ func hit(origin: Vector3, dir: Vector3, max_range: float, cone_deg: float) -> Ve
     if best.is_empty():
         return Vector3.INF
     _knock_down(best, 8.0)
-    var hp: Vector3 = best["pos"]
+    var hp: Vector3 = best.get("vpos", best["pos"])
     return hp + Vector3(0, 1.1, 0)

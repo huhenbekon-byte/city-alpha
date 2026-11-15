@@ -12,3 +12,11 @@
                 https://sketchfab.com/3d-models/abandoned-soviet-garages-pack-game-ready-fcf453872c2d4cfbad12197d072fbfc4
   el_pole     — "Abandoned street lights pack" by sergeilihandristov: https://sketchfab.com/sergeilihandristov
 gas_station, militia — см. историю проекта.
+  retro_pc    — "[AI.MAKER] present USSR RETRO PC" by AI.MAKER: https://sketchfab.com/3d-models/aimaker-present-ussr-retro-pc-93644537f53b4761a03d3f9d110a3042
+                лицензия Sketchfab Standard (https://sketchfab.com/licenses) — можно использовать в игре,
+                нельзя выкладывать модель отдельно как файл для скачивания. Текстуры уменьшены до 512.
+  retro_tv    — "Retro USSR TV Record VC-381D" by AlexVet (https://sketchfab.com/xalex007xbkru):
+                https://sketchfab.com/3d-models/retro-ussr-tv-record-vc-381d-a8c17e9b24ff4db0b31ed36ea3c9c0d2
+                лицензия CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Изменения: две части
+                объединены в одну сетку, уменьшено до 0.62 м, текстуры уменьшены до 512, стекло экрана
+                сделано неметаллическим.

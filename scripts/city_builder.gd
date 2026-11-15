@@ -637,7 +637,7 @@ func _bus_stop(p: Vector3, facing: Vector3) -> void:
         for sx: float in [-2.0, 2.0]:
             _solid(Vector3(0.06, 2.4, 1.4), p + b * Vector3(sx, 1.3, -0.1), _m["glass"], yaw)
         _bench(p + b * Vector3(0, 0, -0.4), facing)
-    _soda(p + b * Vector3(3.1, 0, -0.3), facing)
+    _soda(p + b * Vector3(3.6, 0, -0.35), facing)   # в стороне от павильона и столба с табличкой
     _solid(Vector3(0.08, 2.8, 0.08), p + b * Vector3(2.7, 1.4, 0.8), _m["metal"], yaw)
     if _signs_ok:
         _sign_plate("bus_stop", p + b * Vector3(2.7, 2.55, 0.83), yaw)
@@ -1317,7 +1317,7 @@ func _define_batches() -> void:
     _batch("birch_crown", _sphere_mesh(1.3, 4.0), _nature("foliage_birch", Color.WHITE, 2.0, true), 200.0, true)
     _batch("bush", _sphere_mesh(0.7, 1.0), _nature("foliage_bush", Color.WHITE, 1.2, true), 80.0)
     # Готовые модели: остановочный павильон и бензоколонка (models/props)
-    for pk: String in ["bus_stop", "gas_station", "militia", "soda", "soda2", "trash", "pivnaya", "kiosk_rail",
+    for pk: String in ["bus_stop", "gas_station", "militia", "soda", "trash", "retro_pc", "retro_tv", "pivnaya", "kiosk_rail",
             "playground", "garages", "el_pole"]:
         var prm := _nature_mesh(pk, "props")
         if prm:
@@ -2173,7 +2173,11 @@ func _build_interiors() -> void:
         for side: float in [-1.0, 1.0]:
             _solid(Vector3(3.4, 1.05, 0.9), o + Vector3(7.0 * side, 0.525, -5.2), desk_mat)
             _f_chair(o + Vector3(7.0 * side, 0, -6.6), 0.0)   # стул за стойкой
-            _deco(Vector3(0.42, 0.36, 0.4), o + Vector3(7.0 * side - 0.8, 1.23, -5.3), _fm("monitor"), PI)
+            if _props_ok.has("retro_pc"):
+                _put("pr_retro_pc", o + Vector3(7.0 * side - 0.8, 1.05, -5.3), PI, Color.WHITE, Vector3.ONE * 0.85)
+                pc_spots.append([o + Vector3(7.0 * side - 0.8, 1.05, -5.3), PI])
+            else:
+                _deco(Vector3(0.42, 0.36, 0.4), o + Vector3(7.0 * side - 0.8, 1.23, -5.3), _fm("monitor"), PI)
             _deco(Vector3(0.3, 0.01, 0.22), o + Vector3(7.0 * side + 0.6, 1.06, -5.2), _fm("papers"))
             _deco(Vector3(0.2, 0.08, 0.16), o + Vector3(7.0 * side + 0.1, 1.09, -5.0), _fm("phone"), PI)
         # общая обстановка: цветы по углам, кулер, часы над выходом, батареи
@@ -2864,7 +2868,11 @@ func _home_room(o: Vector3, w: float, d: float, wall_col: Color) -> Dictionary:
     _deco(Vector3(0.25, 0.55, 2.6), o + Vector3(-w * 0.5 + 0.35, 0.72, -0.5), sofa)
     _solid(Vector3(0.8, 0.45, 1.2), o + Vector3(-w * 0.5 + 2.2, 0.225, -0.5), _m["wood"])
     _solid(Vector3(0.5, 0.6, 1.6), o + Vector3(-1.0 + w * 0.5 - 4.0, 0.3, -0.5), _m["wood"])
-    _deco(Vector3(0.5, 0.9, 1.2), o + Vector3(-1.0 + w * 0.5 - 4.0, 1.05, -0.5), _fit_mat("tv", Vector3(0.5, 0.9, 1.2), Color(0.05, 0.05, 0.06)))
+    if _props_ok.has("retro_tv"):   # телевизор «Рекорд» экраном к дивану
+        _put("pr_retro_tv", o + Vector3(-1.0 + w * 0.5 - 4.0, 0.6, -0.5), -PI * 0.5, Color.WHITE, Vector3.ONE * 1.3)
+        tv_spots.append([o + Vector3(-1.0 + w * 0.5 - 4.0, 0.6, -0.5), -PI * 0.5])
+    else:
+        _deco(Vector3(0.5, 0.9, 1.2), o + Vector3(-1.0 + w * 0.5 - 4.0, 1.05, -0.5), _fit_mat("tv", Vector3(0.5, 0.9, 1.2), Color(0.05, 0.05, 0.06)))
     # кровать
     _solid(Vector3(1.6, 0.55, 2.1), o + Vector3(w * 0.5 - 1.1, 0.275, -d * 0.5 + 1.5),
             _fit_mat("org/bed_sheet", Vector3(1.6, 0.55, 2.1), Color(0.95, 0.95, 0.95)))
@@ -3141,15 +3149,17 @@ func _tag(pos: Vector3, n: Vector3) -> void:
     var tags: Array = TAGS_PYAT if pos.x < RIVER_X0 else TAGS_KAZAN
     var l := Label3D.new()
     l.text = tags[_drng.randi() % tags.size()]
-    l.font_size = _drng.randi_range(90, 140)
     l.pixel_size = 0.009
+    # надпись не шире 5 м — иначе длинные («СОЛНЕЧНЫЕ — СИЛА») вылезают за угол дома в воздух
+    var fit := int(5.0 / (l.text.length() * l.pixel_size * 0.62))
+    l.font_size = mini(_drng.randi_range(90, 140), fit)
     l.outline_size = 0
     l.modulate = TAG_COLORS[_drng.randi() % TAG_COLORS.size()]
     l.modulate.a = 0.9
     l.double_sided = false
     l.shaded = false
     l.visibility_range_end = 70.0
-    var side := Vector3(-n.z, 0, n.x) * _drng.randf_range(-5.0, 5.0)
+    var side := Vector3(-n.z, 0, n.x) * _drng.randf_range(-1.5, 1.5)
     l.position = pos + n * 0.04 + side + Vector3(0, _drng.randf_range(1.0, 2.0), 0)
     l.rotation = Vector3(0, atan2(n.x, n.z), _drng.randf_range(-0.12, 0.12))
     add_child(l)
@@ -3314,6 +3324,11 @@ func _f_table(p: Vector3, yaw: float, w: float, d: float, h := 0.75, mat: Materi
 
 
 ## Конторский стол: тумба с ящиками, монитор-«ящик», клавиатура, бумаги, лампа, стул.
+const PC_YAW := 0.0   # поворот модели ПК: экран к стулу
+var pc_spots: Array = []
+var tv_spots: Array = []   # [точка, поворот] — где стоят телевизоры   # [точка, поворот] — где стоят ПК (для проверки)
+
+
 func _f_desk(p: Vector3, yaw: float, green_lamp := false) -> void:
     var wood := _fm("wood_dark")
     _solid(Vector3(1.5, 0.05, 0.75), _at(p, yaw, Vector3(0, 0.75, 0)), wood, yaw)
@@ -3328,9 +3343,14 @@ func _f_desk(p: Vector3, yaw: float, green_lamp := false) -> void:
         _deco(Vector3(0.38, 0.1, 0.14), _at(p, yaw, Vector3(-0.5, 1.1, -0.1)), _fm("green_glass"), yaw)
         _deco(Vector3(0.5, 0.01, 0.35), _at(p, yaw, Vector3(0.15, 0.78, 0.05)), _fm("papers"), yaw)
     else:
-        # монитор
-        _deco(Vector3(0.42, 0.36, 0.4), _at(p, yaw, Vector3(-0.25, 0.97, -0.12)), _fm("monitor"), yaw)
-        _deco(Vector3(0.45, 0.025, 0.16), _at(p, yaw, Vector3(-0.2, 0.79, 0.2)), _fm("keyboard"), yaw)
+        if _props_ok.has("retro_pc"):
+            # советский ПК 80-х (модель AI.MAKER, Sketchfab Standard): монитор, системный блок, клавиатура
+            _put("pr_retro_pc", _at(p, yaw, Vector3(-0.22, 0.775, -0.02)), yaw + PC_YAW, Color.WHITE, Vector3.ONE * 0.85)
+            pc_spots.append([_at(p, yaw, Vector3(-0.22, 0.775, -0.02)), yaw])
+        else:
+            # монитор
+            _deco(Vector3(0.42, 0.36, 0.4), _at(p, yaw, Vector3(-0.25, 0.97, -0.12)), _fm("monitor"), yaw)
+            _deco(Vector3(0.45, 0.025, 0.16), _at(p, yaw, Vector3(-0.2, 0.79, 0.2)), _fm("keyboard"), yaw)
         _deco(Vector3(0.3, 0.01, 0.22), _at(p, yaw, Vector3(0.35, 0.78, 0.05)), _fm("papers"), yaw)
         # телефон
         _deco(Vector3(0.2, 0.08, 0.16), _at(p, yaw, Vector3(0.55, 0.81, -0.15)), _fm("phone"), yaw)
@@ -3545,22 +3565,36 @@ func _f_tires(p: Vector3) -> void:
 ## Старый телевизор на тумбочке.
 func _f_tv(p: Vector3, yaw: float) -> void:
     _solid(Vector3(0.8, 0.5, 0.45), _at(p, yaw, Vector3(0, 0.25, 0)), _fm("wood_dark"), yaw)
-    _deco(Vector3(0.6, 0.5, 0.45), _at(p, yaw, Vector3(0, 0.75, 0)), _fm("tv"), yaw)
     _collider(Vector3(0.8, 1.0, 0.45), _at(p, yaw, Vector3(0, 0.5, 0)), yaw)
+    if _props_ok.has("retro_tv"):
+        _put("pr_retro_tv", _at(p, yaw, Vector3(0, 0.5, 0)), yaw, Color.WHITE, Vector3.ONE * 1.05)
+        tv_spots.append([_at(p, yaw, Vector3(0, 0.5, 0)), yaw])
+        return
+    _deco(Vector3(0.6, 0.5, 0.45), _at(p, yaw, Vector3(0, 0.75, 0)), _fm("tv"), yaw)
     _deco(Vector3(0.44, 0.34, 0.01), _at(p, yaw, Vector3(-0.04, 0.76, 0.226)), _fm("screen"), yaw)
 
 
 ## Кулер с водой.
+var cooler_spots: Array[Vector3] = []
+
+
 func _f_cooler(p: Vector3, yaw: float) -> void:
-    if ResourceLoader.exists("res://textures/obj_cooler.png"):
-        _solid(Vector3(0.36, 1.0, 0.36), _at(p, yaw, Vector3(0, 0.5, 0)), _fm("white"), yaw)
-        _deco(Vector3(0.4, 1.45, 0.02), _at(p, yaw, Vector3(0, 0.725, 0.19)), _fm("cooler"), yaw)
-        return
-    _solid(Vector3(0.32, 1.0, 0.32), _at(p, yaw, Vector3(0, 0.5, 0)), _fm("white"), yaw)
-    var w := _mat(Color(0.55, 0.75, 0.95), 0.1)
+    cooler_spots.append(p)
+    # кулер собран из деталей (раньше — плоская картинка на ящике): корпус, бутыль, краны, поддон
+    _solid(Vector3(0.32, 0.98, 0.32), _at(p, yaw, Vector3(0, 0.49, 0)), _fm("white"), yaw)
+    _deco(Vector3(0.26, 0.5, 0.01), _at(p, yaw, Vector3(0, 0.36, 0.162)), _mat(Color(0.86, 0.87, 0.88), 0.5), yaw)  # дверца
+    _deco(Vector3(0.3, 0.03, 0.3), _at(p, yaw, Vector3(0, 0.995, 0)), _mat(Color(0.78, 0.8, 0.82), 0.5), yaw)      # крышка
+    _deco(Vector3(0.26, 0.2, 0.05), _at(p, yaw, Vector3(0, 0.83, 0.175)), _mat(Color(0.2, 0.22, 0.25), 0.4), yaw)  # ниша с кранами
+    _deco(Vector3(0.05, 0.05, 0.05), _at(p, yaw, Vector3(-0.06, 0.88, 0.2)), _mat(Color(0.8, 0.12, 0.1), 0.3), yaw)  # горячая
+    _deco(Vector3(0.05, 0.05, 0.05), _at(p, yaw, Vector3(0.06, 0.88, 0.2)), _mat(Color(0.12, 0.35, 0.85), 0.3), yaw)  # холодная
+    _deco(Vector3(0.22, 0.02, 0.08), _at(p, yaw, Vector3(0, 0.735, 0.19)), _mat(Color(0.15, 0.15, 0.17), 0.3), yaw)  # поддон
+    var w := _mat(Color(0.55, 0.78, 0.98), 0.08)
     w.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-    w.albedo_color.a = 0.6
-    _mdeco(_cyl_mesh(0.14, 0.14, 0.42, 12), _at(p, yaw, Vector3(0, 1.21, 0)), w)
+    w.albedo_color.a = 0.55
+    # бутыль вверх дном: горлышко в кулере, плечики, корпус
+    _mdeco(_cyl_mesh(0.045, 0.045, 0.04, 12), _at(p, yaw, Vector3(0, 1.02, 0)), w)                                # горлышко
+    _mdeco(_cyl_mesh(0.135, 0.05, 0.07, 16), _at(p, yaw, Vector3(0, 1.075, 0)), w)                                # плечики
+    _mdeco(_cyl_mesh(0.135, 0.135, 0.36, 16), _at(p, yaw, Vector3(0, 1.29, 0)), w)                                # корпус
 
 
 ## Картинка на предмет (как _fit_mat), с прозрачностью по альфе, если cut.
@@ -3840,10 +3874,9 @@ func _soda(p: Vector3, facing: Vector3) -> void:
         _soda_mat.roughness = 0.45
     var yaw := atan2(facing.x, facing.z)
     var base := Vector3(p.x, SIDE_H, p.z)
-    var alt := int(absf(p.x * 1.7 + p.z * 0.9)) % 2 == 0
-    if _props_ok.has("soda") and _props_ok.has("soda2"):
-        # готовые модели «Газированная вода» (два вида — по координатам)
-        _put("pr_soda" if alt else "pr_soda2", base, yaw)
+    if _props_ok.has("soda"):
+        # готовая модель «Газированная вода» (вторая модель была грубой коробкой — не используем)
+        _put("pr_soda", base, yaw)
         _collider(Vector3(0.7, 1.6, 0.6), base + Vector3(0, 0.8, 0), yaw)
     else:
         _solid(Vector3(0.8, 1.6, 0.6), base + Vector3(0, 0.8, 0), _soda_mat, yaw)
