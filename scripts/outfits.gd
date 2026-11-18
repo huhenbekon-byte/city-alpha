@@ -42,6 +42,7 @@ static func setup_female(mat: ShaderMaterial, hair := Color(0.3, 0.18, 0.1)) -> 
     mat.set_shader_parameter("cloth_aspect", Vector2(2.0, 1.0) if nw else Vector2.ONE)
     mat.set_shader_parameter("hair_col", Vector3(hair.r, hair.g, hair.b))
     mat.set_shader_parameter("hair_on", 1.0 if nw else 0.0)
+    mat.set_shader_parameter("shape_on", 1.0 if nw else 0.0)
 
 
 ## Путь текстуры тела мужской модели (имя файла старой модели → файл текущей модели).
@@ -60,6 +61,7 @@ static func setup_male(mat: ShaderMaterial, hair := Color(0.18, 0.13, 0.09), use
     mat.set_shader_parameter("mask_tex", _tex(body_path("body_mask.png")))
     mat.set_shader_parameter("sleeve_tex", _tex(body_path("sleeve_mask.png")))
     mat.set_shader_parameter("cloth_aspect", Vector2(2.0, 1.0) if human() else Vector2.ONE)
+    mat.set_shader_parameter("shape_on", 1.0 if human() else 0.0)
     set_hair(mat, hair, use_hair)
 
 
@@ -85,6 +87,29 @@ static func place_hat(h: Node3D, female := false) -> void:
 static func set_hair(mat: ShaderMaterial, hair: Color, on := true) -> void:
     mat.set_shader_parameter("hair_col", Vector3(hair.r, hair.g, hair.b))
     mat.set_shader_parameter("hair_on", 1.0 if on and human() else 0.0)
+
+## Покрой по образу или ткани куртки: [толщина куртки, толщина брюк (м), низ куртки (доля роста, 0 — по поясу),
+## насколько сгладить ягодицы]. Китель и пиджак закрывают ягодицы, халат — до колен, боёвка пожарного толстая.
+const FIT := {
+    "militia": [0.012, 0.015, 0.465, 0.75], "kgb": [0.012, 0.015, 0.465, 0.75], "doctor": [0.013, 0.012, 0.30, 0.7],
+    "fire": [0.026, 0.028, 0.45, 0.8], "leader": [0.014, 0.014, 0.49, 0.7], "bomber": [0.016, 0.014, 0.50, 0.65],
+    "tracksuit": [0.012, 0.016, 0.0, 0.7], "passerby": [0.010, 0.012, 0.0, 0.6],
+    "uni_mayor": [0.012, 0.015, 0.465, 0.75], "uni_kitel": [0.012, 0.015, 0.465, 0.75], "cloth_suit_gray": [0.011, 0.014, 0.47, 0.7],
+    "cloth_suit_navy": [0.011, 0.014, 0.47, 0.7], "cloth_coat_dark": [0.016, 0.013, 0.30, 0.7],
+    "cloth_gabardine": [0.014, 0.013, 0.30, 0.7], "cloth_dublenka": [0.022, 0.013, 0.44, 0.65],
+    "cloth_alyaska": [0.022, 0.013, 0.47, 0.6], "cloth_quilted_navy": [0.018, 0.012, 0.48, 0.55],
+    "cloth_leather_black": [0.013, 0.013, 0.49, 0.55], "cloth_leather_brown": [0.013, 0.013, 0.49, 0.55],
+}
+const FIT_DEFAULT := [0.008, 0.011, 0.0, 0.6]
+
+
+static func set_fit(mat: ShaderMaterial, key: String, jacket: String) -> void:
+    var f: Array = FIT.get(key, FIT.get(jacket, FIT_DEFAULT))
+    mat.set_shader_parameter("inflate_top", float(f[0]))
+    mat.set_shader_parameter("inflate_bottom", float(f[1]))
+    mat.set_shader_parameter("hem", float(f[2]))
+    mat.set_shader_parameter("butt_flat", float(f[3]))
+
 
 ## ткань куртки → форма (верх: куртка и рукава)
 const TOP := {
@@ -149,6 +174,7 @@ static func apply(mat: ShaderMaterial, jacket: String, pants: String, shoes: Str
     var pre := "outfit_f_" if female else "outfit_"
     var top_t := _tex(DIR + pre + "%s.png" % top_n) if top_n != "" else null
     var bot_t := _tex(DIR + pre + "%s.png" % bot_n) if bot_n != "" else null
+    set_fit(mat, top_n if top_t else "", jacket)
     mat.set_shader_parameter("outfit_top_on", 1.0 if top_t else 0.0)
     mat.set_shader_parameter("outfit_bottom_on", 1.0 if bot_t else 0.0)
     mat.set_shader_parameter("outfit_shoes_on", 1.0 if bot_t and (female or shoes in DARK_SHOES) else 0.0)

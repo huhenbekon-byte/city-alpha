@@ -38,6 +38,13 @@ var _reward := 0
 var _variant := ""
 var _desk := Vector3.ZERO
 var _rng := RandomNumberGenerator.new()
+var fire_pos := Vector3.ZERO    # где на самом деле горит (радар); метка сначала — только район
+var _fire_found := false
+
+
+## Пожарный радар: есть ли сейчас очаг, который надо искать.
+func fire_active() -> bool:
+    return active and stage == "fire" and _fire != null
 var _path: Array = []        # слежка: углы квартала, по которым идёт объект
 var _path_i := 0
 var _tail_t := 0.0           # сколько осталось вести объект
@@ -102,6 +109,10 @@ func update(focus: Vector3, in_car: bool, delta: float) -> void:
         if _hold <= 0.0:
             _finish_strelka()
         return
+    if stage == "fire" and not _fire_found and _dist(focus, fire_pos) < 45.0:
+        _fire_found = true   # радар засёк очаг — метка на точное место
+        _set_target(fire_pos, "ПОЖАР", Color(1.0, 0.45, 0.1))
+        message.emit("Радар: очаг найден! Метка — на месте пожара")
     if _fire != null:
         var k := clampf(float(_fire_hp) / 8.0, 0.15, 1.0)
         _fire.scale = Vector3.ONE * k
@@ -300,10 +311,14 @@ func _new_call(focus: Vector3) -> void:
             _make_fire(p)
             _fire_hp = 8
             _reward = 1000
-            _time_left = 200.0
+            _time_left = 240.0
             stage = "fire"
-            _set_target(p, "ПОЖАР", Color(1.0, 0.45, 0.1))
-            message.emit("ПОЖАР %s! Выезжай и туши" % _place(p))
+            # диспетчер знает только район: точное место ищет радар (пеленг на дым и жар)
+            fire_pos = p
+            var off := Vector3(_rng.randf_range(-1, 1), 0, _rng.randf_range(-1, 1)).normalized() * _rng.randf_range(30.0, 55.0)
+            _set_target(p + off, "ЗОНА ПОЖАРА", Color(1.0, 0.45, 0.1))
+            _fire_found = false
+            message.emit("ПОЖАР %s! Выезжай — точное место покажет радар" % _place(p))
         "mayor":
             if _rng.randf() < 0.6:
                 _reward = 300

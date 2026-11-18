@@ -36,9 +36,37 @@ uniform float cloth_scale = 8.0;
 uniform vec2 cloth_aspect = vec2(1.0);      // развёртка 2:1 (новая модель) — ткань без растяжения
 uniform vec3 hair_col : source_color = vec3(0.18, 0.13, 0.09);
 uniform float hair_on = 0.0;                // перекраска волос (канал A маски, новая модель)
+// Покрой одежды (scripts/outfits.gd, по форме организации). В цвете вершин новой модели запечено:
+// R — насколько выступают ягодицы, G — пах спереди, B — высота точки в позе покоя (доля роста).
+uniform float shape_on = 0.0;               // 1 — у модели есть эти данные (human.gltf / human_f.gltf)
+uniform float inflate_top = 0.008;          // толщина куртки, м (одежда не «нарисована» на коже)
+uniform float inflate_bottom = 0.010;       // свободные брюки
+uniform float butt_flat = 0.45;             // 0..1 — сгладить ягодицы под одеждой
+uniform float crotch_fill = 0.6;            // 0..1 — ткань брюк закрывает пах
+uniform float hem = 0.0;                    // низ куртки/кителя/халата (доля роста), 0 — по поясу
+varying float rest_h;
+varying float shape_w;   // ягодицы и пах: там складки кожи на ткани не рисуем
+
+void vertex() {
+	rest_h = COLOR.b;
+	shape_w = shape_on > 0.5 ? clamp(max(COLOR.r * 1.6 + COLOR.g, COLOR.a), 0.0, 1.0) : 0.0;
+	if (shape_on > 0.5) {
+		vec3 mk = textureLod(mask_tex, UV, 0.0).rgb;
+		float top = mk.r;
+		float bottom = mk.g;
+		// под длинным кителем или халатом бёдра и ягодицы — в ткани куртки, она толще
+		float coat = (hem > 0.0 && rest_h > hem && rest_h < 0.6) ? bottom : 0.0;
+		float push = top * inflate_top + bottom * inflate_bottom + coat * (inflate_top + 0.003);
+		float cloth = clamp(top + bottom, 0.0, 1.0);
+		push -= COLOR.r * 0.075 * butt_flat * cloth;             // ягодицы — внутрь, к линии поясницы
+		push += COLOR.g * 0.014 * crotch_fill * bottom;          // пах — ровная ткань
+		push += COLOR.a * (1.0 - COLOR.r) * 0.012 * butt_flat * cloth;   // ложбинку ткань перекрывает
+		VERTEX += NORMAL * push;
+	}
+}
 
 void fragment() {
-	vec3 base = texture(body_tex, UV).rgb;
+	vec3 base = texture(body_tex, UV, shape_w * 3.0).rgb;
 	vec4 mk = texture(mask_tex, UV);
 	vec3 m = mk.rgb;
 	base = mix(base, vec3(dot(base, vec3(0.333))) * hair_col * 2.4, mk.a * hair_on);
@@ -46,14 +74,17 @@ void fragment() {
 	// складки и объём одежды берём из яркости кожи под ней
 	float shade = clamp(dot(base, vec3(0.333)) / 0.55, 0.65, 1.2);
 	shade = mix(1.0, shade, 0.6);
+	shade = mix(shade, 1.0, shape_w * 0.8 * max(mk.r, mk.g));   // ткань гладкая, а не «нарисована» по рельефу тела
 	vec2 cuv = UV * cloth_scale * cloth_aspect;
 	vec3 jacket = texture(jacket_tex, cuv).rgb * jacket_col * shade;
 	vec3 pants = texture(pants_tex, cuv).rgb * pants_col * shade;
 	vec3 shoes = texture(shoes_tex, cuv).rgb * shoes_col * shade;
 	// готовый образ (весь персонаж: лицо, кожа, одежда): складки уже нарисованы, освещение — слабее
 	float oshade = mix(1.0, shade, 0.35);
-	vec4 ot = texture(outfit_top, UV);
-	vec4 ob = texture(outfit_bottom, UV);
+	// под длинным кителем/халатом (ниже пояса, выше hem) — ткань куртки: берём её со спины чуть ниже пояса
+	float coat_f = (shape_on > 0.5 && hem > 0.0) ? smoothstep(hem - 0.004, hem + 0.004, rest_h) * (1.0 - step(0.6, rest_h)) * m.g : 0.0;
+	vec4 ot = texture(outfit_top, mix(UV, vec2(UV.x, 0.66), step(0.5, coat_f)));
+	vec4 ob = texture(outfit_bottom, UV, shape_w * 3.5);   // нарисованная ложбинка и складки на ягодицах — размыть
 	base = mix(base, ot.rgb, outfit_top_on);
 	vec3 otc = mix(ot.rgb, vec3(dot(ot.rgb, vec3(0.333))) * outfit_tint.rgb * 2.6, outfit_tint.a);
 	vec3 obc = mix(ob.rgb, vec3(dot(ob.rgb, vec3(0.333))) * outfit_tint.rgb * 2.6, outfit_tint.a);
@@ -62,6 +93,9 @@ void fragment() {
 	shoes = mix(shoes, ob.rgb * oshade, ob.a * outfit_shoes_on);
 	vec3 col = base * skin_tint;
 	col = mix(col, pants, m.g);
+	// длинный китель / пиджак / халат закрывает ягодицы и бёдра до линии hem
+	m.r = max(m.r, coat_f);
+	m.g *= 1.0 - coat_f;
 	float vm = texture(vest_mask, UV).r * vest_on;
 	jacket = mix(jacket, texture(vest_tex, cuv).rgb * shade, vm);
 	vec4 pr = texture(print_tex, UV);

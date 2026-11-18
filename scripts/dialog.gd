@@ -11,6 +11,7 @@ var _title: Label
 var _text: Label
 var _input: LineEdit
 var _buttons: VBoxContainer
+var _scroll: ScrollContainer
 
 
 func _ready() -> void:
@@ -59,9 +60,14 @@ func _ready() -> void:
     spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
     box.add_child(spacer)
 
+    # кнопки — в прокрутке: если их много (жесты, панель админа), список листается пальцем
+    _scroll = ScrollContainer.new()
+    _scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    box.add_child(_scroll)
     _buttons = VBoxContainer.new()
     _buttons.add_theme_constant_override("separation", 8)
-    box.add_child(_buttons)
+    _buttons.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _scroll.add_child(_buttons)
 
 
 ## buttons: [[текст, Callable], ...]. input_hint != "" — показать поле ввода.
@@ -97,6 +103,12 @@ func open(title: String, text: String, buttons: Array, input_hint := "") -> void
             row.add_child(b)
         else:
             _buttons.add_child(b)
+    var rows := (buttons.size() - 1 + 1) / 2 + 1 if two_cols else buttons.size()
+    var bh := 50.0 if two_cols else 58.0
+    var need := rows * bh + maxf(0.0, rows - 1) * 8.0
+    var room := 470.0 - (60.0 if input_hint != "" else 0.0) - minf(200.0, text.length() * 0.45)
+    _scroll.custom_minimum_size = Vector2(0, minf(need, maxf(200.0, room)))
+    _scroll.scroll_vertical = 0
     visible = true
 
 

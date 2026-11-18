@@ -451,6 +451,12 @@ func _setup_model() -> void:
                 ["land", "Anim_Land"], ["kick", "Anim_Kick"], ["eat", "Anim_Eat"], ["drink", "Anim_Drink"], ["dance", "Anim_Dance"]]:
             if _anim.has_animation(pk[1]):
                 _anim_map[pk[0]] = pk[1]
+        if _anim.has_animation("Anim_Jog"):   # свой бег как у человека (poses.gd) вместо мультяшного
+            _anim_map["jog"] = "Anim_Jog"
+            _anim_map["run"] = "Anim_Sprint"
+        for ek: String in Poses.EXTRA:   # жесты и действия: машет, звонит, отжимается, жмёт штангу...
+            if _anim.has_animation(Poses.EXTRA[ek]):
+                _anim_map[ek] = Poses.EXTRA[ek]
     for an in _anim.get_animation_list():
         var low := String(an).to_lower()
         if low.begins_with("hit_chest") and not _anim_map.has("hit"):
@@ -510,10 +516,52 @@ func set_skin(path: String) -> bool:
 var emote := ""
 
 
+var _emote_done := false
+var _still_t := 0.0
+
+
 func play_emote(key: String) -> bool:
     if not _anim_map.has(key) or seated != "":
         return false
     emote = key
+    _emote_done = false
+    if _anim and _anim.current_animation == String(_anim_map[key]):
+        _anim.seek(0.0, true)
+    return true
+
+
+## Долго стоит без дела — иногда оглядывается или смотрит на часы (живее, чем замерший человек).
+func _idle_fidget(hspeed: float) -> bool:
+    if hspeed > 0.2 or armed or not is_on_floor() or _time < _guard_until:
+        _still_t = 0.0
+        return false
+    _still_t += get_process_delta_time()
+    if _still_t > 9.0 and not is_remote_controlled():
+        _still_t = -randf_range(4.0, 10.0)
+        var pick := "look" if randf() < 0.6 else "watch"
+        if _anim_map.has(pick):
+            emote = pick
+            return true
+    return false
+
+
+func is_remote_controlled() -> bool:
+    return false
+
+
+## Сесть, лечь или встать у тренажёра в точке pos (ноги на полу), лицом к facing; key — жест из Poses.EXTRA.
+## Встанет, если пошевелить джойстиком.
+var _pose_key := ""
+
+
+func pose_at(pos: Vector3, facing: Vector3, key: String) -> bool:
+    if not _anim_map.has(key) or seated != "":
+        return false
+    _stand_pos = global_position
+    _pose_key = key
+    set_seated("pose")
+    _visual.rotation.y = atan2(-facing.x, -facing.z)
+    global_position = pos
     return true
 
 
@@ -530,10 +578,18 @@ func _animate_model() -> void:
             emote = ""
         else:
             var en: String = _anim_map[emote]
-            if _anim.current_animation != en:
+            if _anim.current_animation != en and not _emote_done:
                 _anim.play(en, 0.35)
             _anim.speed_scale = 1.0
-            return
+            # короткий жест (пожать плечами, посмотреть на часы) — один раз, потом обычная стойка
+            var a := _anim.get_animation(en)
+            if a and a.loop_mode == Animation.LOOP_NONE and (_anim.current_animation != en or _anim.current_animation_position >= a.length - 0.05):
+                emote = ""
+                _emote_done = false
+            else:
+                return
+    elif _idle_fidget(hspeed):
+        return
     var want := "pistol_idle" if armed and _anim_map.has("pistol_idle") else "idle"
     if armed and _time < _aim_until and _anim_map.has("aim"):
         want = "aim"                       # после выстрела ещё держит пистолет на прицеле
@@ -547,10 +603,11 @@ func _animate_model() -> void:
     elif hspeed > walk_speed + 0.8 and (_anim_map.has("jog") or _anim_map.has("run")):
         # бег: «Jog» (ровная спина, естественный шаг), скорость ног — по скорости движения
         want = "jog" if _anim_map.has("jog") else "run"
-        rate = clampf(hspeed / 4.4, 0.85, 1.45)
+        var own_run := String(_anim_map.get("jog", "")) == "Anim_Jog"
+        rate = clampf(hspeed / (6.0 if own_run else 4.4), 0.8, 1.45)
         if hspeed > run_speed + 1.5 and _anim_map.has("run"):
             want = "run"
-            rate = clampf(hspeed / 7.0, 0.8, 1.3)
+            rate = clampf(hspeed / (8.0 if own_run else 7.0), 0.8, 1.3)
     elif hspeed > 0.2 and _anim_map.has("walk"):
         want = "walk"
         rate = clampf(hspeed / 1.45, 0.55, 1.7)   # анимация шагает ~1.45 м/с — ноги не «скользят»
@@ -1126,7 +1183,7 @@ func set_seated(kind: String) -> void:
             _gun.visible = true
         if _carry_node:
             _carry_node.visible = true
-        if was == "sit":
+        if was == "sit" or was == "pose":
             global_position = _stand_pos
 
 
@@ -1155,13 +1212,13 @@ func sit_at(center: Vector3, facing: Vector3) -> bool:
 
 func _process_seated() -> void:
     if _anim:
-        var key := "drive" if seated == "drive" else "sit"
+        var key := "drive" if seated == "drive" else (_pose_key if seated == "pose" else "sit")
         if _anim_map.has(key):
             var an: String = _anim_map[key]
             if _anim.current_animation != an:
                 _anim.play(an, 0.3)
             _anim.speed_scale = 1.0
-    if seated == "sit":
+    if seated == "sit" or seated == "pose":
         var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
         if touch and touch.joy_vector.length() > 0.3:
             input = touch.joy_vector

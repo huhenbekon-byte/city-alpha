@@ -80,6 +80,14 @@ static func draw(ci: CanvasItem, kind: String, c: Vector2, s: float, col := Colo
             panel(ci, Rect2(c - Vector2(s * 0.2, s * 0.42), Vector2(s * 0.4, s * 0.24)), Color(0, 0, 0, 0), int(s * 0.08), int(maxf(2.0, s * 0.07)), col)
             panel(ci, r, col, int(s * 0.1))
             ci.draw_rect(Rect2(c.x - s * 0.08, c.y - s * 0.02, s * 0.16, s * 0.12), Color(0.15, 0.15, 0.17))
+        "radio":   # рация: корпус, антенна, решётка динамика
+            var r := Rect2(c - Vector2(s * 0.24, s * 0.22), Vector2(s * 0.48, s * 0.7))
+            ci.draw_line(c + Vector2(s * 0.12, -s * 0.2), c + Vector2(s * 0.12, -s * 0.52), col, maxf(2.0, s * 0.09))
+            panel(ci, r, col, int(s * 0.08))
+            for k in 3:
+                ci.draw_line(c + Vector2(-s * 0.14, -s * 0.05 + k * s * 0.1), c + Vector2(s * 0.14, -s * 0.05 + k * s * 0.1),
+                        Color(0, 0, 0, 0.55), maxf(1.5, s * 0.04))
+            ci.draw_circle(c + Vector2(0, s * 0.33), s * 0.05, Color(0.9, 0.2, 0.15))
         "phone":
             var r := Rect2(c - Vector2(s * 0.27, s * 0.46), Vector2(s * 0.54, s * 0.92))
             panel(ci, r, Color(0, 0, 0, 0), int(s * 0.1), int(maxf(2.0, s * 0.08)), col)

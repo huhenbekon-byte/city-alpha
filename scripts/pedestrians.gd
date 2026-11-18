@@ -136,6 +136,20 @@ func _process(delta: float) -> void:
             p["dodge_t"] = float(p["dodge_t"]) - delta
             pos += (p["dodge"] as Vector3) * delta
             stop = true
+        # иногда останавливается: звонит, смотрит на часы, задумался, оглядывается
+        var pause: float = p.get("pause_t", 0.0)
+        if pause > 0.0:
+            p["pause_t"] = pause - delta
+            if fear <= 0.0:
+                stop = true
+        elif fear <= 0.0 and not stop and String(p.get("pause_anim", "")) == "" and _rng.randf() < delta * 0.012 \
+                and pos.distance_to(focus) < 60.0:
+            var opts: Array = p.get("acts", [])
+            if not opts.is_empty():
+                p["pause_anim"] = opts[_rng.randi() % opts.size()]
+                p["pause_t"] = _rng.randf_range(4.0, 9.0)
+        if pause <= 0.0 and String(p.get("pause_anim", "")) != "":
+            p["pause_anim"] = ""
 
         if not stop:
             var step: float = SPEED * float(p["speed_k"]) * (2.7 if fear > 0.0 else 1.0) * delta
@@ -191,6 +205,8 @@ func _process(delta: float) -> void:
                 root.position = pos
                 root.rotation.y = atan2(dir.x, dir.z)
                 var want := String(p["idle"]) if stop else String(p["walk"])
+                if stop and String(p.get("pause_anim", "")) != "" and fear <= 0.0:
+                    want = String(p["pause_anim"])
                 if fear > 0.0 and not stop and String(p["run"]) != "":
                     want = String(p["run"])
                 if want != "" and String(p.get("anim_state", "")) != want and anim_p.has_animation(want):
@@ -399,6 +415,7 @@ func _make_ped_3d() -> Dictionary:
         var sks := model.find_children("*", "Skeleton3D", true, false)
         if walk_a != "" and not sks.is_empty() and (sks[0] as Skeleton3D).find_bone("spine_01") >= 0:
             Poses.fix_lean(ap, sks[0] as Skeleton3D, walk_a, 0.35)
+            Poses.install(ap, sks[0] as Skeleton3D)   # жесты для остановок (одна библиотека на модель — быстро)
         if walk_a != "":
             ap.play(walk_a)
             ap.seek(_rng.randf() * 1.0, true)
@@ -481,9 +498,21 @@ func _make_ped_3d() -> Dictionary:
                     if n2.contains("hair") and not n2.contains("beard"):
                         (mi2 as MeshInstance3D).visible = false
     return {"root": root, "legs": [], "pos": Vector3.ZERO, "corners": [], "idx": 0, "anim": ap, "anim_state": walk_a,
-            "walk": walk_a, "idle": idle_a, "die": die_a, "run": _find_anim(ap, "jog"),
+            "walk": walk_a, "idle": idle_a, "die": die_a,
+            "run": "Anim_Jog" if ap and ap.has_animation("Anim_Jog") else _find_anim(ap, "jog"),
             "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0, "fear": 0.0, "dodge": Vector3.ZERO,
-            "dodge_t": 0.0}
+            "dodge_t": 0.0, "acts": _acts(ap)}
+
+
+## Что прохожий может делать, остановившись (только то, что есть в его анимациях).
+func _acts(ap: AnimationPlayer) -> Array:
+    var out := []
+    if ap == null:
+        return out
+    for an: String in ["Pose_Phone", "Anim_Watch", "Pose_Think", "Pose_Arms", "Anim_Look", "Anim_Shrug"]:
+        if ap.has_animation(an):
+            out.append(an)
+    return out
 
 
 ## Испуг: стрельба или драка рядом — прохожие в радиусе убегают от этого места.

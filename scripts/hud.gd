@@ -22,6 +22,7 @@ const APPS := [
     ["biz", "Бизнес", "money", Color(0.6, 0.45, 0.1)],
     ["players", "Игроки", "people", Color(0.75, 0.2, 0.15)],
     ["admin", "Админ", "shield", Color(0.55, 0.08, 0.08)],
+    ["radio", "Рация", "radio", Color(0.25, 0.35, 0.3)],
     ["emote", "Жесты", "people", Color(0.55, 0.3, 0.6)],
     ["skills", "Навыки", "star", Color(0.2, 0.55, 0.6)],
     ["achieve", "Достижения", "trophy", Color(0.75, 0.55, 0.1)],
@@ -33,6 +34,7 @@ const Icons := preload("res://scripts/icons.gd")
 const ROW_Y := 278.0   # строка «кошелёк + ник» под картой
 
 var minimap: MinimapScript
+var radar: Control   ## пожарный радар (scripts/radar.gd)
 var profile: ProfileScript
 var _cash := 0
 var _nick := ""
@@ -95,6 +97,15 @@ func _ready() -> void:
     add_child(minimap)
     minimap.position = Vector2(12, 10)
     minimap.size = Vector2(236, 236)
+    radar = preload("res://scripts/radar.gd").new()
+    add_child(radar)
+    radar.anchor_left = 1.0
+    radar.anchor_right = 1.0
+    radar.offset_left = -190.0
+    radar.offset_right = -20.0
+    radar.offset_top = 230.0
+    radar.offset_bottom = 426.0
+    radar.visible = false
 
     _build_chat()
     _build_phone()
@@ -398,7 +409,7 @@ func _build_phone() -> void:
         b.pressed.connect(_on_app.bind(String(app[0])))
         grid.add_child(b)
         _app_btns[String(app[0])] = b
-        if String(app[0]) == "admin":
+        if String(app[0]) == "admin" or String(app[0]) == "radio":
             b.visible = false
     var close := _make_button(box, "Закрыть")
     close.pressed.connect(close_phone)

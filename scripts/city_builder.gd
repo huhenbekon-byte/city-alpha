@@ -2393,7 +2393,8 @@ func _build_interiors() -> void:
         for bz: float in [-1.0, 2.5]:
             _bench(o + Vector3(-W * 0.5 + 1.0, 0, bz), Vector3(1, 0, 0))
 
-        # обстановка по фракции
+        # обстановка по фракции; pts — точки действий (пульт, лифт, гардероб...) для main.gd
+        var pts := {}
         match fk:
             "mayor":
                 var carpet := _plane_mat("carpet_runner", Vector2(1.0, 5.0), Color(0.55, 0.08, 0.10))
@@ -2409,6 +2410,8 @@ func _build_interiors() -> void:
                 for bx: float in [-1.4, 1.4]:
                     _f_bookshelf(o + Vector3(bx + (4.0 if bx > 0 else -4.0), 0, -D * 0.5 + 0.45), 0.0, 1.2, 2.2)
                 _f_picture(o + Vector3(W * 0.5 - 0.22, 2.3, 2.0), -PI * 0.5, 1.6, 1.0)
+                _mayor_hall(o, W, D, H)
+                pts["radio"] = [o + Vector3(0, 0, -5.35), Vector3(0, 0, 1)]   # кресло мэра: пульт связи
             "police":
                 # камера (КПЗ) с решёткой у правой стены
                 if _org_tex("kpz_bars") != null:
@@ -2422,9 +2425,8 @@ func _build_interiors() -> void:
                 _solid(Vector3(3.6, H, 0.2), o + Vector3(10.4, H * 0.5, 5.66), wall)
                 if fid == "police":   # общая КПЗ — в Главной милиции
                     kpz_cell = o + Vector3(10.4, 0.3, 2.8)
-                # стол дежурного и доска «Их разыскивает милиция»
-                _f_desk(o + Vector3(3.0, 0, 0.5), -PI * 0.5)
-                _f_desk(o + Vector3(3.0, 0, -2.0), -PI * 0.5)
+                # пульт наблюдения: стена мониторов и стол операторов; доска «Их разыскивает милиция»
+                pts["console"] = _monitor_wall(o + Vector3(4.6, 0, -0.9), Vector3(-1, 0, 0), k, "ПУЛЬТ НАБЛЮДЕНИЯ")
                 _f_bookshelf(o + Vector3(W * 0.5 - 0.45, 0, -3.5), -PI * 0.5, 1.4, 2.0)
                 _deco(Vector3(1.6, 1.1, 0.04), o + Vector3(-2.5, 1.9, -D * 0.5 + 0.24), _fit_mat("org/cork_board", Vector3(1.6, 1.1, 0.04), Color(0.7, 0.55, 0.35)))
                 for pk in 6:
@@ -2434,9 +2436,16 @@ func _build_interiors() -> void:
                 if not org_ok:
                     _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), _mat(Color(0.12, 0.25, 0.65), 0.6))
             "hospital":
-                for bz: float in [-1.5, 1.5, 4.5]:
-                    _f_hospital_bed(o + Vector3(10.6, 0, bz), 0.0)
-                    _solid(Vector3(0.05, 1.8, 1.4), o + Vector3(9.3, 0.9, bz + 1.4), _tinted("mat_teal_fabric", Color(1, 1, 1), 0.8))
+                # 1 этаж — приёмный покой: ряды стульев, лифт на 2 этаж (там палаты)
+                for row: float in [-1.2, 0.2]:
+                    for cx in 6:
+                        _f_chair(o + Vector3(4.2 + cx * 0.6, 0, row), 0.0, _fm("upholstery"))
+                _label("ПРИЁМНЫЙ ПОКОЙ", o + Vector3(5.7, 3.3, -D * 0.5 + 0.28), Vector3(0, 0, 1), 44, Color(0.15, 0.35, 0.6))
+                pts["lift"] = _lift_door(o + Vector3(W * 0.5 - 0.22, 0, 2.2), Vector3(-1, 0, 0), "1")
+                var up := _hospital_floor2(f, o + Vector3(0, 0, 40.0), W, D, H, wall, floor_mat)
+                pts["lift2"] = up["lift"]
+                pts["floor2"] = up["spawn"]
+                pts["beds"] = up["beds"]
                 # шкаф с лекарствами и кабинет врача
                 _solid(Vector3(1.2, 1.9, 0.45), o + Vector3(3.0, 0.95, -D * 0.5 + 0.45), _fm("med_cabinet"))
                 for mk in (0 if ResourceLoader.exists("res://textures/obj_med_cabinet.png") else 8):
@@ -2468,6 +2477,7 @@ func _build_interiors() -> void:
                 _f_desk(o + Vector3(-3.0, 0, 2.5), PI * 0.5)
                 if not org_ok:
                     _deco(Vector3(W - 0.5, 0.35, 0.03), o + Vector3(0, 1.2, -D * 0.5 + 0.22), lred)
+                pts["dispatch"] = _fire_dispatch(o, W, D, H)
             "kgb":
                 for bz in 6:
                     _solid(Vector3(0.7, 1.9, 0.9), o + Vector3(W * 0.5 - 0.6, 0.95, -4.0 + bz * 1.2),
@@ -2480,10 +2490,13 @@ func _build_interiors() -> void:
                 _f_bookshelf(o + Vector3(-4.5, 0, -D * 0.5 + 0.45), 0.0, 1.4, 2.4)
                 _f_bookshelf(o + Vector3(4.5, 0, -D * 0.5 + 0.45), 0.0, 1.4, 2.4)
                 _solid(Vector3(0.8, 1.0, 0.7), o + Vector3(-W * 0.5 + 0.7, 0.5, -6.0), _fit_mat("org/safe_door", Vector3(0.8, 1.0, 0.7), Color(0.4, 0.43, 0.4)))
+                pts["console"] = _monitor_wall(o + Vector3(4.6, 0, -0.9), Vector3(-1, 0, 0), k + 7, "ОТДЕЛ НАБЛЮДЕНИЯ")
+                pts["wardrobe"] = _kgb_wardrobe(o + Vector3(8.6, 0, D * 0.5 - 0.55), Vector3(0, 0, -1))
+                _ops_map(o + Vector3(-W * 0.5 + 0.24, 2.1, -3.6), Vector3(1, 0, 0))
 
         _interior_extras(fk, o, W, D, H)
         interiors[fid] = {"spawn": o + Vector3(0, 0.3, D * 0.5 - 3.6), "exit": o + Vector3(0, 0, D * 0.5 - 1.3),
-                "hr": o + Vector3(-7.0, 0, -4.0), "desk": o + Vector3(7.0, 0, -4.0)}
+                "hr": o + Vector3(-7.0, 0, -4.0), "desk": o + Vector3(7.0, 0, -4.0)}.merged(pts)
 
 
 
@@ -2620,9 +2633,350 @@ func _gang_interior(f: Dictionary, o: Vector3) -> void:
     _f_tv(o + Vector3(-W * 0.5 + 2.8, 0, -5.9), 0.0)
     _f_armchair(o + Vector3(-W * 0.5 + 4.8, 0, -3.0), -PI * 0.5)
     _gang_gym(o, W, D, accent)
+    _gang_extras(gid, o, W, D, H, accent)
+    # точки действий: диван, карты, штанга, груша, кресло у телевизора, общак, верстак (цех), магнитофон
+    var card_seats := []
+    for ci in 4:
+        var ca := ci * PI * 0.5
+        card_seats.append([o + Vector3(-2.0, 0, 2.5) + Vector3(sin(ca), 0, cos(ca)) * 0.85, -Vector3(sin(ca), 0, cos(ca))])
+    var tvp := o + Vector3(-W * 0.5 + 2.8, 0, -5.9)
+    var arm := o + Vector3(-W * 0.5 + 4.8, 0, -3.0)
     interiors[gid] = {"spawn": o + Vector3(0, 0.3, D * 0.5 - 3.6), "exit": o + Vector3(0, 0, D * 0.5 - 1.3),
-            "hr": o + Vector3(-W * 0.5 + 2.6, 0, -1.2), "desk": o + Vector3(0, 0, 0)}
+            "hr": o + Vector3(-W * 0.5 + 2.6, 0, -1.2), "desk": o + Vector3(0, 0, 0),
+            "sofa": [o + Vector3(-W * 0.5 + 1.05, 0, -3.6), Vector3(1, 0, 0)],
+            "cards": card_seats,
+            "bench": [o + Vector3(3.0, 0, 4.05), Vector3(0, 0, 1)],
+            "bag": [o + Vector3(6.5, 0, 3.65), Vector3(0, 0, 1)],
+            "armchair": [arm + Vector3(-0.08, 0, 0), (tvp - arm).normalized()],
+            "safe": o + Vector3(-W * 0.5 + 1.8, 0, 3.5),
+            "craft": [o + Vector3(W * 0.5 - 1.45, 0, 3.0), Vector3(1, 0, 0)],
+            "tape": o + Vector3(-W * 0.5 + 1.8, 0, 0.8)}
 
+
+
+# ================================================================ обновлённые интерьеры: пульты, лифт, гардероб, радар
+
+var _screen_shader: Shader
+
+
+## Экран-«кинескоп»: кадр с камеры (силуэты домов, бегущие помехи, строки развёртки) или радар.
+func _screen_mat(seed: float, tint: Color, radar := false) -> ShaderMaterial:
+    if _screen_shader == null:
+        _screen_shader = Shader.new()
+        _screen_shader.code = """
+shader_type spatial;
+render_mode unshaded, cull_back;
+uniform float seed = 0.0;
+uniform vec3 tint = vec3(0.5, 1.0, 0.6);
+uniform bool radar = false;
+float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + seed) * 43758.5453); }
+void fragment() {
+    vec2 uv = UV;
+    vec3 col;
+    if (radar) {
+        vec2 c = uv - 0.5;
+        float r = length(c) * 2.0;
+        float a = atan(c.y, c.x);
+        float sweep = mod(TIME * 1.6 + seed, 6.2832);
+        float d = mod(sweep - a + 6.2832, 6.2832);
+        float beam = exp(-d * 3.0) * step(r, 1.0);
+        float rings = step(0.96, fract(r * 3.0)) * step(r, 1.0) * 0.5;
+        float blip = step(length(c - vec2(0.22 * sin(seed), 0.18 * cos(seed * 1.7))), 0.025) * (0.4 + 0.6 * exp(-d));
+        col = tint * (0.08 + beam * 0.8 + rings * 0.4) + vec3(1.0, 0.5, 0.1) * blip;
+        col *= step(r, 1.02);
+    } else {
+        float sky = 0.25 + 0.15 * uv.y;
+        float bx = floor(uv.x * 9.0 + seed * 3.0);
+        float top = 0.3 + 0.45 * h(vec2(bx, 1.0));
+        float bld = step(1.0 - uv.y, top);
+        float win = step(0.7, h(floor(uv * vec2(36.0, 24.0)))) * bld;
+        float road = step(uv.y, 0.85) * step(0.78, uv.y);
+        float car = step(abs(fract(uv.x * 0.5 + TIME * 0.07 + seed) - 0.5), 0.03) * road;
+        float img = mix(sky, 0.12, bld) + win * 0.35 + road * 0.15 + car * 0.6;
+        float noise = h(floor(uv * vec2(160.0, 120.0)) + floor(TIME * 12.0)) * 0.12;
+        float roll = smoothstep(0.0, 0.04, abs(fract(uv.y - TIME * 0.11 - seed) - 0.5)) * 0.15 + 0.85;
+        col = tint * (img + noise) * roll;
+    }
+    float scan = 0.82 + 0.18 * sin(UV.y * 260.0);
+    vec2 v = UV - 0.5;
+    float vig = 1.0 - dot(v, v) * 1.2;
+    ALBEDO = col * scan * vig;
+}
+"""
+    var m := ShaderMaterial.new()
+    m.shader = _screen_shader
+    m.set_shader_parameter("seed", seed)
+    m.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
+    m.set_shader_parameter("radar", radar)
+    return m
+
+
+func _screen(size: Vector2, pos: Vector3, facing: Vector3, mat: Material) -> void:
+    var mi := MeshInstance3D.new()
+    var q := QuadMesh.new()
+    q.size = size
+    mi.mesh = q
+    mi.material_override = mat
+    mi.position = pos
+    mi.rotation.y = atan2(facing.x, facing.z)
+    mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    add_child(mi)
+
+
+## Стена мониторов 4×3 и стол операторов на троих. facing — куда смотрят экраны.
+## Возвращает места операторов: [[точка стула, куда смотрит сидящий], ...].
+func _monitor_wall(c: Vector3, facing: Vector3, seed: int, title: String) -> Array:
+    var yaw := atan2(facing.x, facing.z)
+    var dark := _mat(Color(0.12, 0.13, 0.14), 0.5)
+    _solid(Vector3(4.7, 2.5, 0.3), _at(c, yaw, Vector3(0, 1.95, -0.15)), dark, yaw)
+    _label(title, _at(c, yaw, Vector3(0, 3.42, 0.02)), facing, 44, Color(0.95, 0.85, 0.35))
+    var tints := [Color(0.55, 1.0, 0.6), Color(0.7, 0.85, 1.0), Color(0.9, 0.9, 0.85)]
+    var n := 0
+    for r in 3:
+        for col in 4:
+            var x := -1.65 + col * 1.1
+            var y := 1.12 + r * 0.66
+            _deco(Vector3(1.0, 0.6, 0.14), _at(c, yaw, Vector3(x, y, 0.07)), _fm("black"), yaw)
+            _screen(Vector2(0.86, 0.48), _at(c, yaw, Vector3(x, y, 0.145)), facing,
+                    _screen_mat(float(seed * 13 + n), tints[(n + seed) % tints.size()]))
+            _label("КАМ %d" % (n + 1), _at(c, yaw, Vector3(x - 0.3, y + 0.19, 0.15)), facing, 16, Color(1, 1, 1, 0.8))
+            n += 1
+    # стол операторов: столешница, пульт с кнопками, три стула
+    var desk := _fm("wood_dark")
+    _solid(Vector3(4.4, 0.06, 0.8), _at(c, yaw, Vector3(0, 0.76, 0.75)), desk, yaw)
+    _collider(Vector3(4.4, 0.7, 0.3), _at(c, yaw, Vector3(0, 0.36, 0.45)), yaw)
+    for lx: float in [-2.1, 2.1]:
+        _deco(Vector3(0.06, 0.73, 0.75), _at(c, yaw, Vector3(lx, 0.365, 0.75)), desk, yaw)
+    _deco(Vector3(4.2, 0.06, 0.3), _at(c, yaw, Vector3(0, 0.82, 0.48)), dark, yaw)
+    var lamp_cols := [Color(1, 0.25, 0.2), Color(0.3, 1, 0.4), Color(1, 0.85, 0.2)]
+    for b in 14:
+        var bm := _mat(lamp_cols[b % 3], 0.4)
+        bm.emission_enabled = true
+        bm.emission = lamp_cols[b % 3]
+        bm.emission_energy_multiplier = 1.2
+        _deco(Vector3(0.06, 0.03, 0.06), _at(c, yaw, Vector3(-1.95 + b * 0.3, 0.865, 0.46)), bm, yaw)
+    var seats := []
+    for sx: float in [-1.2, 0.0, 1.2]:
+        _deco(Vector3(0.45, 0.025, 0.16), _at(c, yaw, Vector3(sx, 0.805, 0.9)), _fm("keyboard"), yaw)
+        _deco(Vector3(0.2, 0.08, 0.15), _at(c, yaw, Vector3(sx + 0.42, 0.83, 0.8)), _fm("black"), yaw)   # рация
+        var chair := _at(c, yaw, Vector3(sx, 0, 1.55))
+        _f_chair(chair, yaw + PI, _fm("upholstery"))
+        seats.append([chair, -facing])
+    return seats
+
+
+## Двери лифта на стене: створки, рамка, табло этажа. Возвращает точку «ЛИФТ» перед дверью.
+func _lift_door(p: Vector3, facing: Vector3, floor_txt: String) -> Vector3:
+    var yaw := atan2(facing.x, facing.z)
+    var steel := _mat(Color(0.62, 0.64, 0.66), 0.35)
+    steel.metallic = 0.6
+    _deco(Vector3(2.0, 2.6, 0.08), _at(p, yaw, Vector3(0, 1.3, 0.02)), _mat(Color(0.3, 0.3, 0.32), 0.5), yaw)
+    for sx: float in [-0.46, 0.46]:
+        _deco(Vector3(0.9, 2.3, 0.05), _at(p, yaw, Vector3(sx, 1.15, 0.08)), steel, yaw)
+    _deco(Vector3(0.02, 2.3, 0.06), _at(p, yaw, Vector3(0, 1.15, 0.1)), _fm("black"), yaw)
+    var lit := _mat(Color(1, 0.4, 0.2), 0.4)
+    lit.emission_enabled = true
+    lit.emission = Color(1, 0.35, 0.15)
+    lit.emission_energy_multiplier = 1.5
+    _deco(Vector3(0.5, 0.26, 0.04), _at(p, yaw, Vector3(0, 2.85, 0.06)), _fm("black"), yaw)
+    _label(floor_txt, _at(p, yaw, Vector3(0, 2.85, 0.09)), facing, 40, Color(1, 0.45, 0.2))
+    _label("ЛИФТ", _at(p, yaw, Vector3(0, 3.25, 0.08)), facing, 48, Color(0.9, 0.9, 0.9))
+    _deco(Vector3(0.1, 0.16, 0.04), _at(p, yaw, Vector3(1.15, 1.25, 0.04)), steel, yaw)
+    _deco(Vector3(0.05, 0.05, 0.03), _at(p, yaw, Vector3(1.15, 1.25, 0.07)), lit, yaw)
+    return _at(p, yaw, Vector3(0, 0, 1.1))
+
+
+## Второй этаж больницы: палаты на 6 коек, пост медсестры, окна, лифт. Возвращает spawn, лифт и койки.
+func _hospital_floor2(f: Dictionary, o: Vector3, W: float, D: float, H: float, wall: Material, floor_mat: Material) -> Dictionary:
+    _solid(Vector3(W + 1.0, 0.4, D + 1.0), o + Vector3(0, -0.2, 0), floor_mat)
+    _solid(Vector3(W + 1.0, 0.4, D + 1.0), o + Vector3(0, H + 0.2, 0), _ceiling_mat())
+    _solid(Vector3(0.4, H, D), o + Vector3(-W * 0.5, H * 0.5, 0), wall)
+    _solid(Vector3(0.4, H, D), o + Vector3(W * 0.5, H * 0.5, 0), wall)
+    _solid(Vector3(W, H, 0.4), o + Vector3(0, H * 0.5, -D * 0.5), wall)
+    _solid(Vector3(W, H, 0.4), o + Vector3(0, H * 0.5, D * 0.5), wall)
+    var lamp := _mat(Color(1, 1, 0.97), 0.3)
+    lamp.emission_enabled = true
+    lamp.emission = Color(0.95, 1.0, 1.0)
+    lamp.emission_energy_multiplier = 1.5
+    for lx: float in [-6.0, 0.0, 6.0]:
+        for lz: float in [-4.0, 3.0]:
+            _deco(Vector3(1.6, 0.06, 0.6), o + Vector3(lx, H - 0.03, lz), lamp)
+    for lx: float in [-6.0, 6.0]:
+        var ol := OmniLight3D.new()
+        ol.position = o + Vector3(lx, H - 0.6, 0)
+        ol.omni_range = 14.0
+        ol.omni_attenuation = 1.2
+        ol.light_energy = 1.3
+        ol.light_color = Color(0.95, 1.0, 1.0)
+        add_child(ol)
+    # окна с дневным светом на дальней стене
+    var sky := _mat(Color(0.75, 0.88, 1.0), 0.2)
+    sky.emission_enabled = true
+    sky.emission = Color(0.7, 0.85, 1.0)
+    sky.emission_energy_multiplier = 0.8
+    for wx: float in [-8.0, -3.0, 3.0, 8.0]:
+        _deco(Vector3(2.2, 1.6, 0.04), o + Vector3(wx, 2.1, -D * 0.5 + 0.22), sky)
+        _deco(Vector3(2.4, 0.08, 0.2), o + Vector3(wx, 1.26, -D * 0.5 + 0.28), _fm("white"))
+        _deco(Vector3(0.06, 1.6, 0.06), o + Vector3(wx, 2.1, -D * 0.5 + 0.25), _fm("white"))
+    _label("ТЕРАПЕВТИЧЕСКОЕ ОТДЕЛЕНИЕ · 2 ЭТАЖ", o + Vector3(0, 3.6, -D * 0.5 + 0.27), Vector3(0, 0, 1), 44, Color(0.15, 0.35, 0.6))
+    var red := _mat(Color(0.85, 0.08, 0.08), 0.6)
+    _deco(Vector3(0.9, 0.28, 0.04), o + Vector3(0, 3.05, -D * 0.5 + 0.25), red)
+    _deco(Vector3(0.28, 0.9, 0.04), o + Vector3(0, 3.05, -D * 0.5 + 0.25), red)
+    # койки: по три у левой и правой стены, ширмы между ними, тумбочки
+    var beds := []
+    var curtain := _tinted("mat_teal_fabric", Color(1, 1, 1), 0.8)
+    for side: float in [-1.0, 1.0]:
+        for bz: float in [-4.6, -1.2, 2.2]:
+            var bp := o + Vector3(side * (W * 0.5 - 1.25), 0, bz)
+            var byaw := PI * 0.5 * side   # изголовье к стене
+            _f_hospital_bed(bp, byaw)
+            var foot := Vector3(-side, 0, 0)   # от изголовья к ногам
+            beds.append([bp + foot * 0.15, foot])
+            _solid(Vector3(2.2, 1.8, 0.05), o + Vector3(side * (W * 0.5 - 1.3), 0.9, bz + 1.7), curtain)
+            _solid(Vector3(0.45, 0.6, 0.4), o + Vector3(side * (W * 0.5 - 0.45), 0.3, bz + 0.9), _fm("white"))
+    # пост медсестры в центре
+    _f_desk(o + Vector3(0, 0, -1.0), PI, true)
+    _solid(Vector3(1.2, 1.9, 0.45), o + Vector3(-2.0, 0.95, -D * 0.5 + 0.45), _fm("med_cabinet"))
+    _label("ПОСТ МЕДСЕСТРЫ", o + Vector3(0, 2.2, -1.2), Vector3(0, 0, 1), 40, Color(0.15, 0.35, 0.6))
+    for px: float in [-W * 0.5 + 0.6, W * 0.5 - 0.6]:
+        _f_plant(o + Vector3(px, 0, D * 0.5 - 0.6), true)
+    _stand(o + Vector3(-6.0, 2.2, D * 0.5 - 0.24), Vector3(0, 0, -1), 2.2, 1.2, "РЕЖИМ ДНЯ", 4, Color(0.92, 0.92, 0.9))
+    _stand(o + Vector3(6.0, 2.2, D * 0.5 - 0.24), Vector3(0, 0, -1), 2.2, 1.2, "ЗДОРОВЬЕ — ВСЕМУ ГОЛОВА!", 3, Color(0.92, 0.92, 0.9))
+    var lift := _lift_door(o + Vector3(0, 0, D * 0.5 - 0.22), Vector3(0, 0, -1), "2")
+    return {"lift": lift, "spawn": lift + Vector3(0, 0.3, -0.6), "beds": beds}
+
+
+## Пульт диспетчера пожарной части: экран-радар, карта города с флажками, пожарный шест с люком.
+func _fire_dispatch(o: Vector3, W: float, D: float, H: float) -> Array:
+    var c := o + Vector3(-5.6, 0, 4.4)
+    var dark := _mat(Color(0.14, 0.15, 0.15), 0.5)
+    _solid(Vector3(2.4, 0.9, 0.8), c + Vector3(0, 0.45, 0), dark)
+    _deco(Vector3(2.4, 0.9, 0.12), c + Vector3(0, 1.35, -0.34), dark)
+    _screen(Vector2(0.75, 0.75), c + Vector3(-0.55, 1.37, -0.27), Vector3(0, 0, 1), _screen_mat(3.0, Color(0.4, 1.0, 0.45), true))
+    _screen(Vector2(0.75, 0.55), c + Vector3(0.45, 1.37, -0.27), Vector3(0, 0, 1), _screen_mat(5.0, Color(1.0, 0.8, 0.5)))
+    _label("РАДАР ПОЖАРОВ", c + Vector3(0, 1.92, -0.27), Vector3(0, 0, 1), 34, Color(1.0, 0.7, 0.3))
+    var bm := _mat(Color(1, 0.2, 0.15), 0.4)
+    bm.emission_enabled = true
+    bm.emission = Color(1, 0.15, 0.1)
+    _deco(Vector3(0.18, 0.08, 0.18), c + Vector3(0.9, 0.94, 0.1), bm)
+    _f_chair(c + Vector3(0, 0, 0.85), PI, _fm("upholstery"))
+    # карта района с флажками на стене у входа
+    var mp := o + Vector3(-7.0, 2.2, D * 0.5 - 0.24)
+    _deco(Vector3(2.6, 1.6, 0.04), mp, _mat(Color(0.86, 0.84, 0.72), 0.8))
+    for k in 7:
+        _deco(Vector3(2.4, 0.02, 0.02), mp + Vector3(0, -0.7 + k * 0.23, -0.03), _mat(Color(0.5, 0.5, 0.5), 0.8))
+    for k in 6:
+        _deco(Vector3(0.06, 0.06, 0.04), mp + Vector3(-1.0 + k * 0.38, sin(k * 1.7) * 0.5, -0.04), _fm("red"))
+    _label("КАРТА ВЫЕЗДОВ", mp + Vector3(0, 0.95, -0.03), Vector3(0, 0, -1), 30, Color(0.6, 0.08, 0.06))
+    # люк в потолке над шестом и жёлто-чёрная разметка у шкафчиков
+    _deco(Vector3(1.4, 0.05, 1.4), o + Vector3(4.0, H - 0.02, 3.0), _fm("black"))
+    var stripe := _plane_mat("hazard", Vector2(6, 1), Color(0.95, 0.75, 0.1))
+    _flat(o + Vector3(W * 0.5 - 1.3, 0, 0.15), Vector2(0.35, 7.2), stripe, SIDE_H + 0.012)
+    _label("01", o + Vector3(-3.4, 2.1, -D * 0.5 + 0.28), Vector3(0, 0, 1), 200, Color(0.85, 0.12, 0.08))
+    return [c + Vector3(0, 0, 0.85), Vector3(0, 0, -1)]
+
+
+## Гардероб КГБ с чужой формой на плечиках: милиция, халат, пожарный, спортивки.
+func _kgb_wardrobe(p: Vector3, facing: Vector3) -> Vector3:
+    var yaw := atan2(facing.x, facing.z)
+    var wood := _fm("wood_dark")
+    _solid(Vector3(2.4, 2.3, 0.1), _at(p, yaw, Vector3(0, 1.15, -0.3)), wood, yaw)
+    for sx: float in [-1.2, 1.2]:
+        _solid(Vector3(0.08, 2.3, 0.65), _at(p, yaw, Vector3(sx, 1.15, 0)), wood, yaw)
+    _deco(Vector3(2.4, 0.08, 0.65), _at(p, yaw, Vector3(0, 2.3, 0)), wood, yaw)
+    _deco(Vector3(2.3, 0.03, 0.03), _at(p, yaw, Vector3(0, 2.05, 0)), _fm("chrome"), yaw)
+    var cols := [Color(0.35, 0.4, 0.5), Color(0.95, 0.95, 0.95), Color(0.75, 0.15, 0.1), Color(0.15, 0.25, 0.6),
+            Color(0.25, 0.4, 0.25), Color(0.2, 0.2, 0.22)]
+    for k in cols.size():
+        _deco(Vector3(0.36, 1.05, 0.08), _at(p, yaw, Vector3(-0.95 + k * 0.38, 1.45, 0.0)), _mat(cols[k], 0.8), yaw + 0.05 * k)
+    _label("ГАРДЕРОБ", _at(p, yaw, Vector3(0, 2.6, 0.3)), facing, 40, Color(0.95, 0.85, 0.35))
+    return _at(p, yaw, Vector3(0, 0, 1.0))
+
+
+## Оперативная карта на стене: улицы, красные булавки, нитки между ними.
+func _ops_map(p: Vector3, facing: Vector3) -> void:
+    var yaw := atan2(facing.x, facing.z)
+    _deco(Vector3(2.0, 1.3, 0.04), p, _mat(Color(0.82, 0.8, 0.7), 0.85), yaw)
+    for k in 6:
+        _deco(Vector3(1.9, 0.025, 0.01), _at(p, yaw, Vector3(0, -0.55 + k * 0.22, 0.025)), _mat(Color(0.55, 0.52, 0.45), 0.8), yaw)
+        _deco(Vector3(0.025, 1.2, 0.01), _at(p, yaw, Vector3(-0.85 + k * 0.34, 0, 0.025)), _mat(Color(0.55, 0.52, 0.45), 0.8), yaw)
+    var pins := [Vector2(-0.6, 0.3), Vector2(0.2, -0.2), Vector2(0.7, 0.35), Vector2(-0.2, -0.45), Vector2(0.5, -0.4)]
+    for k in pins.size():
+        var pp: Vector2 = pins[k]
+        _mdeco(_sphere_mesh(0.03, 0.06), _at(p, yaw, Vector3(pp.x, pp.y, 0.05)), _fm("red"))
+        if k > 0:
+            var a: Vector2 = pins[k - 1]
+            var mid := (a + pp) * 0.5
+            var l := (pp - a).length()
+            var thread := _deco(Vector3(l, 0.008, 0.005), _at(p, yaw, Vector3(mid.x, mid.y, 0.04)), _fm("red"), yaw)
+            thread.rotate_object_local(Vector3(0, 0, 1), atan2(pp.y - a.y, pp.x - a.x))
+    _label("ОПЕРАТИВНАЯ КАРТА", _at(p, yaw, Vector3(0, 0.8, 0.03)), facing, 28, Color(0.6, 0.08, 0.06))
+
+
+## Мэрия: колонны, бюст на постаменте, люстры, красная дорожка к кабинету.
+func _mayor_hall(o: Vector3, W: float, D: float, H: float) -> void:
+    var marble := _mat(Color(0.93, 0.91, 0.86), 0.35)
+    for cx: float in [-3.4, 3.4]:
+        for cz: float in [-1.8, 3.2]:
+            _solid(Vector3(0.6, 0.3, 0.6), o + Vector3(cx, 0.15, cz), marble)
+            _mdeco(_cyl_mesh(0.22, 0.24, H - 0.6, 14), o + Vector3(cx, (H - 0.6) * 0.5 + 0.3, cz), marble)
+            _collider(Vector3(0.45, H, 0.45), o + Vector3(cx, H * 0.5, cz))
+            _deco(Vector3(0.6, 0.3, 0.6), o + Vector3(cx, H - 0.15, cz), marble)
+    # бюст на постаменте (без лица — обобщённая скульптура)
+    var bp := o + Vector3(-7.0, 0, 1.2)
+    _solid(Vector3(0.7, 1.2, 0.7), bp + Vector3(0, 0.6, 0), _mat(Color(0.35, 0.12, 0.1), 0.4))
+    var bronze := _mat(Color(0.55, 0.42, 0.25), 0.35)
+    bronze.metallic = 0.7
+    _deco(Vector3(0.6, 0.35, 0.32), bp + Vector3(0, 1.38, 0), bronze)
+    _mdeco(_sphere_mesh(0.17, 0.4), bp + Vector3(0, 1.72, 0), bronze)
+    _label("ВОЖДЬ МИРОВОГО ПРОЛЕТАРИАТА", bp + Vector3(0.36, 0.85, 0), Vector3(1, 0, 0), 18, Color(1.0, 0.85, 0.4))
+    # люстры
+    var glass := _mat(Color(1, 0.97, 0.88), 0.2)
+    glass.emission_enabled = true
+    glass.emission = Color(1, 0.92, 0.75)
+    glass.emission_energy_multiplier = 2.0
+    for lz: float in [-1.0, 3.6]:
+        var lp := o + Vector3(0, H - 0.75, lz)
+        _deco(Vector3(0.03, 0.6, 0.03), lp + Vector3(0, 0.45, 0), _fm("chrome"))
+        _mdeco(_cyl_mesh(0.45, 0.25, 0.22, 16), lp, _mat(Color(0.8, 0.65, 0.3), 0.3))
+        for k in 8:
+            var a := k * TAU / 8.0
+            _mdeco(_sphere_mesh(0.07, 0.14), lp + Vector3(cos(a) * 0.45, -0.12, sin(a) * 0.45), glass)
+    # гербы на стенах
+    for sx: float in [-1.0, 1.0]:
+        _deco(Vector3(0.04, 1.2, 0.9), o + Vector3(sx * (W * 0.5 - 0.23), 2.6, -4.5), _mat(Color(0.75, 0.08, 0.07), 0.6))
+        _deco(Vector3(0.02, 0.5, 0.5), o + Vector3(sx * (W * 0.5 - 0.26), 2.7, -4.5), _mat(Color(0.95, 0.78, 0.3), 0.4))
+
+
+## База ОПГ: свой «цех» у каждой группировки и магнитофон-бобинник.
+func _gang_extras(gid: String, o: Vector3, W: float, D: float, H: float, accent: Color) -> void:
+    var wb := o + Vector3(W * 0.5 - 0.6, 0, 3.0)   # верстак
+    match gid:
+        "tyap":       # подпольный цех варёнок: швейная машинка, стопки джинсов, бак для варки
+            _deco(Vector3(0.35, 0.3, 0.5), wb + Vector3(0, 1.1, -0.6), _fm("black"))
+            for k in 3:
+                _deco(Vector3(0.45, 0.06, 0.55), wb + Vector3(0, 0.98 + k * 0.07, 0.6), _mat(Color(0.55, 0.65, 0.8).lerp(Color(0.85, 0.88, 0.92), k * 0.3), 0.9))
+            _mdeco(_cyl_mesh(0.35, 0.35, 0.7, 16), o + Vector3(W * 0.5 - 2.6, 0.35, 5.6), _fm("chrome"))
+            _label("ЦЕХ «ВАРЁНКИ»", wb + Vector3(-0.25, 2.6, 0), Vector3(-1, 0, 0), 46, accent.lightened(0.2))
+        "universam":  # фарца: двухкассетник, коробки с кассетами и пластинками
+            _deco(Vector3(0.6, 0.22, 0.25), wb + Vector3(0, 1.06, -0.4), _fm("black"))
+            for k in 8:
+                _deco(Vector3(0.11, 0.07, 0.02), wb + Vector3(-0.15 + (k % 4) * 0.12, 0.99, 0.3 + (k / 4) * 0.2), _mat(Color.from_hsv(k * 0.13, 0.6, 0.9), 0.6))
+            _f_crates(o + Vector3(W * 0.5 - 2.6, 0, 5.6), 0.0, 3)
+            _label("ДЕФИЦИТ", wb + Vector3(-0.25, 2.6, 0), Vector3(-1, 0, 0), 46, accent.lightened(0.2))
+        "solnce":     # разборка: запчасти, колёса, домкрат
+            for k in 3:
+                _mdeco(_cyl_mesh(0.3, 0.3, 0.2, 14), wb + Vector3(0, 1.08 + k * 0.21, -0.8), _fm("black"))
+            _deco(Vector3(0.5, 0.25, 0.35), wb + Vector3(0, 1.1, 0.4), _m["metal"])
+            _label("РАЗБОРКА", wb + Vector3(-0.25, 2.6, 0), Vector3(-1, 0, 0), 46, accent.lightened(0.2))
+        "kavkaz":     # ящики мандаринов, весы
+            _f_crates(o + Vector3(W * 0.5 - 2.6, 0, 5.6), 0.2, 4)
+            for k in 6:
+                _mdeco(_sphere_mesh(0.05, 0.1), wb + Vector3(-0.1 + (k % 3) * 0.1, 1.0, 0.4 + (k / 3) * 0.1), _mat(Color(1.0, 0.55, 0.1), 0.6))
+            _deco(Vector3(0.4, 0.15, 0.35), wb + Vector3(0, 1.03, -0.5), _fm("chrome"))
+            _label("МАНДАРИНЫ С ЮГА", wb + Vector3(-0.25, 2.6, 0), Vector3(-1, 0, 0), 40, accent.lightened(0.2))
+    # экран телевизора у дивана — «показывает» передачу
+    _screen(Vector2(0.48, 0.36), o + Vector3(-W * 0.5 + 2.76, 0.78, -5.66), Vector3(0, 0, 1), _screen_mat(float(gid.length()), Color(0.9, 0.9, 0.85)))
 
 
 # ================================================================ детали интерьеров фракций
@@ -2678,8 +3032,7 @@ func _interior_extras(fk: String, o: Vector3, W: float, D: float, H: float) -> v
             for bk in 7:
                 _deco(Vector3(0.03, 1.6, 0.03), rp + Vector3(-1.05 + bk * 0.35, 1.6, -0.25), _m["metal"])
             _label("ОРУЖЕЙНАЯ", rp + Vector3(0, 2.7, -0.28), Vector3(0, 0, -1), 36, Color(0.9, 0.9, 0.9))
-            _deco(Vector3(0.2, 0.12, 0.14), o + Vector3(3.1, 0.84, 0.9), _fm("black"), PI * 0.5)
-            _deco(Vector3(0.012, 0.3, 0.012), o + Vector3(3.15, 1.05, 0.95), _fm("black"))
+            pass
             # доска почёта
             _stand(o + Vector3(6.5, 2.2, D * 0.5 - 0.24), Vector3(0, 0, -1), 2.6, 1.4, "ДОСКА ПОЧЁТА", 8, Color(0.75, 0.08, 0.07))
         "kgb":
@@ -2731,10 +3084,7 @@ func _interior_extras(fk: String, o: Vector3, W: float, D: float, H: float) -> v
             _solid(Vector3(0.5, 0.08, 0.5), wp + Vector3(0, 0.04, 0), _fm("white"))
             _deco(Vector3(0.05, 1.6, 0.05), wp + Vector3(0, 0.85, -0.2), _fm("chrome"))
             _deco(Vector3(0.3, 0.2, 0.05), wp + Vector3(0, 1.65, -0.2), _fm("white"))
-            for bz: float in [-1.5, 1.5, 4.5]:
-                var dp := o + Vector3(11.6, 0, bz - 0.7)
-                _deco(Vector3(0.03, 1.9, 0.03), dp + Vector3(0, 0.95, 0), _fm("chrome"))
-                _deco(Vector3(0.12, 0.2, 0.06), dp + Vector3(0, 1.8, 0), _mat(Color(0.85, 0.92, 0.95, 0.7), 0.1))
+            pass
             _stand(o + Vector3(-W * 0.5 + 0.24, 2.2, -1.0), Vector3(1, 0, 0), 1.8, 1.2, "ГРИПП ОПАСЕН!", 3, Color(0.92, 0.92, 0.9))
             _stand(o + Vector3(-W * 0.5 + 0.24, 2.2, 1.4), Vector3(1, 0, 0), 1.8, 1.2, "МОЙТЕ РУКИ!", 2, Color(0.92, 0.92, 0.9))
         "fire":

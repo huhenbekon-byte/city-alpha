@@ -456,10 +456,17 @@ func _process(delta: float) -> void:
 
     _follow_seat()
     _event_tick(delta)
+    _update_faction_rooms(delta)
+    var fire_search: bool = _duty.fire_active() and not _duty._fire_found
+    _hud.radar.visible = fire_search and not _hud.phone_open
+    if fire_search:
+        _hud.radar.from = _focus()
+        _hud.radar.to = _duty.fire_pos
     _hint_t -= delta
     if _hint_t <= 0.0:
         _hint_t = 2.0
         _check_hints()
+        _hud.set_app_visible("radio", faction != "" and not FactionData.is_gang(faction))
     var focus := _focus()
     var hcam := get_viewport().get_camera_3d()
     if hcam:
@@ -1565,6 +1572,7 @@ func _save_game() -> void:
     cfg.set_value("player", "welcome_seen", welcome_seen)
     cfg.set_value("player", "rules_ok", rules_ok)
     cfg.set_value("player", "hints", hints_seen)
+    cfg.set_value("player", "gang_goods", gang_goods)
     cfg.set_value("player", "furniture", furniture)
     cfg.set_value("player", "skills", skills)
     cfg.set_value("player", "has_rod", has_rod)
@@ -1669,6 +1677,7 @@ func _load_game() -> void:
     rules_ok = bool(cfg.get_value("player", "rules_ok", false))
     var hs: Variant = cfg.get_value("player", "hints", {})
     hints_seen = hs if hs is Dictionary else {}
+    gang_goods = int(cfg.get_value("player", "gang_goods", 0))
     furniture = Array(cfg.get_value("player", "furniture", []))
     var sk = cfg.get_value("player", "skills", {})
     if sk is Dictionary:
@@ -2027,6 +2036,7 @@ func _setup_points() -> void:
         for ti in _tram.stops.size():
             _add_point(_tram.stops[ti]["sign"], 3.0, "ТРАМВАЙ", _tram_board.bind(ti), false, Color(0.95, 0.35, 0.3))
     _setup_rob_points()
+    _setup_interior_points()
     _setup_part2_points()
     _setup_part3_points()
     for wp: Vector3 in _city.workout_spots:
@@ -2985,6 +2995,9 @@ func _enter_building(fid: String) -> void:
 func _exit_building(fid: String) -> void:
     var site: Dictionary = _city.faction_sites[fid]
     _interior = ""
+    if _tape_on:
+        _tape_on = false
+        Music.stop_place()
     _player.global_position = site["out"] + Vector3(0, 0.3, 0)
     _player.velocity = Vector3.ZERO
     _player.set_camera_yaw(float(site["out_yaw"]))
@@ -3706,10 +3719,450 @@ func _on_app(id: String) -> void:
         "players":
             _hud.close_phone()
             _open_players()
+        "radio":
+            _hud.close_phone()
+            _open_radio()
         "admin":
             _hud.close_phone()
             if Net.online and _net_admin > 0:
                 Net.send_msg({"t": "adm"})
+
+
+# ---------------------------------------------------------------- интерьеры фракций: пульты, лифт, койки, база ОПГ
+
+var gang_goods := 0              # товар своего «цеха» (ОПГ): варёнки, кассеты, запчасти, мандарины
+var _craft_t := 0.0              # идёт работа в цехе
+var _craft_cd := 0.0             # цех остывает (новая партия — позже)
+var _heal_bed := false           # лежит на больничной койке
+var _tape_on := false
+var _safe_cd := 0.0
+
+## [товар (мн. ч.), что делаем в цехе, цена за штуку, трек магнитофона]
+const GANG_GOODS := {
+    "tyap": ["пары варёнок", "Шьём и варим джинсы-«варёнки»", 380, "radio_rock"],
+    "universam": ["импортных кассет", "Переписываем кассеты на двухкассетнике", 340, "radio_disco"],
+    "solnce": ["комплектов запчастей", "Разбираем машину на запчасти", 420, "radio_phonk"],
+    "kavkaz": ["ящиков мандаринов", "Принимаем ящики мандаринов с юга", 320, "radio_kavkaz"],
+}
+const CRAFT_TIME := 25.0
+const CRAFT_BATCH := 5
+
+
+func _setup_interior_points() -> void:
+    for fid: String in _city.interiors:
+        var inn: Dictionary = _city.interiors[fid]
+        var fc: Color = FactionData.get_faction(fid).get("color", Color.WHITE)
+        if inn.has("console"):
+            for seat: Array in inn["console"]:
+                _add_point(seat[0], 0.9, "ПУЛЬТ", _use_console.bind(seat), false, fc, false)
+        if inn.has("radio"):
+            _add_point(inn["radio"][0], 1.1, "ПУЛЬТ СВЯЗИ", _use_seat_radio.bind(inn["radio"]), false, fc, false)
+        if inn.has("dispatch"):
+            _add_point(inn["dispatch"][0], 1.1, "ДИСПЕТЧЕР", _use_seat_radio.bind(inn["dispatch"]), false, fc, false)
+        if inn.has("wardrobe"):
+            _add_point(inn["wardrobe"], 1.4, "ГАРДЕРОБ", _open_disguise, false, fc, false)
+        if inn.has("lift"):
+            _add_point(inn["lift"], 1.4, "ЛИФТ НА 2 ЭТАЖ", _ride_lift.bind(inn["floor2"], Vector3(0, 0, -1)), false, fc, false)
+            _add_point(inn["lift2"], 1.4, "ЛИФТ НА 1 ЭТАЖ", _ride_lift.bind(inn["lift"] + Vector3(0, 0.3, 0), Vector3(-1, 0, 0)), false, fc, false)
+            for bed: Array in inn["beds"]:
+                _add_point(bed[0] - (bed[1] as Vector3) * 0.1 + Vector3(0, 0, 0.9), 1.0, "ЛЕЧЬ", _lie_bed.bind(bed), false, fc, false)
+        if inn.has("sofa"):
+            _add_point(inn["sofa"][0], 1.0, "СЕСТЬ", _pose_here.bind(inn["sofa"], "chair", ""), false, fc, false)
+            for seat: Array in inn["cards"]:
+                _add_point(seat[0], 0.7, "КАРТЫ", _play_cards.bind(seat), false, fc, false)
+            _add_point(inn["bench"][0], 1.0, "ЖИМ ЛЁЖА", _gym_pose.bind(inn["bench"], "bench"), false, fc, false)
+            _add_point(inn["bag"][0], 1.0, "ГРУША", _gym_pose.bind(inn["bag"], "boxing"), false, fc, false)
+            _add_point(inn["armchair"][0], 1.0, "ТЕЛЕВИЗОР", _pose_here.bind(inn["armchair"], "chair",
+                    "По телевизору — «Спокойной ночи, малыши!» и футбол: «Спартак» — «Динамо»"), false, fc, false)
+            _add_point(inn["safe"], 1.0, "ОБЩАК", _open_obshak.bind(fid), false, fc, false)
+            _add_point(inn["craft"][0], 1.1, "ЦЕХ", _open_craft.bind(fid), false, fc, false)
+            _add_point(inn["tape"], 1.0, "МАГНИТОФОН", _toggle_tape.bind(fid), false, fc, false)
+    if _city.market != Vector3.ZERO:
+        _points.append({"pos": _city.market + Vector3(-6.0, 0, 3.0), "r": 2.0, "text": "БАРЫГА", "cb": _sell_goods,
+                "car": false, "gang_only": true})
+
+
+## Сесть/лечь в точке seat = [точка, куда смотреть] с позой key; note — что показать.
+func _pose_here(seat: Array, key: String, note: String) -> void:
+    if _player.pose_at(seat[0], seat[1], key):
+        if note != "":
+            _hud.show_toast(note)
+    else:
+        Sfx.play("error")
+
+
+func _use_console(seat: Array) -> void:
+    _player.pose_at(seat[0], seat[1], "typing")
+    _open_lookup()
+
+
+func _use_seat_radio(seat: Array) -> void:
+    _player.pose_at(seat[0], seat[1], "chair")
+    if faction == "" or FactionData.is_gang(faction):
+        _hud.show_toast("Пульт связи — только для сотрудников")
+        return
+    _open_radio()
+
+
+func _ride_lift(to: Vector3, facing: Vector3) -> void:
+    Sfx.play("click")
+    _player.global_position = to + Vector3(0, 0.3, 0)
+    _player.velocity = Vector3.ZERO
+    _player.set_camera_yaw(atan2(-facing.x, -facing.z))
+    _hud.show_toast("Лифт: приехали")
+
+
+## Больничная койка: лёжа здоровье быстро восстанавливается (бесплатно — для всех).
+func _lie_bed(bed: Array) -> void:
+    if _player.pose_at(bed[0], bed[1], "lie_bed"):
+        _heal_bed = true
+        _hud.show_toast("Лёг на койку: здоровье восстанавливается. Пошевели джойстиком, чтобы встать")
+
+
+## Штанга и груша: подход 8 секунд, сила растёт (как на турнике во дворе).
+func _gym_pose(seat: Array, key: String) -> void:
+    if _train_t > 0.0:
+        return
+    if hunger < 15.0:
+        _hud.show_toast("Голодный не накачаешься — сначала поешь")
+        return
+    var ok: bool = _player.pose_at(seat[0], seat[1], key) if key == "bench" else _player.play_emote(key)
+    if not ok:
+        Sfx.play("error")
+        return
+    _train_t = 8.0
+    _train_pos = _focus()
+    _hud.show_toast("Жим лёжа: не вставай 8 секунд" if key == "bench" else "Бьёшь грушу: не двигайся 8 секунд")
+
+
+## Карты за столом в базе ОПГ: «бура» на деньги. Шанс чуть меньше половины.
+func _play_cards(seat: Array) -> void:
+    _player.pose_at(seat[0], seat[1], "cards")
+    _open_dialog("Бура", "Пацаны сдают карты. Ставка?\nВыигрыш — вдвое больше ставки, шанс — как повезёт.",
+            [["Ставка 100 ₽", _cards_bet.bind(seat, 100)], ["Ставка 500 ₽", _cards_bet.bind(seat, 500)],
+            ["Ставка 1 000 ₽", _cards_bet.bind(seat, 1000)], ["Просто посидеть", _dialog.close]])
+
+
+func _cards_bet(seat: Array, bet: int) -> void:
+    _dialog.close()
+    if cash < bet:
+        Sfx.play("error")
+        _hud.show_toast("Ставят наличными — не хватает")
+        return
+    cash -= bet
+    if randf() < 0.46:
+        cash += bet * 2
+        _earned("casino", bet * 2)
+        Sfx.play("coin")
+        _hud.show_toast("Взял партию! +%s" % HudScript.format_money(bet), "money")
+    else:
+        Sfx.play("error", -6.0)
+        _hud.show_toast("Не повезло: −%s" % HudScript.format_money(bet))
+    _play_cards.call_deferred(seat)
+
+
+## Общак: взнос растит уважение в ОПГ (опыт для повышения).
+func _open_obshak(fid: String) -> void:
+    if faction != fid:
+        _hud.show_toast("Чужой общак не трогай")
+        Sfx.play("error")
+        return
+    _open_dialog("Общак", "Положи в общак — пацаны уважать будут (опыт для повышения).\nРаз в 5 минут.",
+            [["Положить 1 000 ₽", _obshak_put.bind(1000)], ["Положить 5 000 ₽", _obshak_put.bind(5000)], ["Закрыть", _dialog.close]])
+
+
+func _obshak_put(amount: int) -> void:
+    _dialog.close()
+    if _safe_cd > 0.0:
+        _hud.show_toast("Недавно уже клал — загляни через %d с" % int(_safe_cd))
+        return
+    if not _pay(amount, "Общак"):
+        return
+    _safe_cd = 300.0
+    faction_exp += 1 if amount < 5000 else 3
+    Sfx.play("coin")
+    _hud.show_toast("Положил в общак %s. Уважение растёт" % HudScript.format_money(amount), "money")
+    _save_game()
+
+
+## Цех ОПГ: у каждой группировки свой товар. Партия за 25 секунд работы, продаётся барыге на рынке.
+func _open_craft(fid: String) -> void:
+    if faction != fid:
+        _hud.show_toast("Это цех чужой группировки")
+        Sfx.play("error")
+        return
+    var g: Array = GANG_GOODS.get(fid, ["товара", "Работаем", 300, ""])
+    var text := "%s.\nНа руках: %d %s (максимум %d).\nПродать — барыге на рынке в Казани (метка «БАРЫГА»). Можно засветиться перед милицией." % [
+            g[1], gang_goods, g[0], CRAFT_BATCH * 3]
+    var buttons := []
+    if _craft_cd > 0.0:
+        text += "\n\nНовая партия будет через %d с." % int(_craft_cd)
+    elif gang_goods < CRAFT_BATCH * 3:
+        buttons.append(["Работать (%d с)" % int(CRAFT_TIME), _start_craft.bind(fid)])
+    if gang_goods > 0:
+        buttons.append(["Метка на барыгу", func() -> void:
+                _dialog.close()
+                _set_gps(_city.market + Vector3(-6.0, 0, 3.0), "Барыга", true)])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Цех — %s" % FactionData.get_faction(fid).get("title", ""), text, buttons)
+
+
+func _start_craft(fid: String) -> void:
+    _dialog.close()
+    var inn: Dictionary = _city.interiors[fid]
+    _player.global_position = (inn["craft"][0] as Vector3) + Vector3(0, 0.3, 0)
+    _player.set_camera_yaw(atan2(-(inn["craft"][1] as Vector3).x, -(inn["craft"][1] as Vector3).z))
+    _player._visual.rotation.y = atan2(-(inn["craft"][1] as Vector3).x, -(inn["craft"][1] as Vector3).z)
+    _player.play_emote("work")
+    _craft_t = CRAFT_TIME
+    _train_pos = _focus()
+    _hud.show_toast("Работаем! Не отходи от верстака %d секунд" % int(CRAFT_TIME))
+
+
+func _update_faction_rooms(delta: float) -> void:
+    _craft_cd = maxf(0.0, _craft_cd - delta)
+    _safe_cd = maxf(0.0, _safe_cd - delta)
+    if _craft_t > 0.0:
+        _craft_t -= delta
+        var me := _focus()
+        if Vector2(me.x - _train_pos.x, me.z - _train_pos.z).length() > 1.0 or _player.emote != "work":
+            _craft_t = 0.0
+            _hud.show_toast("Работу бросил — партия не готова")
+        elif _craft_t <= 0.0:
+            _player.emote = ""
+            gang_goods = mini(CRAFT_BATCH * 3, gang_goods + CRAFT_BATCH)
+            _craft_cd = 120.0
+            var g: Array = GANG_GOODS.get(faction, ["товара"])
+            Sfx.play("levelup", -8.0)
+            _hud.show_toast("Партия готова: +%d %s (всего %d). Неси барыге на рынок" % [CRAFT_BATCH, g[0], gang_goods], "money")
+            _save_game()
+    if _heal_bed:
+        if _player.seated != "pose":
+            _heal_bed = false
+        elif health < 100.0:
+            health = minf(100.0, health + 4.0 * delta)
+            if health >= 100.0:
+                Sfx.play("heal")
+                _hud.show_toast("Здоровье восстановлено")
+
+
+func _sell_goods() -> void:
+    if gang_goods <= 0:
+        _hud.show_toast("Барыга: «Принесёшь товар — поговорим»")
+        return
+    var g: Array = GANG_GOODS.get(faction, ["товара", "", 300])
+    var each := int(int(g[2]) * randf_range(0.85, 1.2))
+    var total := each * gang_goods
+    _open_dialog("Барыга", "«Беру %d %s по %d ₽. Итого %s. По рукам?»" % [gang_goods, g[0], each, HudScript.format_money(total)],
+            [["По рукам", _sell_goods_ok.bind(total)], ["Не сейчас", _dialog.close]])
+
+
+func _sell_goods_ok(total: int) -> void:
+    _dialog.close()
+    gang_goods = 0
+    cash += total
+    _earned("crime", total)
+    Sfx.play("coin")
+    _hud.show_toast("Сбыл товар: +%s" % HudScript.format_money(total), "money")
+    if randf() < 0.25:
+        _add_wanted(1, "спекуляция")
+    _save_game()
+
+
+func _toggle_tape(fid: String) -> void:
+    _tape_on = not _tape_on
+    if _tape_on:
+        var g: Array = GANG_GOODS.get(fid, ["", "", 0, "radio_retro"])
+        var track := String(g[3])
+        if not ResourceLoader.exists("res://music/%s.ogg" % track):
+            track = "radio_retro"
+        Music.play_place(track)
+        _hud.show_toast("Магнитофон «Электроника» играет")
+    else:
+        Music.stop_place()
+        _hud.show_toast("Магнитофон выключен")
+
+
+# ---------------------------------------------------------------- рация госслужб, база данных, маскировка КГБ
+
+var _calls: Array = []           # вызовы милиции, пришедшие по рации: {id, from, fac, pos, text, t}
+var kgb_disguise := ""           # КГБ: чужая форма "police:2" / "civil" (гражданское) / "" — своя
+
+
+func _open_radio() -> void:
+    if faction == "" or FactionData.is_gang(faction):
+        return
+    var fk := FactionData.base(faction)
+    var text := "Канал: %s.\n" % String(FactionData.get_faction(faction).get("name", ""))
+    var buttons := []
+    if fk == "police" or fk == "kgb":
+        var fresh := _calls.filter(func(c: Dictionary) -> bool: return Time.get_ticks_msec() / 1000.0 - float(c["t"]) < 900.0)
+        text += "Вызовов за 15 минут: %d." % fresh.size()
+        buttons.append(["Вызовы (%d)" % fresh.size(), _show_calls])
+    if fk != "police":
+        buttons.append(["Вызвать милицию сюда", _radio_call_input])
+    if fk == "fire":
+        text += "\nРадар пожаров включается сам на вызове «пожар»: зелёный экран справа ведёт к очагу."
+        if _duty.fire_active():
+            buttons.append(["Где пожар?", func() -> void:
+                    _dialog.close()
+                    _hud.show_toast("Радар: очаг %s, %d м" % [_duty._place(_duty.fire_pos), int(_focus().distance_to(_duty.fire_pos))])])
+    if fk == "kgb":
+        buttons.append(["Маскировка", _open_disguise])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Рация", text, buttons)
+
+
+func _radio_call_input() -> void:
+    _open_dialog("Вызов милиции", "Что случилось? Милиция увидит метку там, где ты стоишь.", [
+        ["Передать", func() -> void:
+            var t := _dialog.input_text()
+            _dialog.close()
+            _radio_call(t if t != "" else "Нужна помощь")],
+        ["Отмена", _dialog.close]], "Например: драка у мэрии")
+
+
+func _radio_call(text: String) -> void:
+    var p := _focus()
+    Sfx.play("notify")
+    if Net.online:
+        Net.send_msg({"t": "call", "x": snappedf(p.x, 0.1), "z": snappedf(p.z, 0.1), "text": text})
+        _hud.chat("Рация: «%s» — вызов милиции %s" % [text, _duty._place(p)], "faction")
+    else:
+        _hud.show_toast("Вызов передан. В одиночной игре милиция — только у игроков онлайн")
+
+
+func _on_police_call(m: Dictionary) -> void:
+    var pos := Vector3(float(m.get("x", 0)), 0, float(m.get("z", 0)))
+    var c := {"id": int(m.get("id", 0)), "from": String(m.get("from", "")), "fac": String(m.get("fac", "")), "pos": pos,
+            "text": String(m.get("text", "")), "t": Time.get_ticks_msec() / 1000.0}
+    _calls.push_front(c)
+    if _calls.size() > 10:
+        _calls.resize(10)
+    var who := String(FactionData.get_faction(String(c["fac"])).get("title", c["fac"]))
+    _hud.chat("РАЦИЯ (%s, %s): «%s» %s — %s" % [who, c["from"], c["text"], _duty._place(pos), _dist_text(_focus().distance_to(pos))], "warn")
+    _hud.show_toast("Вызов по рации: %s — %s" % [c["text"], _dist_text(_focus().distance_to(pos))], "warn")
+    Sfx.play("siren", -14.0, 1.4)
+
+
+func _show_calls() -> void:
+    var text := ""
+    var buttons := []
+    for c: Dictionary in _calls.slice(0, 6):
+        var ago := int((Time.get_ticks_msec() / 1000.0 - float(c["t"])) / 60.0)
+        text += "• %s (%s), %d мин назад: «%s» %s\n" % [c["from"], FactionData.get_faction(String(c["fac"])).get("title", ""), ago,
+                c["text"], _duty._place(c["pos"])]
+        buttons.append(["Принять: %s" % c["from"], _take_call.bind(c)])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Вызовы по рации", text if text != "" else "Вызовов нет.", buttons)
+
+
+func _take_call(c: Dictionary) -> void:
+    _dialog.close()
+    Net.send_msg({"t": "call_take", "id": c["id"]})
+    _set_gps(c["pos"], "Вызов: " + String(c["from"]), true)
+    _hud.show_toast("Вызов принят — метка на карте")
+
+
+## Пульт наблюдения (милиция и КГБ): кто в городе, где он, в розыске ли.
+func _open_lookup() -> void:
+    var fk := FactionData.base(faction)
+    if fk != "police" and fk != "kgb":
+        _hud.show_toast("Пульт — только для сотрудников милиции и КГБ")
+        Sfx.play("error")
+        return
+    Sfx.play("click")
+    if not Net.online:
+        _open_dialog("Пульт наблюдения", "Нет связи с центральной базой: она работает только в онлайне.\n\n" +
+                "Здесь видно всех игроков в городе: где они сейчас, в розыске ли, в машине ли, сколько в игре.",
+                [["Закрыть", _dialog.close]])
+        return
+    Net.send_msg({"t": "lookup"})
+    _hud.show_toast("Запрос в базу…")
+
+
+var _lookup_list: Array = []
+
+
+func _show_lookup(list: Array) -> void:
+    _lookup_list = list
+    _lookup_page(0, "")
+
+
+## Страница базы: по 6 человек, можно искать по нику (в онлайне бывает много игроков).
+func _lookup_page(page: int, query: String) -> void:
+    var q := query.strip_edges().to_lower()
+    var flt: Array = _lookup_list.filter(func(e: Array) -> bool: return q == "" or String(e[0]).to_lower().contains(q))
+    var per := 6
+    var pages := maxi(1, int(ceil(flt.size() / float(per))))
+    page = clampi(page, 0, pages - 1)
+    var text := "В городе: %d. Сначала — те, кто в розыске." % _lookup_list.size()
+    if q != "":
+        text += "\nПоиск «%s»: найдено %d." % [query, flt.size()]
+    if pages > 1:
+        text += " Стр. %d из %d." % [page + 1, pages]
+    var buttons := []
+    for e: Array in flt.slice(page * per, page * per + per):
+        var pos := Vector3(float(e[4]), 0, float(e[5]))
+        var fac := String(e[1])
+        var stars := int(e[2])
+        var nick := String(e[0])
+        text += "\n%s%s — %s%s%s, %d мин в игре" % [nick,
+                (" (%s)" % FactionData.get_faction(fac).get("title", fac)) if fac != "" else "",
+                _duty._place(pos).trim_prefix("в районе: "), ", в машине" if int(e[6]) == 1 else "",
+                (", РОЗЫСК %s" % "★".repeat(stars)) if stars > 0 else "", int(e[7])]
+        buttons.append(["Метка: %s" % nick, _lookup_mark.bind(pos, nick)])
+    if flt.is_empty() and q != "":
+        text += "\nНикого с таким ником нет."
+    if page + 1 < pages:
+        buttons.append(["Дальше →", _lookup_page.bind(page + 1, query)])
+    if page > 0:
+        buttons.append(["← Назад", _lookup_page.bind(page - 1, query)])
+    buttons.append(["Найти по нику", _lookup_search])
+    buttons.append(["Обновить", _open_lookup])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Пульт наблюдения", text, buttons)
+
+
+func _lookup_search() -> void:
+    _open_dialog("Поиск в базе", "Введи ник или его часть.", [["Найти", func() -> void:
+            _lookup_page(0, _dialog.input_text())],
+        ["Отмена", _lookup_page.bind(0, "")]], "Ник")
+
+
+func _lookup_mark(pos: Vector3, nick: String) -> void:
+    _dialog.close()
+    _set_gps(pos, "Пробит: %s" % nick, true)
+    _hud.show_toast("%s — метка на карте (где был при запросе)" % nick)
+
+
+## КГБ: переодеться в форму другой службы, ОПГ или в гражданское (видят все игроки).
+const DISGUISES := [["civil", "Гражданское"], ["police:2", "Форма милиции"], ["hospital:2", "Халат врача"],
+        ["fire:1", "Пожарный"], ["mayor:2", "Чиновник мэрии"], ["tyap:2", "Пацан «Тяп-Ляп»"], ["kavkaz:2", "Кавказское ОПГ"],
+        ["", "Своя форма КГБ"]]
+
+
+func _open_disguise() -> void:
+    if FactionData.base(faction) != "kgb":
+        return
+    if _interior != faction:
+        _dialog.close()
+        _hud.show_toast("Переодеться можно в гардеробе управления КГБ")
+        Sfx.play("error")
+        return
+    var buttons := []
+    for d: Array in DISGUISES:
+        buttons.append([String(d[1]), _set_disguise.bind(String(d[0]), String(d[1]))])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Маскировка", "Чужая форма видна всем игрокам. В базе милиции сотрудники КГБ не числятся.", buttons)
+
+
+func _set_disguise(key: String, title: String) -> void:
+    _dialog.close()
+    kgb_disguise = key
+    _apply_look()
+    Sfx.play("click")
+    _hud.show_toast(("Маскировка: %s" % title) if key != "" else "Снова в своей форме", "money")
 
 
 # ---------------------------------------------------------------- панель администратора
@@ -5088,6 +5541,8 @@ var _last_uniform := "?"
 func _uniform_key() -> String:
     if faction == "" or _player == null:
         return ""
+    if kgb_disguise != "" and FactionData.base(faction) == "kgb":   # маскировка — всегда, пока не снял
+        return "" if kgb_disguise == "civil" else kgb_disguise
     var on := FactionData.is_gang(faction) or _duty.active or _interior == faction
     return "%s:%d" % [faction, faction_rank] if on else ""
 
@@ -5103,7 +5558,9 @@ func _apply_look() -> void:
         _equip_weapon()
     if skin != "":
         return
-    var u := {} if _last_uniform == "" else FactionData.uniform(faction, faction_rank)
+    var ufac := _last_uniform.get_slice(":", 0) if _last_uniform.contains(":") else faction
+    var urank := int(_last_uniform.get_slice(":", 1)) if _last_uniform.contains(":") else faction_rank
+    var u := {} if _last_uniform == "" else FactionData.uniform(ufac, urank)
     # головной убор формы: фуражка, шляпа, «петушок», каска, шапочка...
     if u.is_empty():
         var own_hat: Array = Clothes.hat(look)   # своя шапка из магазина одежды
@@ -5125,7 +5582,7 @@ func _apply_look() -> void:
         if u.get(flag, false):
             style.append(flag)
     if u.get("badge", false):
-        style.append("badge:" + FactionData.base(faction))
+        style.append("badge:" + FactionData.base(ufac))
     tex["jacket_style"] = ",".join(PackedStringArray(style))
     _player.set_look(cols, tex)
 
@@ -5140,15 +5597,20 @@ func _is_drink(item: String) -> bool:
     return false
 
 
-## Жесты: на корточки (как пацаны у подъезда), отдать честь, руки за спину.
+## Жесты и позы: машет, звонит, руки вверх, хлопает, отжимается, «присядка», сидит на полу...
+const EMOTES := [["wave", "Помахать"], ["handsup", "Руки вверх"], ["phone", "Звонок"], ["arms", "Руки на груди"],
+        ["think", "Задуматься"], ["facepalm", "Рука-лицо"], ["point", "Показать"], ["clap", "Хлопать"],
+        ["shrug", "Пожать плечами"], ["watch", "На часы"], ["salute", "Отдать честь"], ["rest", "Руки за спину"],
+        ["squat", "На корточки"], ["sitfloor", "Сесть на пол"], ["lie", "Лечь"], ["pushup", "Отжиматься"],
+        ["dance", "Танец"], ["prisyadka", "Вприсядку"]]
+
+
 func _open_emotes() -> void:
-    var gang := FactionData.is_gang(faction)
-    var buttons := [["Сесть на корточки", _do_emote.bind("squat")], ["Отдать честь", _do_emote.bind("salute")],
-            ["Руки за спину", _do_emote.bind("rest")], ["Закрыть", _dialog.close]]
-    if gang:
-        buttons.push_front(["По-пацански: на корты", _do_emote.bind("squat")])
-        buttons.remove_at(1)
-    _open_dialog("Жесты", "Пошевели джойстиком — и жест закончится.", buttons)
+    var buttons := []
+    for e: Array in EMOTES:
+        buttons.append([String(e[1]), _do_emote.bind(String(e[0]))])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Жесты", "Пошевели джойстиком — и жест закончится. Другие игроки видят твои жесты.", buttons)
 
 
 func _do_emote(key: String) -> void:
@@ -5220,6 +5682,7 @@ func _spawn_station_life() -> void:
     _spawn_scooter_rent()
     _spawn_gang_crews()
     _spawn_faction_staff()
+    _spawn_street_life()
     var tops := ["cloth_wool_gray", "cloth_quilted_navy", "cloth_cardigan", "cloth_check_blue", "cloth_bolonya_green",
             "cloth_sweater", "cloth_gabardine", "cloth_corduroy"]
     var bottoms := ["cloth_wool_black", "cloth_trousers_brown", "cloth_denim", "cloth_wool_gray"]
@@ -5420,6 +5883,77 @@ func _spawn_gang_crews() -> void:
             var look := (side + fwd).normalized() if k == 0 else ((-side + fwd).normalized() if k == 2 else fwd)
             n.rotation.y = atan2(look.x, look.z)
             add_child(n)
+
+
+## Жизнь во дворах: бабушки на лавочках, мужики беседуют, пацаны на кортах, кто-то звонит, кто-то отжимается.
+## Каждая сценка — у своей лавочки; издалека люди прячутся (npc.gd), в «лёгком» режиме сценок меньше.
+const STREET_SCENES := [
+    [["sitting_idle", "bench", true], ["sitting_idle", "bench2", true]],                  # бабушки на лавке
+    [["idle_talking", "", false], ["pose_arms", "", false]],                              # мужики спорят
+    [["pose_squat", "", false], ["pose_squat", "", false], ["pose_phone", "", false]],    # пацаны на кортах
+    [["sitting_idle", "bench", false], ["pose_think", "", false]],                        # шахматы во дворе
+    [["anim_pushup", "", false], ["anim_clap", "", false]],                               # спорт: один отжимается, другой считает
+    [["pose_phone", "", true], ["idle", "", true]],                                        # подружки
+]
+
+
+func _spawn_street_life() -> void:
+    if _city.benches.is_empty():
+        return
+    var lite := bool(_menu.settings.get("lite", false))
+    var count := 4 if lite else 10
+    var rng := RandomNumberGenerator.new()
+    rng.seed = 1984
+    var used := {}
+    var looks := [["cloth_corduroy", "cloth_trousers_brown"], ["cloth_nylon_blue", "cloth_jeans"], ["cloth_tracksuit", "cloth_tracksuit"],
+            ["cloth_wool_gray", "cloth_wool_black"], ["cloth_quilted_navy", "cloth_jersey_gray"], ["cloth_gabardine", "cloth_wool_black"]]
+    var made := 0
+    var tries := 0
+    while made < count and tries < 200:
+        tries += 1
+        var bi: int = rng.randi() % _city.benches.size()
+        var bn: Array = _city.benches[bi]
+        var base: Vector3 = bn[0]
+        var key := "%d|%d" % [int(base.x / 40.0), int(base.z / 40.0)]
+        if used.has(key) or base.x > 1500.0 or absf(base.z) > 1500.0:
+            continue
+        used[key] = true
+        var facing: Vector3 = bn[1]
+        var side := Vector3(facing.z, 0, -facing.x)
+        var scene: Array = STREET_SCENES[made % STREET_SCENES.size()]
+        for k in scene.size():
+            var role: Array = scene[k]
+            var n = NpcScript.new()
+            n.npc_name = ""
+            n.mark = false
+            n.collide = true
+            n.female = bool(role[2])
+            n.beard = not n.female and rng.randf() < 0.4
+            n.alt_hair = rng.randf() < 0.5
+            n.hair_color = [Color(0.12, 0.08, 0.06), Color(0.35, 0.25, 0.15), Color(0.7, 0.68, 0.65)][rng.randi() % 3]
+            var lk: Array = looks[rng.randi() % looks.size()]
+            n.jacket = String(lk[0])
+            n.pants = String(lk[1])
+            n.anim = String(role[0])
+            var pos: Vector3
+            var look_dir := facing
+            match String(role[1]):
+                "bench":
+                    pos = base + facing * 0.29 + side * 0.45
+                "bench2":
+                    pos = base + facing * 0.29 - side * 0.45
+                _:
+                    # стоят сбоку от лавки кружком (перед лавкой бывает парапет или стена) и смотрят друг на друга
+                    var gc := base + side * 2.2 + facing * 0.5
+                    var ang := k * TAU / 3.0 + 0.4
+                    pos = gc + Vector3(cos(ang), 0, sin(ang)) * 0.8
+                    look_dir = (gc - pos).normalized()
+            if n.anim == "anim_pushup":
+                look_dir = side
+            n.position = Vector3(pos.x, base.y, pos.z)
+            n.rotation.y = atan2(look_dir.x, look_dir.z)
+            add_child(n)
+        made += 1
 
 
 ## У зданий госорганизаций дежурят сотрудники в форме: мужчина и женщина (женская форма — outfit_f_*).
@@ -7261,10 +7795,11 @@ func _remote_weapon(r: Dictionary, wid: String) -> void:
     var n: Node3D = r["npc"]
     if not is_instance_valid(n):
         return
-    var old = n.get_meta("weapon_node", null)
+    var old = n.get_meta("weapon_node") if n.has_meta("weapon_node") else null
     if old != null and is_instance_valid(old):
         (old as Node).queue_free()
-    n.set_meta("weapon_node", null)
+    if n.has_meta("weapon_node"):
+        n.remove_meta("weapon_node")
     if wid == "":
         return
     var sks := n.find_children("*", "Skeleton3D", true, false)
@@ -7321,7 +7856,7 @@ func _chat_bubble(x: String, me: bool) -> void:
         var holder: Node3D = r["car"] if r["car"] != null and is_instance_valid(r["car"]) else r["npc"]
         if not is_instance_valid(holder):
             return
-        var old = holder.get_meta("bubble", null)
+        var old = holder.get_meta("bubble") if holder.has_meta("bubble") else null
         if old != null and is_instance_valid(old):
             (old as Node).queue_free()
         var l := Label3D.new()
@@ -7338,9 +7873,7 @@ func _chat_bubble(x: String, me: bool) -> void:
         l.visibility_range_end = 40.0
         holder.add_child(l)
         holder.set_meta("bubble", l)
-        get_tree().create_timer(6.0).timeout.connect(func() -> void:
-            if is_instance_valid(l):
-                l.queue_free())
+        get_tree().create_timer(6.0).timeout.connect(l.queue_free)   # если пузырь уже сменился — связь снимется сама
         return
 
 
@@ -7402,7 +7935,8 @@ func _on_net_states(list: Array) -> void:
             r["pvel"] = Vector3.ZERO
         r["ptt"] = pnow
         r["tpos"] = st[0]
-        r["tyaw"] = float(st[1])
+        # у игрока модель внутри _visual развёрнута на 180° (смотрит в -Z), у NPC — нет (смотрит в +Z)
+        r["tyaw"] = float(st[1]) + PI
         r["anim"] = String(st[2])
         r["aspeed"] = float(st[3])
         var w := int(st[6]) if st.size() > 6 else 0
@@ -7859,6 +8393,16 @@ func _on_server_msg(m: Dictionary) -> void:
             _on_net_act(m)
         "adm":
             _show_admin_panel(m)
+        "lookup":
+            _show_lookup(m.get("list", []))
+        "call":
+            _on_police_call(m)
+        "call_taken":
+            var by := String(m.get("by", ""))
+            if String(m.get("from", "")) == Net.nick:
+                _hud.show_toast("Вызов принял наряд: %s. Едут к тебе" % by, "money")
+            else:
+                _hud.chat("Рация: вызов от %s принял %s" % [m.get("from", ""), by], "faction")
         "event":
             _on_city_event(m)
         "event_end":

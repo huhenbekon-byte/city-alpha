@@ -859,6 +859,56 @@ async function adminExtra(p, cmd, arg, rest, lvl) {
   return notice(p, 'Неизвестная команда. /help admin');
 }
 
+// ---------------------------------------------------------------- база данных милиции/КГБ и вызовы по рации
+// Пульт в милиции и КГБ: кто сейчас в городе, где (район считает телефон по координатам), в розыске ли.
+// Сотрудники КГБ для милиции «не числятся»: их фракция скрыта.
+function onLookup(p) {
+  if (!p.acc || !POLICE.includes(p.acc.faction)) return notice(p, 'Нет доступа к базе');
+  if (Date.now() - (p.lookT || 0) < 3000) return;
+  p.lookT = Date.now();
+  const kgb = p.acc.faction === 'kgb';
+  const list = [];
+  for (const q of players.values()) {
+    if (!q.name || !q.acc || q === p) continue;
+    const s = q.s || [0, 0, 0];
+    const fac = q.acc.faction === 'kgb' && !kgb ? '' : (q.acc.faction || '');
+    list.push([q.acc.nick, fac, (s[8] | 0), (s[9] | 0), Math.round(s[0]), Math.round(s[2]), s[6] ? 1 : 0,
+      Math.round((Date.now() - (q.joinT || Date.now())) / 60000)]);
+  }
+  list.sort((a, b) => b[2] - a[2] || a[0].localeCompare(b[0]));
+  send(p, { t: 'lookup', list: list.slice(0, 60) });
+}
+
+// Вызов милиции по рации (мэрия, больница, пожарные, КГБ): всем милиционерам — точка на карте.
+const CALLS = new Map();
+let callSeq = 0;
+function onCall(p, m) {
+  if (!p.acc || !p.acc.faction || GANGS.includes(p.acc.faction)) return notice(p, 'Рация есть только у госслужб');
+  if (Date.now() - (p.callT || 0) < 30000) return notice(p, 'Рация занята — подожди полминуты');
+  p.callT = Date.now();
+  const x = +m.x, z = +m.z;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+  const id = ++callSeq;
+  const text = String(m.text || '').slice(0, 120);
+  CALLS.set(id, { id, from: p.acc.nick, fac: p.acc.faction, x, z, text, t: Date.now(), taken: '' });
+  for (const [k, c] of CALLS) if (Date.now() - c.t > 15 * 60000) CALLS.delete(k);
+  let cops = 0;
+  for (const q of players.values()) if (q.acc && POLICE.includes(q.acc.faction) && q !== p) {
+    send(q, { t: 'call', id, from: p.acc.nick, fac: p.acc.faction, x, z, text });
+    cops++;
+  }
+  audit('вызов', `${p.acc.nick} (${p.acc.faction}): ${text || 'без текста'}`, [p.acc.nick]);
+  notice(p, cops ? `Вызов передан. Милиционеров в городе: ${cops}` : 'Вызов записан, но сейчас в городе нет милиции');
+}
+function onCallTake(p, m) {
+  const c = CALLS.get(m.id | 0);
+  if (!p.acc || !POLICE.includes(p.acc.faction) || !c) return;
+  if (c.taken) return notice(p, `Вызов уже принял ${c.taken}`);
+  c.taken = p.acc.nick;
+  for (const q of players.values()) if (q.acc && (q.acc.nick === c.from || POLICE.includes(q.acc.faction)))
+    send(q, { t: 'call_taken', id: c.id, by: p.acc.nick, from: c.from });
+}
+
 // ---------------------------------------------------------------- события сервера
 // Раз в 25–40 минут где-то в городе появляется «находка»: кто первым добежит или доедет — получает награду.
 // Точки — дворы и подъезды из city_builder (город строится одинаково у всех, seed 1977).
@@ -933,6 +983,7 @@ function onMessage(p, m) {
       send(p, { t: 'bizs', map: bizMap(p) });
       send(p, worldMsg());
       if (ev) send(p, eventMsg());
+      p.joinT = Date.now();
       for (const q of players.values()) if (q !== p && q.name) send(q, { t: 'join', id: p.id, name: p.name, info: p.info });
       for (const q of players.values()) if (q !== p && q.name && q.pcars && q.pcars.length) send(p, { t: 'pcars', id: q.id, l: q.pcars });
       return log(`вошёл ${p.name} (#${p.id}), онлайн ${online()}`);
@@ -949,6 +1000,9 @@ function onMessage(p, m) {
     case 'say': return onSay(p, m);
     case 'adm': return onAdminPanel(p);
     case 'event_claim': return onEventClaim(p, m);
+    case 'lookup': return onLookup(p);
+    case 'call': return onCall(p, m);
+    case 'call_take': return onCallTake(p, m);
     case 'money': return onMoney(p, m);
     case 'give': return onGive(p, m);
     case 'faction': return onFaction(p, m);
