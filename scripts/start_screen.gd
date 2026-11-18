@@ -5,6 +5,18 @@ extends Control
 signal server_chosen(index: int)
 
 const MenuScript := preload("res://scripts/menu.gd")
+const Ui := preload("res://scripts/ussr_ui.gd")
+## Советы на экране загрузки — меняются каждые 4 секунды.
+const TIPS := [
+    "Совет: паспорт выдают в мэрии, права — в автошколе на площади.",
+    "Совет: сытость падает медленно — поесть можно в ларьке «ЕДА» или дома.",
+    "Совет: в игре московское время — ночью на улицах темно и горят фонари.",
+    "Совет: вступить в организацию — в отделе кадров её здания.",
+    "Совет: в ДК крутят кино, а вечером — дискотека.",
+    "Совет: на слабом планшете включи «Слабое устройство» в настройках.",
+    "Совет: свою машину можно купить на Общем рынке.",
+    "Совет: зарплата во фракции приходит каждые 3 минуты.",
+]
 const MAIN_BG := "res://textures/menu_main.jpg"
 const PLAY_TEX := "res://textures/menu_play.png"
 const GEAR_TEX := "res://textures/menu_gear.png"
@@ -33,6 +45,9 @@ var _load_bar: ProgressBar
 var _load_text: Label
 var _time := 0.0
 var _hover := false
+var _tip: Label
+var _tip_i := 0
+var _tip_t := 0.0
 
 
 func _ready() -> void:
@@ -55,6 +70,12 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
     _time += delta
+    if _tip and _page_loading.visible:
+        _tip_t += delta
+        if _tip_t >= 4.0:
+            _tip_t = 0.0
+            _tip_i = (_tip_i + 1) % TIPS.size()
+            _tip.text = TIPS[_tip_i]
     if _play and _page_main.visible:
         # кнопка «дышит», под пальцем — чуть больше и ярче
         var k := 1.0 + 0.018 * sin(_time * 3.0) + (0.03 if _hover else 0.0)
@@ -129,7 +150,24 @@ func _build_main() -> void:
     gear.offset_bottom = 130
     gear.pressed.connect(_on_settings)
 
-    var ver := _text(_page_main, "CITY ALPHA · альфа-версия", 18, Color(1, 1, 1, 0.55))
+    # логотип: эмблема и название, под ним — где идёт действие
+    var logo := HBoxContainer.new()
+    logo.add_theme_constant_override("separation", 16)
+    logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    _page_main.add_child(logo)
+    logo.position = Vector2(36, 26)
+    logo.add_child(Ui.Emblem.new(40.0))
+    var lcol := VBoxContainer.new()
+    lcol.add_theme_constant_override("separation", -6)
+    logo.add_child(lcol)
+    var big := _text(lcol, "СССР РП", 64, Ui.GOLD)
+    big.label_settings.outline_size = 10
+    big.label_settings.outline_color = Color(0.25, 0.03, 0.02, 0.9)
+    big.label_settings.shadow_size = 6
+    big.label_settings.shadow_color = Color(0, 0, 0, 0.6)
+    _text(lcol, "КАЗАНЬ · ПЯТИГОРСК · БУСАЕВО · 1987", 18, Ui.CREAM)
+
+    var ver := _text(_page_main, "СССР РП · альфа-версия", 18, Color(1, 1, 1, 0.55))
     ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
     ver.offset_left = 24
     ver.offset_top = -44
@@ -346,6 +384,20 @@ func _build_loading() -> void:
     _load_text.offset_top = -150
     _load_text.offset_bottom = -100
 
+    _tip = _text(_page_loading, TIPS[0], 22, Ui.CREAM)
+    _tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _tip.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+    _tip.offset_left = -560
+    _tip.offset_right = 560
+    _tip.offset_top = -60
+    _tip.offset_bottom = -26
+    var logo := HBoxContainer.new()
+    logo.add_theme_constant_override("separation", 12)
+    _page_loading.add_child(logo)
+    logo.position = Vector2(30, 24)
+    logo.add_child(Ui.Emblem.new(30.0))
+    _text(logo, "СССР РП", 46, Ui.GOLD)
+
     _load_bar = ProgressBar.new()
     _load_bar.show_percentage = false
     _load_bar.max_value = 100.0
@@ -353,7 +405,9 @@ func _build_loading() -> void:
     under.bg_color = Color(0, 0, 0, 0.55)
     under.set_corner_radius_all(8)
     var fill := StyleBoxFlat.new()
-    fill.bg_color = GOLD
+    fill.bg_color = Ui.RED_LIGHT
+    fill.border_color = GOLD
+    fill.set_border_width_all(2)
     fill.set_corner_radius_all(8)
     _load_bar.add_theme_stylebox_override("background", under)
     _load_bar.add_theme_stylebox_override("fill", fill)

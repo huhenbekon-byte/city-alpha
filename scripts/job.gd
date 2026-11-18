@@ -37,6 +37,11 @@ var _label: Label3D
 var _passenger: Node3D
 var _arm: Node3D
 var _shirt_mat: StandardMaterial3D
+var _pax: Array = []          # настоящие люди-пассажиры (модель персонажа), по одному на вызов
+const NpcScript := preload("res://scripts/npc.gd")
+const PAX_LOOKS := [["cloth_bolonya_green", "cloth_wool_black", false], ["cloth_cardigan", "cloth_acidwash", true],
+        ["cloth_gabardine", "cloth_trousers_brown", false], ["cloth_chintz", "cloth_chintz", true],
+        ["cloth_wool_gray", "cloth_denim_blue", false]]
 
 
 func _ready() -> void:
@@ -100,6 +105,36 @@ func stop() -> void:
     state = State.OFF
     _marker.visible = false
     _passenger.visible = false
+    _clear_pax()
+
+
+## Пассажир — живой человек (модель персонажа, жестикулирует «idle_talking»); нет модели — простой человечек.
+func _spawn_pax(spot: Vector3) -> bool:
+    _clear_pax()
+    if not preload("res://scripts/outfits.gd").human():
+        return false
+    var look: Array = PAX_LOOKS[_rng.randi() % PAX_LOOKS.size()]
+    var n = NpcScript.new()
+    n.npc_name = "ПАССАЖИР"
+    n.female = bool(look[2])
+    n.jacket = String(look[0])
+    n.pants = String(look[1])
+    n.beard = false
+    n.mark = false
+    n.collide = false
+    n.anim = "idle_talking"
+    n.suitcase = _rng.randf() < 0.4
+    n.position = spot
+    add_child(n)
+    _pax.append(n)
+    return true
+
+
+func _clear_pax() -> void:
+    for n in _pax:
+        if is_instance_valid(n):
+            n.queue_free()
+    _pax.clear()
 
 
 func has_target() -> bool:
@@ -169,7 +204,7 @@ func _new_order(from: Vector3) -> void:
         _set_target(spot, "ПАССАЖИР", PICKUP_COLOR)
         _passenger.position = Vector3(spot.x, spot.y, spot.z)
         _shirt_mat.albedo_color = PASSENGER_SHIRTS[_rng.randi() % PASSENGER_SHIRTS.size()]
-        _passenger.visible = true
+        _passenger.visible = not _spawn_pax(spot)
         state = State.TO_PICKUP
         message.emit("Вызов такси! Пассажир ждёт у подъезда")
         return
@@ -195,6 +230,7 @@ func _picked_up() -> void:
     var dist: float
     if kind == "taxi":
         _passenger.visible = false
+        _clear_pax()
         to = _pick_point(city.dropoffs, from, 150.0, 450.0)
         dist = _flat_dist(from, to)
         reward = int(round((200.0 + dist * 2.2) / 10.0)) * 10

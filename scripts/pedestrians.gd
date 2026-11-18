@@ -6,8 +6,10 @@ extends Node3D
 const CityBuilder := preload("res://scripts/city_builder.gd")
 const BodyMesh := preload("res://scripts/body_mesh.gd")
 const Poses := preload("res://scripts/poses.gd")
+const Hats := preload("res://scripts/hats.gd")
 
 const COUNT := 44
+var count := COUNT   # сколько создать (на слабом устройстве меньше)
 const WALK := 34.0          # середина тротуара от центра квартала
 const SPEED := 1.4
 const SHIRTS := [
@@ -61,7 +63,7 @@ func setup() -> void:
                     _scenes[k] = sc
     _skin = StandardMaterial3D.new()
     _skin.albedo_color = Color(0.87, 0.68, 0.55)
-    for i in COUNT:
+    for i in count:
         var p := _make_ped()
         _place_random(p)
         _peds.append(p)
@@ -453,6 +455,31 @@ func _make_ped_3d() -> Dictionary:
             mesh_i.material_override = hair_mat
         elif nm.contains("superhero") or nm.contains("body"):
             mesh_i.material_override = mat
+    # рост у всех чуть разный
+    model.scale *= _rng.randf_range(0.94, 1.05)
+    # головные уборы: в холода (октябрь–апрель) у многих шапки — «петушок», ондатра, кепка
+    var month := int(Time.get_date_dict_from_system()["month"])
+    var cold := month >= 10 or month <= 4
+    var hat_kind := ""
+    if cold and _rng.randf() < (0.55 if count >= COUNT else 0.3):   # на слабом устройстве шапок меньше
+        hat_kind = ["petushok", "petushok", "ondatra", "kepka"][_rng.randi() % 4] if not female else ["petushok", "ondatra"][_rng.randi() % 2]
+    elif not female and _rng.randf() < 0.15:
+        hat_kind = "kepka"
+    if hat_kind != "":
+        var sks2 := model.find_children("*", "Skeleton3D", true, false)
+        if not sks2.is_empty() and (sks2[0] as Skeleton3D).find_bone("Head") >= 0:
+            var att := BoneAttachment3D.new()
+            att.bone_name = "Head"
+            sks2[0].add_child(att)
+            var cols := [Color(0.62, 0.12, 0.1), Color(0.15, 0.25, 0.5), Color(0.2, 0.2, 0.22), Color(0.85, 0.82, 0.75), Color(0.25, 0.4, 0.25)]
+            var h := Hats.build(hat_kind, cols[_rng.randi() % cols.size()])
+            preload("res://scripts/outfits.gd").place_hat(h, female)
+            att.add_child(h)
+            if Hats.covers_hair(hat_kind):
+                for mi2: Node in model.find_children("*", "MeshInstance3D", true, false):
+                    var n2 := String(mi2.name).to_lower()
+                    if n2.contains("hair") and not n2.contains("beard"):
+                        (mi2 as MeshInstance3D).visible = false
     return {"root": root, "legs": [], "pos": Vector3.ZERO, "corners": [], "idx": 0, "anim": ap, "anim_state": walk_a,
             "walk": walk_a, "idle": idle_a, "die": die_a, "run": _find_anim(ap, "jog"),
             "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0, "fear": 0.0, "dodge": Vector3.ZERO,

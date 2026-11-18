@@ -772,7 +772,101 @@ func _nature_mesh(model: String, folder := "nature") -> Mesh:
     root.free()
     if found and folder == "nature":
         _retexture_tree(found, model)
+        if not model.begins_with("pine") and _has_tex("leaves_tree"):
+            found = _leafify(found, model)
     return found
+
+
+## Пышная листва: вокруг каждого «шара» кроны Quaternius — десятки карточек с листьями (прозрачный фон),
+## сам шар чуть меньше и темнее — внутри кроны, чтобы не было просветов. Силуэт — живой, а не угловатый.
+## Осенью (сентябрь–ноябрь) листва желтеет.
+const LEAF_CARD := 0.62        # размер карточки в единицах модели (дерево ставится ×3)
+const LEAF_DENSITY := 2.4      # карточек на единицу площади кроны
+
+func _leafify(mesh: Mesh, model: String) -> Mesh:
+    var birch := model.begins_with("birch")
+    var bush := model.begins_with("bush")
+    var out := ArrayMesh.new()
+    var cards := SurfaceTool.new()
+    cards.begin(Mesh.PRIMITIVE_TRIANGLES)
+    var lr := RandomNumberGenerator.new()
+    lr.seed = hash(model)
+    var any := false
+    for i in mesh.get_surface_count():
+        var mat: Material = mesh.surface_get_material(i)
+        var arr: Array = mesh.surface_get_arrays(i)
+        if mat == null or not mat.has_meta("foliage"):
+            out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+            out.surface_set_material(out.get_surface_count() - 1, mat)
+            continue
+        any = true
+        var V: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+        var N: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+        var I: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+        if I.is_empty():
+            for k in V.size():
+                I.append(k)
+        # центр шара — чтобы сжать его внутрь кроны
+        var cen := Vector3.ZERO
+        for v in V:
+            cen += v
+        cen /= maxf(1.0, V.size())
+        var inner: Array = arr.duplicate()
+        var IV := PackedVector3Array()
+        IV.resize(V.size())
+        for k in V.size():
+            IV[k] = cen + (V[k] - cen) * 0.86
+        inner[Mesh.ARRAY_VERTEX] = IV
+        out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, inner)
+        var dark := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+        dark.albedo_color = dark.albedo_color.darkened(0.18)
+        out.surface_set_material(out.get_surface_count() - 1, dark)
+        # карточки по поверхности шара: число — по площади треугольника
+        for t in range(0, I.size(), 3):
+            var a := V[I[t]]
+            var b := V[I[t + 1]]
+            var c := V[I[t + 2]]
+            var area := (b - a).cross(c - a).length() * 0.5
+            var nc := area * LEAF_DENSITY + lr.randf()
+            var nrm := ((N[I[t]] + N[I[t + 1]] + N[I[t + 2]]) / 3.0).normalized() if not N.is_empty() else (b - a).cross(c - a).normalized()
+            while nc >= 1.0:
+                nc -= 1.0
+                var u := lr.randf()
+                var w := lr.randf()
+                if u + w > 1.0:
+                    u = 1.0 - u
+                    w = 1.0 - w
+                var p := a + (b - a) * u + (c - a) * w + nrm * lr.randf_range(-0.05, 0.12)
+                _leaf_card(cards, p, nrm, lr, LEAF_CARD * lr.randf_range(0.75, 1.25) * (0.8 if bush else 1.0))
+    if not any:
+        return mesh
+    var lm := StandardMaterial3D.new()
+    lm.albedo_texture = _tex_mip("res://textures/leaves_%s.png" % ("birch" if birch else "tree"))
+    lm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+    lm.alpha_scissor_threshold = 0.45
+    lm.cull_mode = BaseMaterial3D.CULL_DISABLED
+    lm.roughness = 1.0
+    var month := int(Time.get_date_dict_from_system()["month"])
+    lm.albedo_color = Color(1.06, 0.96, 0.66) if month in [10, 11] else (Color(1.03, 1.0, 0.82) if month == 9 else Color.WHITE)
+    cards.set_material(lm)
+    cards.commit(out)
+    return out
+
+
+## Одна карточка листвы: квадрат примерно «лицом наружу», случайно повёрнутый; нормаль — наружу от кроны
+## (так крона освещается мягко, как шар, без плоских бликов).
+func _leaf_card(st: SurfaceTool, p: Vector3, nrm: Vector3, lr: RandomNumberGenerator, size: float) -> void:
+    var face := (nrm + Vector3(lr.randf_range(-0.6, 0.6), lr.randf_range(-0.4, 0.6), lr.randf_range(-0.6, 0.6))).normalized()
+    var up := Vector3.UP if absf(face.y) < 0.9 else Vector3.RIGHT
+    var rx := up.cross(face).normalized().rotated(face, lr.randf() * TAU)
+    var ry := face.cross(rx).normalized()
+    var h := size * 0.5
+    var q := [p - rx * h - ry * h, p + rx * h - ry * h, p + rx * h + ry * h, p - rx * h + ry * h]
+    var uv := [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
+    for k: int in [0, 1, 2, 0, 2, 3]:
+        st.set_normal(nrm)
+        st.set_uv(uv[k])
+        st.add_vertex(q[k])
 
 
 ## Деревья Quaternius одноцветные (без развёртки) — кладём кору и листву картинкой по объёму (triplanar).
@@ -780,7 +874,7 @@ func _retexture_tree(mesh: Mesh, model: String) -> void:
     var birch := model.begins_with("birch")
     for i in mesh.get_surface_count():
         var old: Material = mesh.surface_get_material(i)
-        var nm := String(old.resource_name) if old else ""
+        var nm := String(old.resource_name).get_slice(".", 0) if old else ""   # «Green.001» → «Green»
         var tex := ""
         var tint := Color.WHITE
         var meters := 1.0
@@ -812,6 +906,8 @@ func _retexture_tree(mesh: Mesh, model: String) -> void:
         m.uv1_scale = Vector3.ONE / meters
         m.roughness = 0.95
         m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+        if tex.begins_with("foliage"):
+            m.set_meta("foliage", true)       # _leafify обложит этот шар карточками листьев
         if old is BaseMaterial3D and (old as BaseMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED:
             m.cull_mode = BaseMaterial3D.CULL_DISABLED
         mesh.surface_set_material(i, m)
@@ -3450,7 +3546,7 @@ func _f_table(p: Vector3, yaw: float, w: float, d: float, h := 0.75, mat: Materi
 ## Конторский стол: тумба с ящиками, монитор-«ящик», клавиатура, бумаги, лампа, стул.
 const PC_YAW := 0.0   # поворот модели ПК: экран к стулу
 var pc_spots: Array = []
-var tv_spots: Array = []   # [точка, поворот] — где стоят телевизоры   # [точка, поворот] — где стоят ПК (для проверки)
+var tv_spots: Array = []   # [точка, поворот] — где стоят телевизоры (для проверки)
 
 
 func _f_desk(p: Vector3, yaw: float, green_lamp := false) -> void:

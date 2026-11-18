@@ -3,6 +3,7 @@ extends Node3D
 ## деньги (наличные и карта), документы, работы, заправки, сохранение.
 
 const PlayerScene := preload("res://scenes/player.tscn")
+const PlayerScript := preload("res://scripts/player.gd")
 const CarScene := preload("res://scenes/car.tscn")
 const CityBuilder := preload("res://scripts/city_builder.gd")
 const TouchControlsScript := preload("res://scripts/touch_controls.gd")
@@ -12,6 +13,8 @@ const JobScript := preload("res://scripts/job.gd")
 const MenuScript := preload("res://scripts/menu.gd")
 const TrafficScript := preload("res://scripts/traffic.gd")
 const PedestriansScript := preload("res://scripts/pedestrians.gd")
+const UssrUi := preload("res://scripts/ussr_ui.gd")
+const VibeScript := preload("res://scripts/vibe.gd")
 const CarModel := preload("res://scripts/car_model.gd")
 const Clothes := preload("res://scripts/clothes.gd")
 const ListWindowScript := preload("res://scripts/list_window.gd")
@@ -34,7 +37,7 @@ const VERSION := "Альфа 1.0"
 const SAVE_PATH := "user://save_v2.cfg"   # новая карта (острова) — сохранения начинаются заново
 var _save_path := SAVE_PATH               # онлайн: user://acc_<ник>.cfg — копия облачного сохранения
 const START_MONEY := 5000
-const GAME_MINUTES_PER_SECOND := 1.0   # 1 реальная секунда = 1 игровая минута
+const GAME_MINUTES_PER_SECOND := 1.0   # таймеры экономики (получка, бизнес, сытость) — в секундах; часы — московские
 ## Машины на Общем рынке: название, цена, цвет, макс. скорость, мощность.
 ## Свой персонаж для ОПГ «Тяп-Ляп» (те же анимации, перенесены на его скелет).
 const TYAP_SKIN := "res://models/character/tyap.gltf"
@@ -92,8 +95,11 @@ const PLAYER_SPAWN := Vector3(0, 0.4, 14)
 const FUEL_PRICE := 50          # ₽ за литр
 const EXAM_PRICE := 2000
 const DPS_FINE := 1500
-const PAYDAY_MINUTES := 180.0   # получка во фракции — раз в 3 игровых часа
-const HUNGER_PER_MINUTE := 0.12  # сытость тратится: 100 -> 0 примерно за 14 игровых часов (14 мин)
+const PAYDAY_MINUTES := 180.0   # получка во фракции — раз в 3 минуты (в секундах)
+const HUNGER_PER_MINUTE := 0.0111  # сытость тратится медленно: 100 -> 0 примерно за 2.5 часа игры
+const STARVE_EVERY := 20.0         # голодный теряет 1 здоровья раз в 20 секунд
+const MSK_OFFSET := 3 * 3600       # время в игре — московское, как в жизни
+const DAY_EPOCH := 20687           # «День 1» — 22 августа 2026 (дни с 1970 года): 17 ноября 2026 — день 88
 const TREAT_PRICE := 300         # лечение в больнице
 const BAG_SIZE := 20             # сколько вещей влезает в сумку
 const LICENSE_PRICE := 5000      # лицензия на бизнес (мэрия)
@@ -150,8 +156,8 @@ const QUIZ := [
 const DAY_TOP := Color(0.30, 0.50, 0.80)
 const DAY_HORIZON := Color(0.76, 0.82, 0.88)
 const DUSK_HORIZON := Color(0.95, 0.60, 0.40)
-const NIGHT_TOP := Color(0.02, 0.03, 0.08)
-const NIGHT_HORIZON := Color(0.08, 0.10, 0.18)
+const NIGHT_TOP := Color(0.04, 0.06, 0.14)
+const NIGHT_HORIZON := Color(0.13, 0.16, 0.27)
 ## Что сказать в чате при смене погоды.
 const WEATHER_TIPS := {"clear": "ясно, без осадков.", "cloudy": "облачно, возможен дождь.",
         "rain": "дождь — асфальт мокрый, тормозной путь длиннее.", "snow": "снег — дороги скользкие, одевайтесь теплее."}
@@ -171,7 +177,7 @@ const NEWS := [
     "Сберкасса: храните деньги на карте — так надёжнее.",
 ]
 const DAY_AMBIENT := Color(0.36, 0.40, 0.48)
-const NIGHT_AMBIENT := Color(0.13, 0.14, 0.22)
+const NIGHT_AMBIENT := Color(0.33, 0.34, 0.42)   # ночью светлее: улицы и люди видны
 
 var cash := START_MONEY      # наличные
 var bank := 0                # на карте
@@ -184,7 +190,8 @@ var phone_number := ""
 var card_number := ""
 var history: Array = []      # операции по карте: [сумма, описание]
 var day := 1
-var minutes := 9.0 * 60.0   # время суток в игровых минутах
+var minutes := 9.0 * 60.0   # время суток в минутах — реальное московское (см. _real_clock)
+var fixed_minutes := -1.0   # >= 0 — часы стоят на этом времени (проверки, скриншоты)
 var look := Clothes.default_look()   # что надето: slot -> номер вещи
 var owned_clothes := {}              # slot -> Array купленных номеров
 var faction := ""            # id фракции ("mayor", "police"...), пусто — не во фракции
@@ -192,6 +199,8 @@ var faction_rank := 0        # 1..6
 var has_pistol := false      # купленный на рынке ПМ
 var weapon_id := "fist"      # что в руках
 var _fire_cd := 0.0
+var _attack_n := 0
+var _horn_t := 0.0
 var _flash: OmniLight3D = null
 var _tracer: MeshInstance3D = null
 var _tracer_t := 0.0
@@ -260,6 +269,8 @@ var _speed_label: Label
 var _speedo: SpeedoScript
 var _welcome: WelcomeScript = null
 var welcome_seen := false     # окно «Добро пожаловать» уже показали
+var rules_ok := false         # правила сервера приняты
+var hints_seen := {}          # какие подсказки новичку уже показаны
 var quests_skipped := false   # отказался от квестовой линии (можно начать у Петера)
 var furniture: Array = []     # купленная мебель (id), стоит дома — и в квартире, и в частном доме
 var _tram: TramScript = null
@@ -299,6 +310,7 @@ var _gps_name := ""
 var _gps_marker: MarkerScript
 var _traffic: TrafficScript
 var _peds: PedestriansScript
+var _vibe: VibeScript
 var _lamp_lights: Array[SpotLight3D] = []
 var _lamp_timer := 0.0
 var _night_k := 0.0
@@ -329,6 +341,7 @@ var _start: StartScreenScript
 
 
 func _ready() -> void:
+    get_tree().root.theme = UssrUi.theme()   # общий стиль интерфейса: красное, золото, крем
     set_process(false)
     if Net.is_server:
         return   # выделенный сервер: город не строим, Net всё делает сам
@@ -418,23 +431,35 @@ func _setup() -> void:
     _setup_points()
     _ensure_numbers()
     _apply_settings()
-    _hud.chat("Добро пожаловать в City Alpha! Коснись чата, чтобы открыть историю сообщений.", "info")
+    _hud.chat("Добро пожаловать в СССР РП! Коснись чата, чтобы открыть историю сообщений.", "info")
     if faction != "":
         _hud.chat("Ты во фракции «%s», ранг: %s." % [_faction_name(), FactionData.rank_name(faction_rank, faction)], "faction")
 
 
+## Московское время: минуты от полуночи и номер дня (с 20 августа 2025).
+func _real_clock() -> void:
+    if fixed_minutes >= 0.0:
+        minutes = fixed_minutes
+        return
+    var t := Time.get_unix_time_from_system() + MSK_OFFSET
+    minutes = fmod(t / 60.0, 1440.0)
+    day = int(floor(t / 86400.0)) - DAY_EPOCH + 1
+
+
 func _process(delta: float) -> void:
-    # Часы
-    minutes += delta * GAME_MINUTES_PER_SECOND
-    if minutes >= 1440.0:
-        minutes -= 1440.0
-        day += 1
+    # Часы: сутки в игре идут как в жизни — по московскому времени, у всех игроков одинаково
+    _real_clock()
     _light_timer -= delta
     if _light_timer <= 0.0:
         _light_timer = 0.25
         _update_daylight()
 
     _follow_seat()
+    _event_tick(delta)
+    _hint_t -= delta
+    if _hint_t <= 0.0:
+        _hint_t = 2.0
+        _check_hints()
     var focus := _focus()
     var hcam := get_viewport().get_camera_3d()
     if hcam:
@@ -497,6 +522,8 @@ func _process(delta: float) -> void:
 
     Sfx.night = _night_k
     Sfx.indoor = _interior != "" or _home_inside >= 0 or _podezd >= 0
+    if _vibe:
+        _vibe.update(focus, _night_k, Sfx.indoor, weather, delta)
 
     _update_weapons(delta)
     _update_chat_events(delta)
@@ -607,7 +634,7 @@ func _process(delta: float) -> void:
         mini.gps_target = _gps_target
     mini.queue_redraw()
 
-    var text := "CITY ALPHA %s   FPS %d" % [VERSION, Engine.get_frames_per_second()]
+    var text := "СССР РП · %s   FPS %d" % [VERSION, Engine.get_frames_per_second()]
     if not _touch.pads_enabled:
         if _driving:
             text += "\nW/S — газ/тормоз   A/D — руль   Пробел — ручник   H — гудок   F — выйти"
@@ -704,6 +731,7 @@ func _on_play() -> void:
     get_tree().paused = false
     Music.stop()
     Crash.mark("игра: старт")
+    _maybe_rules.call_deferred()
     if Crash.report != "":
         _show_crash_report.call_deferred()
 
@@ -808,11 +836,13 @@ func _apply_settings() -> void:
     var st: Dictionary = _menu.settings
     var q := int(st["quality"])
     var v := int(st["view"])
-    get_viewport().scaling_3d_scale = [0.6, 0.75, 1.0][q]
+    var lite := bool(st.get("lite", false))
+    get_viewport().scaling_3d_scale = 0.5 if lite else [0.6, 0.75, 1.0][q]
+    Engine.max_fps = 30 if lite else 60   # слабому устройству ровные 30 кадров легче, меньше греется
     _sun.directional_shadow_max_distance = [30.0, 45.0, 70.0][q]
-    _shadows_on = bool(st["shadows"])
+    _shadows_on = bool(st["shadows"]) and not lite
     _env.fog_density = [0.007, 0.0035, 0.0015][v]
-    var far: float = [170.0, 300.0, 550.0][v]
+    var far: float = 130.0 if lite else [170.0, 300.0, 550.0][v]
     _view_far = far
     for cam in get_tree().get_nodes_in_group("game_camera"):
         cam.far = far
@@ -968,7 +998,12 @@ func _add_xp(amount: int) -> void:
         xp -= _need_xp()
         level += 1
         Sfx.play("levelup")
-        _hud.show_toast("Новый уровень: %d!" % level)
+        # награда за уровень: премия на карту, чтобы рост чувствовался
+        var prize := 250 * level
+        bank += prize
+        _earned("reward", prize)
+        _bank_log(prize, "Премия за %d уровень" % level)
+        _hud.show_toast("Новый уровень: %d! Премия %s на карту" % [level, HudScript.format_money(prize)], "money")
 
 
 func _job_name() -> String:
@@ -1049,6 +1084,7 @@ func _on_horn() -> void:
             _hud.show_toast("Сирена включена" if _driving.siren_on else "Сирена выключена")
             return
         Sfx.play("horn", -3.0)
+        _horn_t = 0.5     # другие игроки тоже услышат гудок (флаг в состоянии)
 
 
 ## Кнопка замка на спидометре: закрыть / открыть двери.
@@ -1100,6 +1136,9 @@ func _on_interact() -> void:
 
 
 func _toggle_vehicle() -> void:
+    if _player.frozen and _driving == null and _ride_id < 0:
+        _hud.show_toast("Ты заморожен администратором")
+        return
     if _ride_id >= 0:
         _leave_ride()
         return
@@ -1311,6 +1350,9 @@ func _spawn_life() -> void:
     _spawn_weather_fx()
     _traffic = TrafficScript.new()
     _traffic.city = _city
+    var lite := bool(_menu.settings.get("lite", false))
+    if lite:   # слабое устройство: вдвое меньше машин и прохожих
+        _traffic.count = 11
     add_child(_traffic)
     _traffic.obstacles = [_player] + _cars
     _traffic.honk.connect(func(pos: Vector3) -> void: Sfx.play_at("horn", pos, -2.0, 0.9))
@@ -1321,11 +1363,18 @@ func _spawn_life() -> void:
     add_child(_tram)
 
     _peds = PedestriansScript.new()
+    if lite:
+        _peds.count = 20
     add_child(_peds)
     _peds.player = _player
     _peds.cars = _cars.duplicate()  # копия: туда добавляются и рабочие машины
     _peds.setup()
     _peds.knocked.connect(func(_p: Vector3) -> void: _add_wanted(1, "сбил пешехода"))
+    _vibe = VibeScript.new()   # листья осенью, радио из ларьков и дворов, далёкие звуки, мигающие фонари
+    _vibe.city = _city
+    _vibe.lite = lite
+    add_child(_vibe)
+    _vibe.setup()
 
     for i in LAMP_LIGHTS:
         var l := SpotLight3D.new()   # конус вниз, как у настоящего фонаря
@@ -1358,7 +1407,7 @@ func _update_lamp_lights(focus: Vector3) -> void:
         l.visible = i < lamps.size()
         if l.visible:
             l.global_position = lamps[i]
-            l.light_energy = 2.2 * _night_k
+            l.light_energy = 2.2 * _night_k * (_vibe.flicker(i, lamps[i]) if _vibe else 1.0)
 
 
 var _sort_focus := Vector3.ZERO
@@ -1514,6 +1563,8 @@ func _save_game() -> void:
     cfg.set_value("player", "quest_active", quest_active)
     cfg.set_value("player", "peter_met", peter_met)
     cfg.set_value("player", "welcome_seen", welcome_seen)
+    cfg.set_value("player", "rules_ok", rules_ok)
+    cfg.set_value("player", "hints", hints_seen)
     cfg.set_value("player", "furniture", furniture)
     cfg.set_value("player", "skills", skills)
     cfg.set_value("player", "has_rod", has_rod)
@@ -1615,6 +1666,9 @@ func _load_game() -> void:
         peter_met = true
         quest_active = true
     welcome_seen = bool(cfg.get_value("player", "welcome_seen", peter_met))
+    rules_ok = bool(cfg.get_value("player", "rules_ok", false))
+    var hs: Variant = cfg.get_value("player", "hints", {})
+    hints_seen = hs if hs is Dictionary else {}
     furniture = Array(cfg.get_value("player", "furniture", []))
     var sk = cfg.get_value("player", "skills", {})
     if sk is Dictionary:
@@ -1746,8 +1800,8 @@ func _update_daylight() -> void:
     else:
         # Ночью «солнце» становится слабой луной без теней.
         _sun.rotation_degrees = Vector3(-45.0, 30.0, 0.0)
-        _sun.light_color = Color(0.55, 0.65, 0.95)
-        _sun.light_energy = 0.16   # лунный свет
+        _sun.light_color = Color(0.68, 0.74, 0.92)
+        _sun.light_energy = 0.42   # лунный свет
         _sun.shadow_enabled = false
 
     var horizon := NIGHT_HORIZON.lerp(DAY_HORIZON, day_k).lerp(DUSK_HORIZON, dusk * 0.6)
@@ -1771,9 +1825,9 @@ func _update_daylight() -> void:
         _sky_sh.set_shader_parameter("sun_dir", _sun.global_transform.basis.z)
         _sky_sh.set_shader_parameter("sun_color", _sun.light_color)
         _sky_sh.set_shader_parameter("sun_strength", clampf(elev * 3.0, 0.0, 1.0))
-        _sky_sh.set_shader_parameter("drift", minutes / 1440.0 * 0.5)  # облака медленно плывут
+        _sky_sh.set_shader_parameter("drift", fmod(Time.get_unix_time_from_system() / 2880.0, 1000.0))  # облака медленно плывут
     _env.ambient_light_color = NIGHT_AMBIENT.lerp(DAY_AMBIENT, day_k) * (0.85 if weather == "rain" else 1.0)
-    _env.tonemap_exposure = lerpf(0.75, 0.8, day_k)   # ночью чуть темнее, но всё видно
+    _env.tonemap_exposure = lerpf(0.92, 0.8, day_k)   # ночью экспозиция выше — темно, но всё видно
     _night_k = 1.0 - day_k
     if _city:
         if _city.lamp_mat:
@@ -2487,7 +2541,7 @@ func _update_win_buttons() -> void:
         "car":
             var car = _cars[int(p["i"])]
             if car.owned:
-                _win.set_buttons("Закрыть", "Подогнать к рынку", true, true)
+                _win.set_buttons("Продать за %s" % HudScript.format_money(_car_sell_price(car)), "Подогнать к рынку", true, true)
             else:
                 _win.set_buttons("Закрыть", "Купить за %s" % HudScript.format_money(int(car.price)), true, true)
         "cloth":
@@ -2509,6 +2563,11 @@ func _on_win_left() -> void:
         _hud.show_toast("Выброшено")
         _refresh_win(false)
         return
+    if _win_mode == "market":
+        var sp = _selected_payload()
+        if sp is Dictionary and String(sp["type"]) == "car" and _cars[int(sp["i"])].owned:
+            _ask_sell_car(int(sp["i"]))
+            return
     if _win_mode == "market" or _win_mode == "garage" or _win_mode == "taxi" or _win_mode == "inv":
         _win.close_window()
         return
@@ -2778,6 +2837,38 @@ func _market_car(i: int) -> void:
     _save_game()
 
 
+## Своя машина уходит обратно на рынок за 60% цены (в машине сидеть нельзя).
+func _car_sell_price(car) -> int:
+    return int(int(car.price) * 0.6 / 100.0) * 100
+
+
+func _ask_sell_car(i: int) -> void:
+    var car = _cars[i]
+    _win.close_window()
+    _open_dialog("Продажа машины", "Продать %s за %s? Деньги придут на карту." % [car.car_name, HudScript.format_money(_car_sell_price(car))],
+            [["Продать", _sell_car.bind(i)], ["Отмена", _dialog.close]])
+
+
+func _sell_car(i: int) -> void:
+    _dialog.close()
+    var car = _cars[i]
+    if not car.owned:
+        return
+    if car == _driving:
+        _hud.show_toast("Сначала выйди из машины")
+        return
+    var money := _car_sell_price(car)
+    car.set_owned(false)
+    car.set_available(false)
+    if Net.authed:
+        Net.send_msg({"t": "refund", "amount": money})   # сервер разрешит этот доход (как продажу бизнеса)
+    bank += money
+    _bank_log(money, "Продажа: " + String(car.car_name))
+    Sfx.play("cash")
+    _hud.show_toast("%s продана: +%s на карту" % [car.car_name, HudScript.format_money(money)], "money")
+    _save_game()
+
+
 func _market_cloth(slot: String, i: int, price: int) -> void:
     if not _cloth_owned(slot, i):
         if not _pay(price, "Рынок: одежда"):
@@ -2919,9 +3010,9 @@ func _open_hr(fid: String) -> void:
         for i in names.size():
             lines += "%d. %s — %s (мест: %d)\n" % [i + 1, FactionData.rank_name(i + 1, fid),
                     HudScript.format_money(FactionData.salary(fid, i + 1)), int(lim[i])]
-        var intro := ("Хочешь к нам на район?\n\n%s\nДоля из общака приходит на карту раз в 3 игровых часа. "
+        var intro := ("Хочешь к нам на район?\n\n%s\nДоля из общака приходит на карту раз в 3 минуты. "
                 + "Машины братвы — красная метка у гаража.") if gang else ("Хочешь работать у нас?\n\n%s\n"
-                + "Зарплата приходит на карту раз в 3 игровых часа, свой автопарк — красная метка у здания.")
+                + "Зарплата приходит на карту раз в 3 минуты, свой автопарк — красная метка у здания.")
         _open_dialog(head, intro % lines, [["Вступить", _join_faction.bind(fid)], ["Закрыть", _dialog.close]])
         return
     var need := _need_exp()
@@ -3168,7 +3259,7 @@ func _update_vitals(delta: float, speed: float) -> void:
     hunger = maxf(0.0, hunger - HUNGER_PER_MINUTE * game_min * (1.6 if _driving == null and Input.is_action_pressed("sprint") else 1.0))
     if hunger <= 0.0:
         _starve_acc += delta
-        if _starve_acc >= 3.0:
+        if _starve_acc >= STARVE_EVERY:
             _starve_acc = 0.0
             _hurt(1.0, "")
             if int(health) % 10 == 0:
@@ -3399,9 +3490,9 @@ func _exit_home() -> void:
 
 
 func _use_fridge() -> void:
-    var now := day * 1440.0 + minutes
+    var now := _now_min()
     if now - _fridge_at < 120.0:
-        _hud.show_toast("Холодильник пуст — продукты будут через %d мин" % int(120.0 - (now - _fridge_at)))
+        _hud.show_toast("Холодильник пуст — продукты будут через %d с" % int(120.0 - (now - _fridge_at)))
         return
     _fridge_at = now
     hunger = minf(100.0, hunger + 50.0)
@@ -3411,15 +3502,11 @@ func _use_fridge() -> void:
 
 
 func _use_bed() -> void:
-    _open_dialog("Отдых", "Поспать 2 часа? Здоровье восстановится полностью.", [["Поспать", _sleep], ["Закрыть", _dialog.close]])
+    _open_dialog("Отдых", "Поспать? Здоровье восстановится полностью.", [["Поспать", _sleep], ["Закрыть", _dialog.close]])
 
 
 func _sleep() -> void:
     _dialog.close()
-    minutes += 120.0
-    if minutes >= 1440.0:
-        minutes -= 1440.0
-        day += 1
     health = 100.0
     hunger = maxf(0.0, hunger - 10.0)
     _update_daylight()
@@ -3616,6 +3703,141 @@ func _on_app(id: String) -> void:
         "biz":
             _hud.close_phone()
             _open_biz_app()
+        "players":
+            _hud.close_phone()
+            _open_players()
+        "admin":
+            _hud.close_phone()
+            if Net.online and _net_admin > 0:
+                Net.send_msg({"t": "adm"})
+
+
+# ---------------------------------------------------------------- панель администратора
+
+var _adm := {}          # последний ответ сервера: игроки и репорты
+
+
+func _show_admin_panel(m: Dictionary) -> void:
+    _adm = m
+    var players: Array = m.get("players", [])
+    var reports: Array = m.get("reports", [])
+    var text := "Уровень: %d · онлайн: %d · репортов: %d\n" % [int(m.get("lvl", 0)), players.size(), reports.size()]
+    for r: Array in reports.slice(0, 4):
+        text += "\n#%d %s (%d мин назад): %s" % [int(r[0]), r[1], int(r[3]), String(r[2]).left(70)]
+    var buttons := []
+    if not reports.is_empty():
+        buttons.append(["Ответить на репорты", _admin_reports])
+    buttons.append(["Игроки онлайн", _admin_players.bind(0)])
+    buttons.append(["Объявление всем", _admin_input.bind("Объявление всем", "Текст объявления", "/ann %s")])
+    buttons.append(["Админ-чат", _admin_input.bind("Админ-чат", "Сообщение администраторам", "/a %s")])
+    buttons.append(["Журнал действий", _admin_cmd.bind("/logs")])
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Панель администратора", text, buttons)
+
+
+func _admin_reports() -> void:
+    var reports: Array = _adm.get("reports", [])
+    var text := ""
+    var buttons := []
+    for r: Array in reports.slice(0, 6):
+        text += "#%d %s: %s\n" % [int(r[0]), r[1], String(r[2]).left(90)]
+        buttons.append(["Ответить: %s" % r[1], _admin_input.bind("Ответ для %s" % r[1], "Текст ответа", "/ans %s %%s" % r[1])])
+    buttons.append(["Назад", Net.send_msg.bind({"t": "adm"})])
+    _open_dialog("Репорты", text if text != "" else "Открытых репортов нет.", buttons)
+
+
+func _admin_players(page: int) -> void:
+    var players: Array = _adm.get("players", [])
+    var per := 8
+    var text := ""
+    var buttons := []
+    for i in range(page * per, mini(players.size(), page * per + per)):
+        var e: Array = players[i]
+        var tags := ""
+        if String(e[1]) != "":
+            tags += " · " + String(FactionData.get_faction(String(e[1])).get("title", e[1]))
+        if int(e[2]) > 0:
+            tags += " · варн %d/3" % int(e[2])
+        if int(e[3]) > 0:
+            tags += " · админ %d" % int(e[3])
+        if e[4] == true:
+            tags += " · мут"
+        if e[5] == true:
+            tags += " · заморожен"
+        text += "%s%s\n" % [e[0], tags]
+        buttons.append([String(e[0]), _admin_player.bind(e)])
+    if players.size() > (page + 1) * per:
+        buttons.append(["Дальше →", _admin_players.bind(page + 1)])
+    buttons.append(["Назад", Net.send_msg.bind({"t": "adm"})])
+    _open_dialog("Игроки (%d)" % players.size(), text, buttons)
+
+
+func _admin_player(e: Array) -> void:
+    var nick := String(e[0])
+    var lvl := int(_adm.get("lvl", 0))
+    var text := "Ник: %s\nНаличные: %d ₽\nПредупреждений: %d/3%s%s" % [nick, int(e[6]), int(e[2]),
+            "\nЧат заблокирован" if e[4] == true else "", "\nЗаморожен" if e[5] == true else ""]
+    var buttons := [
+        ["ТП к нему", _admin_cmd.bind("/tp " + nick)],
+        ["ТП к себе", _admin_cmd.bind("/tphere " + nick)],
+        ["Разморозить" if e[5] == true else "Заморозить", _admin_cmd.bind("/freeze " + nick)],
+        ["Вылечить", _admin_cmd.bind("/hp " + nick)],
+        ["Написать", _admin_input.bind("Сообщение для " + nick, "Текст", "/ans " + nick + " %s")],
+        ["Мут 10 мин", _admin_cmd.bind("/mute %s 10" % nick)],
+        ["Предупреждение", _admin_input.bind("Предупреждение " + nick, "Причина", "/warn " + nick + " %s")],
+        ["Кикнуть", _admin_cmd.bind("/kick " + nick)],
+        ["Логи игрока", _admin_cmd.bind("/logs " + nick)],
+    ]
+    if lvl >= 2:
+        buttons.append(["Забанить", _admin_input.bind("Бан " + nick, "Причина бана", "/ban " + nick + " %s")])
+    if lvl >= 4:
+        buttons.append(["Выдать деньги", _admin_input.bind("Деньги для " + nick, "Сумма (можно с минусом)", "/givemoney " + nick + " %s")])
+    buttons.append(["Назад", _admin_players.bind(0)])
+    _open_dialog("Игрок " + nick, text, buttons)
+
+
+func _admin_cmd(cmd: String) -> void:
+    _dialog.close()
+    Net.say(cmd)
+    if cmd.begins_with("/logs"):
+        _hud.show_toast("Журнал — в чате")
+
+
+## Окно с полем ввода: введённый текст подставляется в команду вместо %s.
+func _admin_input(title: String, hint: String, fmt: String) -> void:
+    _open_dialog(title, "", [["Отправить", func() -> void:
+            var t := _dialog.input_text()
+            if t == "":
+                return
+            _admin_cmd(fmt % t)],
+        ["Отмена", _dialog.close]], hint)
+
+
+## Телефон → «Игроки»: кто сейчас в городе, где (расстояние), из какой фракции; метка на карте.
+func _open_players() -> void:
+    if not Net.online:
+        _open_dialog("Игроки", "Список игроков есть только в онлайне.", [["Закрыть", _dialog.close]])
+        return
+    var list := []
+    for id in _remote:
+        var r: Dictionary = _remote[id]
+        var pos: Vector3 = r.get("tpos", Vector3.ZERO)
+        list.append([_focus().distance_to(pos), String(r["name"]), String(r.get("fid", "")), pos])
+    list.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+    var text := "В городе: %d (с тобой — %d)\n\n" % [list.size(), list.size() + 1]
+    var buttons := []
+    for e: Array in list:
+        var fid := String(e[2])
+        var ftitle := String(FactionData.get_faction(fid).get("title", "")) if fid != "" and fid != "?" else ""
+        var where := "%d м" % int(e[0]) if e[0] < 1000.0 else "%.1f км" % (e[0] / 1000.0)
+        text += "• %s%s — %s\n" % [e[1], (" (%s)" % ftitle) if ftitle != "" else "", where]
+        if buttons.size() < 5:
+            buttons.append(["Метка: %s" % e[1], _faction_gps.bind(e[3], String(e[1]))])
+    if list.is_empty():
+        text += "Пока никого. Позови друзей!"
+    text += "\nЛичное сообщение: /pm ник текст"
+    buttons.append(["Закрыть", _dialog.close])
+    _open_dialog("Игроки онлайн", text, buttons)
 
 
 func _job_from_dialog(kind: String) -> void:
@@ -3660,9 +3882,10 @@ func _ride_taxi(to: Vector3, place: String) -> void:
     if spot != null:
         var st: Transform3D = spot
         p = st.origin
-    _player.global_position = p
-    _player.velocity = Vector3.ZERO
-    Sfx.play("door")
+    Sfx.play("car_door")
+    # поездка — с затемнением экрана, как на электричке; время в пути — по расстоянию
+    var secs := clampf(_focus().distance_to(p) / 400.0, 1.0, 3.0)
+    _travel(p, "Такси «Волга» везёт тебя: %s\n%s" % [place, HudScript.format_money(price)], secs, "")
     _hud.show_toast("Такси довезло: %s (%s)" % [place, HudScript.format_money(price)])
 
 
@@ -3818,13 +4041,13 @@ func _open_kiosk(i: int) -> void:
     var text := "Здоровье: %d · Сытость: %d · Сумка: %d/%d" % [int(health), int(hunger), _bag_count(), BAG_SIZE]
     if _biz_mine(i):
         var till := int(biz_owned[str(i)])
-        text += "\n\nТвой бизнес. Доход: %s в час, в кассе: %s" % [HudScript.format_money(int(bz["income"])), HudScript.format_money(till)]
+        text += "\n\nТвой бизнес. Доход: %s в минуту, в кассе: %s" % [HudScript.format_money(int(bz["income"])), HudScript.format_money(till)]
         buttons.append(["Забрать выручку (%s)" % HudScript.format_money(till), _biz_collect.bind(i)])
         buttons.append(["Продать за %s" % HudScript.format_money(int(bz["price"]) / 2), _biz_sell.bind(i)])
     elif Net.authed and _biz_taken.has(i):
         text += "\n\nВладелец бизнеса: %s" % String(_biz_taken[i])
     else:
-        text += "\n\nБизнес продаётся: %s, доход ~%s в час" % [HudScript.format_money(int(bz["price"])), HudScript.format_money(int(bz["income"]))]
+        text += "\n\nБизнес продаётся: %s, доход ~%s в минуту" % [HudScript.format_money(int(bz["price"])), HudScript.format_money(int(bz["income"]))]
         buttons.append(["Купить бизнес — %s" % HudScript.format_money(int(bz["price"])), _biz_buy.bind(i)])
     buttons.append(["Закрыть", _dialog.close])
     _open_dialog(String(bz["title"]), text, buttons)
@@ -3908,7 +4131,7 @@ func _biz_sell(i: int) -> void:
     _save_game()
 
 
-## Выручка капает каждый игровой час (минус 10% налога), касса вмещает 24 часа.
+## Выручка капает каждую минуту (минус 10% налога), касса вмещает 24 минуты дохода.
 func _update_business(delta: float) -> void:
     if biz_owned.is_empty():
         return
@@ -3931,7 +4154,7 @@ func _update_business(delta: float) -> void:
 func _open_biz_app() -> void:
     if biz_owned.is_empty():
         _open_dialog("Бизнес", ("У тебя нет бизнеса.\n\n1) Купи лицензию в мэрии (%s).\n2) Подойди к любому ларьку, магазину или АЗС "
-                + "и нажми «Купить бизнес». Доход капает каждый час в кассу.") % HudScript.format_money(LICENSE_PRICE),
+                + "и нажми «Купить бизнес». Доход капает в кассу каждую минуту.") % HudScript.format_money(LICENSE_PRICE),
                 [["Закрыть", _dialog.close]])
         return
     var text := ""
@@ -3939,7 +4162,7 @@ func _open_biz_app() -> void:
     for key: String in biz_owned:
         var i := int(key)
         var bz: Dictionary = _biz[i]
-        text += "%s — в кассе %s (доход %s/ч)\n" % [bz["title"], HudScript.format_money(int(biz_owned[key])),
+        text += "%s — в кассе %s (доход %s/мин)\n" % [bz["title"], HudScript.format_money(int(biz_owned[key])),
                 HudScript.format_money(int(bz["income"]))]
         buttons.append(["Метка: %s" % bz["title"], _faction_gps.bind(bz["pos"], String(bz["title"]))])
     buttons.append(["Закрыть", _dialog.close])
@@ -4331,12 +4554,142 @@ func _show_welcome() -> void:
     _welcome.skip_pressed.connect(_on_welcome.bind(false))
 
 
+const RULES_TEXT := """1. Отыгрывай роль: ты житель города, а не игрок. Без оскорблений, мата в общий чат и политики.
+2. Не убивай и не бей без причины (DM), не дави людей машиной (DB).
+3. Никаких читов, багов и сторонних программ. Нашёл баг — /report.
+4. Милиция, больница и другие фракции работают по уставу. ОПГ — без беспредела в спавне и у мэрии.
+5. Не мешай другим работать, не сливай чужие пароли и аккаунты.
+6. Слово администратора — последнее. Вопросы и жалобы — /report текст.
+Нарушения: предупреждение, мут, кик, бан. Три предупреждения — бан на 3 дня."""
+
+
+# ---------------------------------------------------------------- события города (с сервера)
+# Сервер объявляет находку в какой-то точке; кто первым подойдёт — тот и получит награду (решает сервер).
+
+var _event := {}
+var _event_marker: Node3D
+var _event_claim_t := 0.0
+
+
+func _on_city_event(m: Dictionary) -> void:
+    var pos := Vector3(float(m.get("x", 0)), float(m.get("y", 0)), float(m.get("z", 0)))
+    _event = {"id": int(m.get("id", 0)), "pos": pos, "title": String(m.get("title", "Находка")),
+            "until": Time.get_ticks_msec() / 1000.0 + float(m.get("left", 600))}
+    if _event_marker == null:
+        _event_marker = MarkerScript.new()
+        add_child(_event_marker)
+    _event_marker.show_at(pos, String(_event["title"]).to_upper(), Color(1.0, 0.8, 0.15))
+    _event_marker.visible = true
+    var d := _focus().distance_to(pos)
+    _hud.chat("СОБЫТИЕ: %s Жёлтая метка на карте." % String(m.get("text", "")), "warn")
+    _hud.show_toast("Событие: %s — %s" % [_event["title"], _dist_text(d)], "money")
+    Sfx.play("notify")
+    if _gps_target == null:
+        _set_gps(pos, String(_event["title"]), false)
+
+
+func _on_city_event_end(m: Dictionary) -> void:
+    if _event.is_empty() or int(m.get("id", -1)) != int(_event["id"]):
+        return
+    if _gps_target != null and _gps_name == String(_event["title"]):
+        _clear_gps()
+    _event = {}
+    if _event_marker:
+        _event_marker.visible = false
+    var win := String(m.get("win", ""))
+    if win == "":
+        _hud.chat("Событие «%s» закончилось — никто не успел." % String(m.get("title", "")), "info")
+    elif win != Net.nick:
+        _hud.chat("%s первым нашёл: «%s»." % [win, String(m.get("title", ""))], "info")
+
+
+func _event_tick(delta: float) -> void:
+    if _event.is_empty():
+        return
+    if Time.get_ticks_msec() / 1000.0 > float(_event["until"]) + 30.0:   # сервер молчит — убрать метку
+        _on_city_event_end({"id": _event["id"], "win": "", "title": _event["title"]})
+        return
+    _event_claim_t -= delta
+    var p: Vector3 = _event["pos"]
+    var f := _focus()
+    if _event_claim_t <= 0.0 and Vector2(f.x - p.x, f.z - p.z).length() < 4.5:
+        _event_claim_t = 2.0
+        Net.send_msg({"t": "event_claim", "id": _event["id"]})
+
+
+# ---------------------------------------------------------------- подсказки новичку
+# Каждая показывается один раз в жизни персонажа, когда впервые случается нужная ситуация.
+
+var _hint_t := 5.0
+var _hint_last := -100.0
+
+
+func _hint(id: String, text: String) -> bool:
+    if hints_seen.has(id):
+        return false
+    var now := Time.get_ticks_msec() / 1000.0
+    if now - _hint_last < 25.0:   # не засыпать подсказками: не чаще раза в 25 секунд
+        return false
+    _hint_last = now
+    hints_seen[id] = true
+    _hud.show_toast("Подсказка: " + text, "news")
+    Sfx.play("notify", -8.0)
+    return true
+
+
+func _check_hints() -> void:
+    if not _started or _player == null or _dialog.visible or _welcome != null or jail_left > 0.0:
+        return
+    if level <= 1 and passport_name == "" and quest_active and _hint("passport", "задание Петера показано на карте жёлтой меткой. Иди к мэрии за паспортом."):
+        return
+    if hunger < 45.0 and _hint("hunger", "сытость падает. Купи еду в ларьке «Пирожки» или в магазине и съешь её из сумки (телефон → Сумка)."):
+        return
+    if health < 40.0 and _hint("health", "мало здоровья. Поешь или вылечись в больнице — она отмечена в навигаторе."):
+        return
+    if _driving != null:
+        if _hint("drive", "джойстик слева — руль, справа ГАЗ и ТОРМОЗ (держи тормоз — поедешь назад). Фары ночью включаются сами, вручную — кнопкой у спидометра."):
+            return
+        if _driving.fuel < 12.0 and _hint("fuel", "бензин кончается. Заправка — в навигаторе, раздел «АЗС»."):
+            return
+    if _night_k > 0.6 and _hint("night", "наступила ночь — время в игре московское, как в жизни. Фонари горят, но в переулках темно."):
+        return
+    if wanted > 0 and _hint("wanted", "ты в розыске. Милиция может задержать — тогда посидишь в КПЗ. Розыск со временем спадает."):
+        return
+    if cash >= 5000 and _hint("bank", "крупные суммы держи на карте: банкомат или телефон → Банк."):
+        return
+    if Net.online:
+        if _hint("online", "ты в онлайне. Чат: обычный текст — рядом, /g — всем, /pm ник — личное. Телефон → «Игроки» — кто в городе."):
+            return
+        if _net_target >= 0 and _hint("player_btn", "рядом игрок — кнопка «ИГРОК»: передать деньги, попросить паспорт, предложить услугу."):
+            return
+    if level >= 2 and _hint("level", "новый уровень! Чем выше уровень, тем больше работ, машин и фракций доступно."):
+        return
+
+
+## Правила сервера — один раз, при первом входе в онлайн.
+func _maybe_rules() -> void:
+    if rules_ok or not Net.online or _welcome != null or _dialog.visible:
+        return
+    _touch.blocked = true
+    _open_dialog("Правила сервера", RULES_TEXT, [["Принимаю", func() -> void:
+            rules_ok = true
+            _dialog.close()
+            _touch.blocked = false
+            _save_game()
+            _hint("report", "Вопрос или жалоба — напиши /report текст, администрация ответит в ЛС.")],
+        ["Выйти в меню", func() -> void:
+            _dialog.close()
+            _touch.blocked = false
+            _open_menu()]])
+
+
 func _on_welcome(start: bool) -> void:
     welcome_seen = true
     if _welcome:
         _welcome.queue_free()
         _welcome = null
     _touch.blocked = false
+    _maybe_rules.call_deferred()
     if start:
         quests_skipped = false
         if _peter:
@@ -4530,6 +4883,7 @@ func _update_weapons(delta: float) -> void:
 
 
 func _attack() -> void:
+    _attack_n = (_attack_n + 1) % 1000   # другие игроки по этому счётчику слышат удар или выстрел
     var info := Weapons.info(weapon_id)
     var melee := Weapons.is_melee(weapon_id)
     _fire_cd = float(info["rate"])
@@ -4549,6 +4903,8 @@ func _attack() -> void:
     if not melee:
         skills["shooting"] = minf(100.0, float(skills["shooting"]) + 0.15)
     var lawful: bool = (FactionData.base(faction) == "police" or faction == "kgb") and _duty.active
+    if hit_pos != Vector3.INF:
+        _hit_fx(hit_pos, melee)
     if melee:
         Sfx.play("swing", -10.0, randf_range(0.9, 1.15))
         if hit_pos != Vector3.INF:
@@ -4566,6 +4922,35 @@ func _attack() -> void:
             _add_wanted(2, "стрельба по людям")
     elif not lawful and wanted == 0:
         _add_wanted(1, "стрельба в городе")
+
+
+## Удар или попадание: короткий всплеск пыли и брызг (одноразовые частицы, удаляются сами).
+func _hit_fx(pos: Vector3, melee: bool) -> void:
+    var p := CPUParticles3D.new()
+    p.one_shot = true
+    p.emitting = true
+    p.amount = 10 if melee else 14
+    p.lifetime = 0.45
+    p.explosiveness = 0.95
+    p.direction = Vector3.UP
+    p.spread = 70.0
+    p.initial_velocity_min = 1.0
+    p.initial_velocity_max = 2.8
+    p.gravity = Vector3(0, -6.0, 0)
+    p.scale_amount_min = 0.5
+    p.scale_amount_max = 1.0
+    var q := QuadMesh.new()
+    q.size = Vector2(0.09, 0.09)
+    var m := StandardMaterial3D.new()
+    m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+    m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    m.albedo_color = Color(0.55, 0.08, 0.06) if not melee else Color(0.75, 0.7, 0.62)
+    q.material = m
+    p.mesh = q
+    add_child(p)
+    var lift := 1.1 if pos.y < _player.global_position.y + 0.5 else 0.0   # точка у ног прохожего — поднимаем к груди
+    p.global_position = pos + Vector3(0, lift, 0)
+    get_tree().create_timer(1.0).timeout.connect(p.queue_free)
 
 
 ## Вспышка у дула и короткий трассер до цели.
@@ -4599,6 +4984,7 @@ func _show_shot(from: Vector3, to: Vector3) -> void:
 
 var _news_t := 90.0
 var _was_night := false
+var _night_known := false
 var _last_hour := -1
 
 
@@ -4620,6 +5006,9 @@ func _update_chat_events(delta: float) -> void:
     var hh := int(minutes) / 60
     _hud.chat_time_text = "[%02d:%02d]" % [hh, int(minutes) % 60]
     var night_now := _night_k > 0.5
+    if not _night_known:     # при входе в игру не пишем «доброе утро» среди дня
+        _night_known = true
+        _was_night = night_now
     if night_now != _was_night:
         _was_night = night_now
         if night_now:
@@ -4630,7 +5019,7 @@ func _update_chat_events(delta: float) -> void:
         if _last_hour >= 0 and faction != "":
             var left := PAYDAY_MINUTES - _payday_acc
             if left <= 60.0 and left > 0.0:
-                _hud.chat("До получки во фракции меньше часа.", "faction")
+                _hud.chat("До получки во фракции меньше минуты.", "faction")
         _last_hour = hh
     _news_t -= delta
     if _news_t <= 0.0:
@@ -5440,8 +5829,10 @@ func _setup_rob_points() -> void:
         k += 1
 
 
+## Часы для перезарядок (холодильник, ограбления): 1 единица = 1 реальная секунда,
+## как было при «1 игровая минута = 1 секунда», — темп игры не изменился от перехода на московское время.
 func _now_min() -> float:
-    return day * 1440.0 + minutes
+    return Time.get_unix_time_from_system()
 
 
 func _start_rob(key: String, tier: String, pos: Vector3, nm: String) -> void:
@@ -6795,6 +7186,164 @@ func _on_net_reconnected() -> void:
     Sfx.play("notify")
 
 
+## Внешность одной строкой для других игроков: номера вещей по слотам, форма фракции (если надета), пол.
+func _look_code() -> String:
+    var parts := []
+    for slot: Dictionary in Clothes.SLOTS:
+        parts.append(str(int(look.get(slot["id"], 0))))
+    return "%s;%s;%s" % [",".join(parts), _last_uniform if _last_uniform != "?" else "", "f" if player_female else "m"]
+
+
+## Одежда другого игрока по строке внешности: [пиджак, штаны, ботинки, шапка, цвет шапки, женщина?].
+func _look_from_code(code: String) -> Array:
+    var p := code.split(";")
+    var lk := {}
+    var nums := p[0].split(",") if p.size() > 0 else PackedStringArray()
+    var k := 0
+    for slot: Dictionary in Clothes.SLOTS:
+        if k < nums.size():
+            lk[slot["id"]] = int(nums[k])
+        k += 1
+    var tex := Clothes.textures(lk)
+    var h: Array = Clothes.hat(lk)
+    var out := [String(tex.get("jacket", "")), String(tex.get("pants", "")), String(tex.get("shoes", "")), String(h[0]), h[1],
+            p.size() > 2 and p[2] == "f"]
+    var uk := p[1] if p.size() > 1 else ""
+    if uk.contains(":"):   # форма фракции на смене
+        var u: Dictionary = FactionData.uniform(uk.get_slice(":", 0), int(uk.get_slice(":", 1)))
+        out[0] = String(u.get("jacket", out[0]))
+        out[1] = String(u.get("pants", out[1]))
+        out[2] = String(u.get("shoes", out[2]))
+        out[3] = String(u.get("cap", ""))
+        out[4] = u.get("cap_col", Color(0, 0, 0, 0))
+    return out
+
+
+## Переодеть другого игрока: модель создаётся заново с новой одеждой (бывает редко — магазин, смена, форма).
+func _remote_redress(r: Dictionary, code: String) -> void:
+    r["look"] = code
+    var lk := _look_from_code(code)
+    var old: Node3D = r["npc"]
+    if is_instance_valid(old) and old.jacket == String(lk[0]) and old.pants == String(lk[1]) and old.shoes == String(lk[2]) \
+            and old.hat == String(lk[3]) and old.female == bool(lk[5]):
+        return   # одет так же (обычно — первый пакет после входа): модель не пересоздаём
+    var n = NpcScript.new()
+    n.npc_name = String(r["name"])
+    n.female = bool(lk[5])
+    n.remote = true
+    n.collide = false
+    n.mark = false
+    n.beard = false
+    n.anim = "idle"
+    if String(lk[0]) != "":
+        n.jacket = String(lk[0])
+    if String(lk[1]) != "":
+        n.pants = String(lk[1])
+    if String(lk[2]) != "":
+        n.shoes = String(lk[2])
+    n.hat = String(lk[3])
+    n.hat_col = lk[4]
+    n.name_col = Color(0.75, 0.9, 1.0)
+    n.visible = old.visible if is_instance_valid(old) else false
+    add_child(n)
+    if is_instance_valid(old):
+        n.global_position = old.global_position
+        n.rotation = old.rotation
+        old.queue_free()
+    r["npc"] = n
+    r["fid"] = "?"          # подпись с фракцией обновится со следующим пакетом
+    r["weapon"] = "?"       # оружие в руки — заново
+
+
+## Оружие в руках другого игрока: бита или ствол на кисти правой руки.
+func _remote_weapon(r: Dictionary, wid: String) -> void:
+    r["weapon"] = wid
+    var n: Node3D = r["npc"]
+    if not is_instance_valid(n):
+        return
+    var old = n.get_meta("weapon_node", null)
+    if old != null and is_instance_valid(old):
+        (old as Node).queue_free()
+    n.set_meta("weapon_node", null)
+    if wid == "":
+        return
+    var sks := n.find_children("*", "Skeleton3D", true, false)
+    if sks.is_empty() or (sks[0] as Skeleton3D).find_bone("hand_r") < 0:
+        return
+    var att := BoneAttachment3D.new()
+    att.bone_name = "hand_r"
+    sks[0].add_child(att)
+    if wid == "bat":
+        att.add_child(PlayerScript.make_bat())
+    else:
+        var path := Weapons.model_path(wid)
+        if path == "" or not ResourceLoader.exists(path):
+            att.queue_free()
+            return
+        var g: Node3D = (load(path) as PackedScene).instantiate()
+        g.transform = PlayerScript.GUN_XF
+        att.add_child(g)
+    n.set_meta("weapon_node", att)
+
+
+## Другой игрок ударил или выстрелил: звук у него, а при выстреле — вспышка у ствола.
+func _remote_attack(r: Dictionary) -> void:
+    var n: Node3D = r["npc"]
+    if not is_instance_valid(n) or not n.visible:
+        return
+    var wid := String(r.get("weapon", ""))
+    var p := n.global_position + Vector3(0, 1.3, 0)
+    if wid == "" or wid == "bat" or Weapons.is_melee(wid):
+        Sfx.play_at("swing", p, -6.0, randf_range(0.9, 1.15))
+        return
+    Sfx.play_at("shot_heavy" if wid in ["ak", "obrez"] else "shot", p, 0.0, randf_range(0.95, 1.05))
+    var fl := OmniLight3D.new()
+    fl.light_color = Color(1.0, 0.8, 0.45)
+    fl.light_energy = 3.0
+    fl.omni_range = 4.0
+    add_child(fl)
+    fl.global_position = p + n.global_transform.basis.z * 0.6
+    get_tree().create_timer(0.07).timeout.connect(fl.queue_free)
+
+
+## Реплика рядом стоящего игрока — облачком над головой на 6 секунд (как в RP-проектах).
+func _chat_bubble(x: String, me: bool) -> void:
+    for id in _remote:
+        var r: Dictionary = _remote[id]
+        var nm := String(r["name"])
+        var text := ""
+        if not me and x.begins_with(nm + ": "):
+            text = x.substr(nm.length() + 2)
+        elif me and x.begins_with("* " + nm + " "):
+            text = "* " + x.substr(nm.length() + 3)
+        if text == "":
+            continue
+        var holder: Node3D = r["car"] if r["car"] != null and is_instance_valid(r["car"]) else r["npc"]
+        if not is_instance_valid(holder):
+            return
+        var old = holder.get_meta("bubble", null)
+        if old != null and is_instance_valid(old):
+            (old as Node).queue_free()
+        var l := Label3D.new()
+        l.text = text if text.length() <= 60 else text.substr(0, 57) + "…"
+        l.font_size = 44
+        l.pixel_size = 0.005
+        l.outline_size = 10
+        l.modulate = Color(1, 1, 1) if not me else Color(0.95, 0.75, 1.0)
+        l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+        l.no_depth_test = true
+        l.width = 520.0
+        l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        l.position = Vector3(0, 2.75, 0)
+        l.visibility_range_end = 40.0
+        holder.add_child(l)
+        holder.set_meta("bubble", l)
+        get_tree().create_timer(6.0).timeout.connect(func() -> void:
+            if is_instance_valid(l):
+                l.queue_free())
+        return
+
+
 func _on_net_joined(id: int, pname: String, info: Dictionary) -> void:
     if _remote.has(id):
         return
@@ -6843,6 +7392,15 @@ func _on_net_states(list: Array) -> void:
             continue
         var st: Array = e[1]
         var r: Dictionary = _remote[id]
+        var pnow := Time.get_ticks_msec() / 1000.0
+        var pdt := pnow - float(r.get("ptt", 0.0))
+        # скорость пешком по двум пакетам: между пакетами игрок идёт дальше, а не стоит и не «прыгает»
+        if pdt > 0.03 and pdt < 1.0 and r.has("tpos"):
+            var pv: Vector3 = ((st[0] as Vector3) - (r["tpos"] as Vector3)) / pdt
+            r["pvel"] = pv if pv.length() < 12.0 else Vector3.ZERO
+        else:
+            r["pvel"] = Vector3.ZERO
+        r["ptt"] = pnow
         r["tpos"] = st[0]
         r["tyaw"] = float(st[1])
         r["anim"] = String(st[2])
@@ -6865,10 +7423,28 @@ func _on_net_states(list: Array) -> void:
             elif int(r.get("ride", 0)) == Net.my_id:
                 _hud.chat("%s вышел из машины" % r["name"], "time")
             r["ride"] = ride
+        # внешность, оружие, удары
+        var lcode := String(st[10]) if st.size() > 10 else ""
+        if lcode != "" and lcode != String(r.get("look", "")):
+            _remote_redress(r, lcode)
+        var wid := String(st[11]) if st.size() > 11 else ""
+        if wid != String(r.get("weapon", "")):
+            _remote_weapon(r, wid)
+        var an := int(st[12]) if st.size() > 12 else 0
+        if r.has("atk") and an != int(r["atk"]):
+            _remote_attack(r)
+        r["atk"] = an
         var car: Array = st[4]
-        var key := "" if car.is_empty() else "%s|%s|%s" % [car[0], car[1], car[2]]
+        var key := "" if car.is_empty() else "%s|%s|%s|%s" % [car[0], car[1], car[2], car[4] if car.size() > 4 else ""]
         if key != r["car_key"]:
             _remote_set_car(r, car, key)
+        if r["car"] != null and is_instance_valid(r["car"]):
+            var fl := int(st[13]) if st.size() > 13 else 0
+            if fl != int(r.get("flags", -1)):
+                if fl & 4 != 0 and int(r.get("flags", 0)) & 4 == 0:
+                    Sfx.play_at("horn", (r["car"] as Node3D).global_position, -2.0, 1.0)
+                r["flags"] = fl
+                r["car"].set_remote_flags(fl & 1 != 0, fl & 2 != 0)
         if not car.is_empty():
             var now := Time.get_ticks_msec() / 1000.0
             var nxf: Transform3D = st[5]
@@ -6897,6 +7473,9 @@ func _remote_set_car(r: Dictionary, car: Array, key: String) -> void:
         n.visible = true
         return
     r["car"] = _make_remote_car(car, String(r["name"]))
+    r["flags"] = -1
+    if car.size() > 4:
+        r["car"].apply_tuning_code(String(car[4]))
     var seat: Array = r["car"].driver_seat()
     if seat.size() == 2:   # другой игрок за рулём — виден водитель
         preload("res://scripts/driver_mesh.gd").seat_in(r["car"], seat[0], float(seat[1]), "passerby")
@@ -7048,7 +7627,8 @@ func _update_online(delta: float) -> void:
     var car := []
     var xf := Transform3D()
     if _driving != null:
-        car = [String(_driving.kind), String(_driving.model_id), (_driving.paint as Color).to_html(false), String(_driving.car_name)]
+        car = [String(_driving.kind), String(_driving.model_id), (_driving.paint as Color).to_html(false), String(_driving.car_name),
+                _driving.tuning_code()]
         xf = _driving.global_transform
     var an := ""
     var asp := 1.0
@@ -7063,7 +7643,12 @@ func _update_online(delta: float) -> void:
         else:
             my_pos = (_remote[_ride_id]["car"] as Node3D).global_position
             _player.global_position = my_pos + Vector3.UP * 0.3
-    Net.send_state(delta, [my_pos, yaw, an, asp, car, xf, wanted, int(health), maxi(_ride_id, 0)])
+    var flags := 0
+    _horn_t = maxf(0.0, _horn_t - delta)
+    if _driving != null:
+        flags = (1 if _driving._headlight.visible else 0) | (2 if _driving.siren_on else 0) | (4 if _horn_t > 0.0 else 0)
+    Net.send_state(delta, [my_pos, yaw, an, asp, car, xf, wanted, int(health), maxi(_ride_id, 0),
+            _look_code(), weapon_id if weapon_id != "fist" else "", _attack_n, flags])
     if Net.authed:
         _net_sync(delta)
         _update_pcars(delta)
@@ -7093,6 +7678,8 @@ func _update_online(delta: float) -> void:
             _diag_frames = 4
             n.visible = true
         var tp: Vector3 = r["tpos"]
+        var pahead := clampf(Time.get_ticks_msec() / 1000.0 - float(r.get("ptt", 0.0)), 0.0, 0.25)
+        tp += (r.get("pvel", Vector3.ZERO) as Vector3) * pahead
         if n.global_position.distance_to(tp) > 30.0:
             n.global_position = tp
         else:
@@ -7156,8 +7743,9 @@ func _apply_profile(prof: Dictionary) -> void:
     var h := int(prof.get("home", -1))
     if h != home and h < _city.homes.size():
         _set_home(h)
+    _hud.set_app_visible("admin", _net_admin > 0)
     if _net_admin > 0:
-        _hud.chat("У тебя админка %d уровня. /help admin — команды." % _net_admin, "warn")
+        _hud.chat("У тебя админка %d уровня. Телефон → «Админ» или /help admin." % _net_admin, "warn")
 
 
 ## Пол персонажа: модель игрока и одежда заново.
@@ -7239,6 +7827,8 @@ func _on_server_msg(m: Dictionary) -> void:
                 _hud.chat(part, kind)
             if k == "pm" or k == "admin":
                 Sfx.play("notify")
+            if (k == "say" or k == "me") and n == "":
+                _chat_bubble(x, k == "me")
         "money_set":
             cash = int(m.get("cash", cash))
             bank = int(m.get("bank", bank))
@@ -7263,9 +7853,16 @@ func _on_server_msg(m: Dictionary) -> void:
         "prof":
             var pr: Dictionary = m.get("prof", {})
             _net_admin = int(pr.get("admin", _net_admin))
+            _hud.set_app_visible("admin", _net_admin > 0)
             _hud.chat("Уровень админки: %d" % _net_admin, "warn")
         "act":
             _on_net_act(m)
+        "adm":
+            _show_admin_panel(m)
+        "event":
+            _on_city_event(m)
+        "event_end":
+            _on_city_event_end(m)
         "ask":
             var aid := int(m.get("id", 0))
             _open_dialog("Предложение", String(m.get("text", "")),
@@ -7323,9 +7920,7 @@ func _on_server_msg(m: Dictionary) -> void:
                 bank += price
                 _hud.show_toast(String(m.get("msg", "Жильё занято")) + " — деньги вернули на карту")
                 _homes_taken[int(m.get("i", -1))] = true
-        "world":
-            minutes = float(m.get("min", minutes))
-            day = int(m.get("day", day))
+        "world":   # время у всех и так одно (московское), с сервера берём только погоду
             var w := String(m.get("weather", weather))
             if w != weather and WEATHER_NAMES.has(w):
                 weather = w
@@ -7357,6 +7952,20 @@ func _on_net_act(m: Dictionary) -> void:
             health = 100.0
             Sfx.play("heal")
             _hud.show_toast("%s вылечил тебя" % who)
+        "admin_heal":
+            health = 100.0
+            hunger = 100.0
+            Sfx.play("heal")
+            _hud.show_toast("Администратор %s восстановил тебе здоровье" % who)
+        "freeze":
+            if _driving != null or _ride_id >= 0:
+                _toggle_vehicle()     # выйти из машины
+            _player.frozen = true
+            _hud.show_toast("Администратор %s заморозил тебя. Жди, с тобой свяжутся." % who, "warn")
+            Sfx.play("notify")
+        "unfreeze":
+            _player.frozen = false
+            _hud.show_toast("Ты разморожен")
 
 
 ## Попали ли мы ударом/выстрелом в другого игрока. true — попали (сервер передаст урон).

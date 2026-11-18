@@ -29,8 +29,11 @@ func _ready() -> void:
     _build_path()
     _build_stops()
     _build_track()
+    # где сейчас трамваи — по реальным часам (средняя скорость с остановками ~7 м/с):
+    # кто зашёл в игру позже, видит их примерно там же, где и остальные
+    var base := fmod(Time.get_unix_time_from_system() * 7.0, total)
     for i in 2:
-        _spawn_car(total * (0.25 + 0.5 * i))
+        _spawn_car(fposmod(base + total * 0.5 * i, total))
 
 
 # ---------------------------------------------------------------- путь

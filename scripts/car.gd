@@ -96,6 +96,8 @@ var _lamp_a: StandardMaterial3D = null
 var _lamp_b: StandardMaterial3D = null
 var _flash_t := 0.0
 var siren_on := false            # сирена (у машин с мигалками, кнопка «БИП» включает/выключает)
+var remote_siren := false        # машина другого игрока: мигалки и сирена по его данным (см. set_remote_flags)
+var _rsiren: AudioStreamPlayer3D
 var _siren: AudioStreamPlayer = null
 
 # Звук мотора синтезируется прямо в коде (без аудиофайлов).
@@ -411,7 +413,8 @@ func _physics_process(delta: float) -> void:
     var steer_limit := lerpf(max_steer, 0.09 if kind == "car" else 0.12, clampf(kmh / 100.0, 0.0, 1.0))
     var steer_target := steer_in * steer_limit
     # к центру руль возвращается быстрее, чем поворачивается
-    var steer_rate := 1.6 if absf(steer_target) > absf(steering) else 3.2
+    # на малой скорости руль крутится быстрее (парковка, развороты во дворах), на трассе — плавнее
+    var steer_rate := lerpf(2.4, 1.4, clampf(kmh / 90.0, 0.0, 1.0)) if absf(steer_target) > absf(steering) else 3.2
     steering = move_toward(steering, steer_target, steer_rate * delta)
 
     if kind != "moto":
@@ -737,6 +740,13 @@ func toggle_siren() -> void:
 
 
 func _update_flashers(delta: float) -> void:
+    if remote_siren:     # чужая машина: мигалки работают без водителя-игрока
+        _flash_t += delta
+        var rs := fmod(_flash_t * 10.0, 1.0) < 0.5
+        var rf := fmod(_flash_t, 0.8) < 0.4
+        _lamp_a.emission_energy_multiplier = 5.0 if rf and rs else 0.2
+        _lamp_b.emission_energy_multiplier = 5.0 if not rf and rs else 0.2
+        return
     if _siren != null:
         if siren_on and driven and _siren.stream != null:
             if not _siren.playing:
@@ -796,6 +806,47 @@ func repaint(col: Color) -> void:
 
 
 ## Тонировка, цвет дисков, номер — после покупки, загрузки или тюнинга на СТО.
+## Тюнинг одной строкой — для других игроков по сети: диски, тонировка, занижение, номер.
+func tuning_code() -> String:
+    return "%s|%d|%d|%s" % [rim_color.to_html(true), int(tint), int(lowered), plate_text]
+
+
+func apply_tuning_code(code: String) -> void:
+    var p := code.split("|")
+    if p.size() < 4:
+        return
+    rim_color = Color.html(p[0]) if Color.html_is_valid(p[0]) else Color(0, 0, 0, 0)
+    tint = p[1] == "1"
+    lowered = p[2] == "1"
+    plate_text = p[3].substr(0, 16)
+    apply_tuning()
+
+
+## Машина другого игрока: фары и мигалки с сиреной (сирена слышна вокруг машины, а не по всему городу).
+func set_remote_flags(lights: bool, siren: bool) -> void:
+    _headlight.visible = lights
+    if not has_lights:
+        return
+    if siren != remote_siren:
+        remote_siren = siren
+        if siren:
+            if _rsiren == null:
+                _rsiren = AudioStreamPlayer3D.new()
+                _rsiren.stream = Sfx.get_sound("siren")
+                _rsiren.unit_size = 12.0
+                _rsiren.max_distance = 160.0
+                _rsiren.volume_db = -4.0
+                add_child(_rsiren)
+            if _rsiren.stream != null:
+                _rsiren.play()
+        else:
+            if _rsiren:
+                _rsiren.stop()
+            _flash_t = 0.0
+            _lamp_a.emission_energy_multiplier = 0.2
+            _lamp_b.emission_energy_multiplier = 0.2
+
+
 func apply_tuning() -> void:
     var glass := CarModel.glass_material()
     var tinted := StandardMaterial3D.new()

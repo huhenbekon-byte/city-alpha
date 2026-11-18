@@ -10,6 +10,7 @@ const CarModel := preload("res://scripts/car_model.gd")
 const DriverMesh := preload("res://scripts/driver_mesh.gd")
 
 const COUNT := 22
+var count := COUNT   # сколько создать (на слабом устройстве меньше)
 const LANE := 3.5          # смещение полосы от оси дороги
 const CRUISE := 11.0       # м/с (~40 км/ч)
 const TURN_SPEED := 6.0
@@ -33,7 +34,7 @@ func setup() -> void:
     _rng.randomize()
     _ext = (CityBuilder.GRID + 0.5) * CityBuilder.PITCH + 1.0
     var meshes := {}
-    for i in COUNT:
+    for i in count:
         var ci := _rng.randi() % COLORS.size()
         var model_id: String = ["vaz2106", "moskvich", "vaz2108", "volga", "vaz2101", "uaz469", "vaz2106", "uaz452n"][ci % 8]
         if not meshes.has(ci):

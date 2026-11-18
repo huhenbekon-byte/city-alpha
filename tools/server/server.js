@@ -1,4 +1,4 @@
-// City Alpha — онлайн-сервер. Node.js 18+, без внешних библиотек (свой WebSocket по RFC 6455).
+// СССР РП (City Alpha) — онлайн-сервер. Node.js 18+, без внешних библиотек (свой WebSocket по RFC 6455).
 //
 // Запуск:              node server.js        (порт из переменной PORT, иначе 7777)
 // Render.com:          Root Directory: tools/server → Start Command: node server.js
@@ -121,6 +121,19 @@ function cleanText(s) { return String(s || '').replace(/[\x00-\x1f\[\]]/g, '').t
 function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); }
 function online() { let n = 0; for (const p of players.values()) if (p.name) n++; return n; }
 function log(s) { console.log(new Date().toISOString().slice(0, 19).replace('T', ' ') + ' ' + s); }
+
+// Журнал важных действий (переводы, продажи, аресты, наказания, репорты): последние 1000 — в памяти (/logs),
+// всё — в консоль (Render → Logs) и в базу logs/<дата>, чтобы разбирать жалобы и ловить читеров.
+const AUDIT = [];
+function audit(kind, text, nicks) {
+  const t = Date.now();
+  const e = { t, kind, text, nicks: (nicks || []).map(n => String(n).toLowerCase()) };
+  AUDIT.push(e);
+  if (AUDIT.length > 1000) AUDIT.shift();
+  log(`[${kind}] ${text}`);
+  const day = new Date(t).toISOString().slice(0, 10);
+  dbLater('logs/' + day, { [t.toString(36) + Math.random().toString(36).slice(2, 5)]: `${kind}: ${text}` });
+}
 function byNick(nick) {
   const k = accKey(String(nick || ''));
   for (const p of players.values()) if (p.acc && p.acc.key === k) return p;
@@ -129,11 +142,15 @@ function byNick(nick) {
 function near(p, q, d) { return p.s && q.s && dist(p.s, q.s) <= d; }
 function isLeader(p) { return !!(p.acc && p.acc.faction && world.leaders[p.acc.faction] === p.acc.key); }
 function admin(p) { return p.acc ? (p.acc.admin | 0) : 0; }
+function banUntilMsg(acc) {
+  const d = new Date(acc.ban_until + 3 * 3600000).toISOString();
+  return `Бан до ${d.slice(8, 10)}.${d.slice(5, 7)} ${d.slice(11, 16)} МСК: ${acc.ban_reason || 'нарушение правил'}`;
+}
 
 // ---------------------------------------------------------------- WebSocket
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end(`City Alpha server: online ${online()}\n`);
+  res.end(`SSSR RP server: online ${online()}\n`);
 });
 
 server.on('upgrade', (req, sock) => {
@@ -242,6 +259,7 @@ async function onAuth(p, m) {
         return send(p, { t: 'auth_err', msg: 'Неверный пароль' });
       }
       if (acc.banned) return send(p, { t: 'auth_err', msg: 'Аккаунт заблокирован: ' + (acc.ban_reason || 'нарушение правил') });
+      if (acc.ban_until > Date.now()) return send(p, { t: 'auth_err', msg: banUntilMsg(acc) });
     }
     login(p, key, acc, nick);
   } catch (e) {
@@ -284,6 +302,7 @@ async function onTokenAuth(p, m) {
   try {
     const acc = await dbGet('accounts/' + tk.key);
     if (!acc || acc.banned) return send(p, { t: 'auth_err', msg: acc ? 'Аккаунт заблокирован' : 'Аккаунт не найден' });
+    if (acc.ban_until > Date.now()) return send(p, { t: 'auth_err', msg: banUntilMsg(acc) });
     login(p, tk.key, acc, acc.nick);
     log(`переподключился ${p.acc.nick}`);
   } catch (e) {
@@ -397,7 +416,7 @@ function onGive(p, m) {
   if (p.acc.cash == null || p.acc.cash < amount) return notice(p, 'Не хватает наличных');
   setMoney(p, p.acc.cash - amount, p.acc.bank, `Передал ${amount} ₽ игроку ${q.acc.nick}`);
   setMoney(q, (q.acc.cash || 0) + amount, q.acc.bank || 0, `${p.acc.nick} передал тебе ${amount} ₽`);
-  log(`перевод ${p.acc.nick} → ${q.acc.nick}: ${amount}`);
+  audit('перевод', `${p.acc.nick} → ${q.acc.nick}: ${amount} ₽`, [p.acc.nick, q.acc.nick]);
 }
 
 // ---------------------------------------------------------------- фракции
@@ -468,6 +487,7 @@ function onAct(p, m) {
     if (!q.s || (q.s[8] | 0) <= 0) return notice(p, 'Этот гражданин не в розыске');
     send(q, { t: 'act', from: p.id, name: p.acc.nick, kind: 'arrest' });
     setMoney(p, p.acc.cash || 0, (p.acc.bank || 0) + 300 * (q.s[8] | 0), `Премия за задержание: ${300 * (q.s[8] | 0)} ₽`);
+    audit('арест', `${p.acc.nick} задержал ${q.acc.nick} (розыск ${q.s[8] | 0})`, [p.acc.nick, q.acc.nick]);
     sendAll({ t: 'chat', n: '', x: `${p.acc.nick} задержал ${q.acc.nick}`, k: 'faction' }, r => r.acc && POLICE.includes(r.acc.faction));
   } else if (kind === 'heal') {
     if (!MEDIC.includes(p.acc.faction)) return notice(p, 'Лечить может только врач');
@@ -586,14 +606,21 @@ function onBiz(p, m) {
 
 // ---------------------------------------------------------------- время и погода (одни на всех)
 const DAY_EPOCH = 1794600000;       // начало отсчёта игровых дней
-const WEATHERS = ['clear', 'clear', 'clear', 'cloudy', 'cloudy', 'rain', 'rain', 'snow'];
+// погода по сезону (московский месяц): зимой снег, летом без снега, весной и в ноябре — всё вперемешку
+const WEATHERS = {
+  winter: ['clear', 'cloudy', 'cloudy', 'snow', 'snow', 'snow'],
+  edge: ['clear', 'cloudy', 'cloudy', 'rain', 'rain', 'snow'],
+  warm: ['clear', 'clear', 'clear', 'cloudy', 'cloudy', 'rain', 'rain'],
+};
 function worldMsg() {
   const s = Date.now() / 1000;
   const min = s % 1440;            // 1 реальная секунда = 1 игровая минута
   const day = Math.floor((s - DAY_EPOCH) / 1440) + 1;
   const period = Math.floor(s / 420);
   const h = crypto.createHash('md5').update('w' + period).digest()[0];
-  return { t: 'world', min, day, weather: WEATHERS[h % WEATHERS.length] };
+  const month = new Date(Date.now() + 3 * 3600000).getUTCMonth() + 1;
+  const list = [12, 1, 2].includes(month) ? WEATHERS.winter : [3, 11].includes(month) ? WEATHERS.edge : WEATHERS.warm;
+  return { t: 'world', min, day, weather: list[h % list.length] };
 }
 setInterval(() => sendAll(worldMsg()), 15000);
 
@@ -603,9 +630,25 @@ const HELP = [
   '/me действие · /do описание · /try действие (удачно/неудачно) · /report текст — админам',
   'Лидер: /rank ник N · /uninvite ник · /roster.  Админ: /help admin',
 ].join('\n');
+const REPORTS = [];
+let reportSeq = 0;
+
+// панель администратора в телефоне: игроки онлайн и открытые репорты
+function onAdminPanel(p) {
+  if (!admin(p)) return;
+  const list = [];
+  for (const q of players.values()) if (q.name && q.acc) {
+    list.push([q.acc.nick, q.acc.faction || '', q.acc.warns | 0, admin(q), (q.acc.muted || 0) > Date.now(), !!q.frozen, q.acc.cash | 0]);
+  }
+  list.sort((a, b) => a[0].localeCompare(b[0]));
+  const reps = REPORTS.filter(r => !r.done).slice(-10).map(r => [r.id, r.nick, r.text, Math.round((Date.now() - r.t) / 60000)]);
+  send(p, { t: 'adm', lvl: admin(p), players: list, reports: reps });
+}
+
 const HELP_ADMIN = [
   '/a текст — админ-чат · /ann текст — объявление · /kick ник · /ban ник причина · /unban ник',
   '/givemoney ник сумма · /tp ник · /tphere ник · /makeleader ник фракция · /setadmin ник 0-5 · /mute ник минуты',
+  '/event (3+) · /reports · /ans ник текст (ответ на репорт) · /warn ник причина (3 = бан 3 дня) · /logs [ник] · /hp ник · /freeze ник',
 ].join('\n');
 
 async function onSay(p, m) {
@@ -640,7 +683,10 @@ async function onSay(p, m) {
     }
     case '/report':
       if (!rest) return notice(p, '/report текст');
-      log(`[репорт] ${p.acc.nick}: ${rest}`);
+      if (REPORTS.filter(r => r.nick === p.acc.nick && !r.done).length >= 3) return notice(p, 'У тебя уже 3 открытых репорта — дождись ответа');
+      REPORTS.push({ id: ++reportSeq, nick: p.acc.nick, text: rest.slice(0, 200), t: now, done: false });
+      if (REPORTS.length > 100) REPORTS.shift();
+      audit('репорт', `${p.acc.nick}: ${rest}`, [p.acc.nick]);
       sendAll({ t: 'chat', n: `Репорт от ${p.acc.nick}`, x: rest, k: 'admin' }, q => admin(q) >= 1);
       return notice(p, 'Репорт отправлен администрации');
     case '/roster': return onRoster(p);
@@ -679,7 +725,7 @@ async function onSay(p, m) {
       const q = byNick(arg[0]);
       if (!q || admin(q) >= lvl) return notice(p, 'Нельзя');
       send(q, { t: 'kicked', msg: `Кик от администратора ${p.acc.nick}` });
-      log(`кик ${q.acc.nick} (${p.acc.nick})`);
+      audit('кик', `${q.acc.nick} — админ ${p.acc.nick}`, [q.acc.nick, p.acc.nick]);
       return drop(q);
     }
     case '/ban': {
@@ -690,12 +736,12 @@ async function onSay(p, m) {
       if (q && admin(q) >= lvl) return notice(p, 'Нельзя');
       await dbPatch('accounts/' + key, { banned: true, ban_reason: reason }).catch(() => {});
       if (q) { send(q, { t: 'kicked', msg: 'Бан: ' + reason }); drop(q); }
-      log(`бан ${arg[0]} (${p.acc.nick}): ${reason}`);
+      audit('бан', `${arg[0]} — админ ${p.acc.nick}: ${reason}`, [arg[0], p.acc.nick]);
       return sendAll({ t: 'chat', n: '', x: `${arg[0]} забанен администратором ${p.acc.nick}: ${reason}`, k: 'admin' });
     }
     case '/unban':
       if (lvl < 2) return notice(p, 'Нужен 2 уровень админки');
-      await dbPatch('accounts/' + accKey(arg[0] || ''), { banned: null, ban_reason: null }).catch(() => {});
+      await dbPatch('accounts/' + accKey(arg[0] || ''), { banned: null, ban_reason: null, ban_until: null }).catch(() => {});
       return notice(p, `${arg[0]} разбанен`);
     case '/mute': {
       const q = byNick(arg[0]); const mins = Math.max(1, Math.min(1440, parseInt(arg[1], 10) || 10));
@@ -703,6 +749,7 @@ async function onSay(p, m) {
       q.acc.muted = Date.now() + mins * 60000;
       persist(q, { muted: q.acc.muted });
       notice(q, `Чат заблокирован на ${mins} мин администратором ${p.acc.nick}`);
+      audit('мут', `${q.acc.nick} на ${mins} мин — админ ${p.acc.nick}`, [q.acc.nick, p.acc.nick]);
       return notice(p, 'Готово');
     }
     case '/givemoney': {
@@ -710,7 +757,7 @@ async function onSay(p, m) {
       const q = byNick(arg[0]); const sum = parseInt(arg[1], 10);
       if (!q || !sum) return notice(p, '/givemoney ник сумма (игрок онлайн)');
       setMoney(q, Math.max(0, (q.acc.cash || 0) + sum), q.acc.bank || 0, `Администратор выдал ${sum} ₽`);
-      log(`выдача ${sum} → ${q.acc.nick} (${p.acc.nick})`);
+      audit('выдача', `${sum} ₽ → ${q.acc.nick} — админ ${p.acc.nick}`, [q.acc.nick, p.acc.nick]);
       return notice(p, 'Готово');
     }
     case '/tp': {
@@ -729,6 +776,7 @@ async function onSay(p, m) {
       if (!q || !FACTIONS.includes(fid)) return notice(p, '/makeleader ник фракция (' + FACTIONS.join(', ') + ')');
       setFaction(q, fid, 99);
       world.leaders[fid] = q.acc.key;
+      audit('лидер', `${q.acc.nick} → лидер ${fid} — админ ${p.acc.nick}`, [q.acc.nick, p.acc.nick]);
       dbLater('world/leaders', { [fid]: q.acc.key });
       send(q, { t: 'faction_set', fid, rank: 99, leader: true, msg: 'Ты назначен лидером организации!' });
       return sendAll({ t: 'chat', n: '', x: `${q.acc.nick} назначен лидером «${fid}»`, k: 'admin' });
@@ -738,13 +786,131 @@ async function onSay(p, m) {
       const q = byNick(arg[0]); const l = Math.max(0, Math.min(4, parseInt(arg[1], 10) || 0));
       if (!q) return notice(p, 'Игрок должен быть онлайн');
       q.acc.admin = l;
+      audit('админка', `${q.acc.nick}: уровень ${l} — ${p.acc.nick}`, [q.acc.nick, p.acc.nick]);
       persist(q, { admin: l });
       send(q, { t: 'prof', prof: profile(q) });
       return notice(p, `${q.acc.nick}: админка ${l}`);
     }
   }
+  return adminExtra(p, cmd, arg, rest, lvl);
+}
+
+// Команды администрации, добавленные к основным: ответ на репорт, предупреждения, журнал, лечение, заморозка.
+async function adminExtra(p, cmd, arg, rest, lvl) {
+  switch (cmd) {
+    case '/ans': {
+      const q = byNick(arg[0]); const txt = rest.slice((arg[0] || '').length).trim();
+      if (!q || !txt) return notice(p, '/ans ник текст — ответ на репорт');
+      send(q, { t: 'chat', n: `Администратор ${p.acc.nick}`, x: txt, k: 'pm' });
+      for (const r of REPORTS) if (r.nick === q.acc.nick && !r.done) { r.done = true; r.by = p.acc.nick; }
+      audit('ответ', `${p.acc.nick} → ${q.acc.nick}: ${txt}`, [p.acc.nick, q.acc.nick]);
+      return notice(p, 'Ответ отправлен');
+    }
+    case '/warn': {
+      const q = byNick(arg[0]); const reason = rest.slice((arg[0] || '').length).trim() || 'нарушение правил';
+      if (!q || admin(q) >= lvl) return notice(p, '/warn ник причина (игрок онлайн)');
+      q.acc.warns = (q.acc.warns | 0) + 1;
+      persist(q, { warns: q.acc.warns });
+      audit('варн', `${q.acc.nick} (${q.acc.warns}/3) — админ ${p.acc.nick}: ${reason}`, [q.acc.nick, p.acc.nick]);
+      if (q.acc.warns >= 3) {   // третье предупреждение — бан на 3 дня
+        const until = Date.now() + 3 * 86400000;
+        q.acc.warns = 0;
+        persist(q, { warns: 0, ban_until: until, ban_reason: '3 предупреждения: ' + reason });
+        send(q, { t: 'kicked', msg: 'Бан на 3 дня: 3 предупреждения (' + reason + ')' });
+        drop(q);
+        return sendAll({ t: 'chat', n: '', x: `${arg[0]} получил 3/3 предупреждения и забанен на 3 дня`, k: 'admin' });
+      }
+      notice(q, `Предупреждение ${q.acc.warns}/3 от администратора ${p.acc.nick}: ${reason}. На третьем — бан на 3 дня.`);
+      return notice(p, `Выдано: ${q.acc.warns}/3`);
+    }
+    case '/event': {   // запустить событие сейчас (для проверки)
+      if (lvl < 3) return notice(p, 'Нужен 3 уровень админки');
+      if (ev) endEvent(null);
+      startEvent();
+      return notice(p, 'Событие запущено: ' + ev.title);
+    }
+    case '/reports': {
+      const open = REPORTS.filter(r => !r.done);
+      if (!open.length) return notice(p, 'Открытых репортов нет');
+      return notice(p, open.slice(-8).map(r => `#${r.id} ${r.nick}: ${r.text}`).join('\n'));
+    }
+    case '/logs': {
+      const who = (arg[0] || '').toLowerCase();
+      const list = AUDIT.filter(e => !who || e.nicks.includes(who)).slice(-12);
+      if (!list.length) return notice(p, 'В журнале пусто' + (who ? ' по этому игроку' : ''));
+      return notice(p, list.map(e => `${new Date(e.t + 3 * 3600000).toISOString().slice(11, 16)} ${e.kind}: ${e.text}`).join('\n'));
+    }
+    case '/hp': {
+      const q = byNick(arg[0]);
+      if (!q) return notice(p, '/hp ник — вылечить');
+      send(q, { t: 'act', from: p.id, name: p.acc.nick, kind: 'admin_heal' });
+      audit('лечение', `${q.acc.nick} — админ ${p.acc.nick}`, [q.acc.nick, p.acc.nick]);
+      return notice(p, 'Готово');
+    }
+    case '/freeze': {
+      const q = byNick(arg[0]);
+      if (!q || admin(q) >= lvl) return notice(p, '/freeze ник — заморозить / разморозить');
+      q.frozen = !q.frozen;
+      send(q, { t: 'act', from: p.id, name: p.acc.nick, kind: q.frozen ? 'freeze' : 'unfreeze' });
+      audit('заморозка', `${q.acc.nick}: ${q.frozen ? 'заморожен' : 'разморожен'} — админ ${p.acc.nick}`, [q.acc.nick, p.acc.nick]);
+      return notice(p, q.frozen ? 'Заморожен' : 'Разморожен');
+    }
+  }
   return notice(p, 'Неизвестная команда. /help admin');
 }
+
+// ---------------------------------------------------------------- события сервера
+// Раз в 25–40 минут где-то в городе появляется «находка»: кто первым добежит или доедет — получает награду.
+// Точки — дворы и подъезды из city_builder (город строится одинаково у всех, seed 1977).
+const EVENT_SPOTS = [[-3.1, 0.1, 73.5], [-1286, 0.1, -175.5], [358.9, 0.1, -356.5], [-358, 0.1, -346.5],
+  [-910, 0.1, 184.5], [93, 0, 538.1], [-351, 0.1, 374], [369.6, 0.1, 184.5], [-1272, 0.1, 183.5], [-359, 0.1, 15.5],
+  [1.8, 0.1, -336], [-993, 0.1, -116], [258, 0.1, -86.9], [-79, 0.1, 336], [-179.4, 0.1, -156.5], [151, 0.1, 273.5]];
+const EVENT_KINDS = [
+  { title: 'Потерянная сумка инкассатора', text: 'Инкассаторская машина потеряла сумку с выручкой! Кто первым найдёт — получит', reward: 4000 },
+  { title: 'Посылка из Москвы', text: 'Курьер оставил дефицитную посылку без адреса. Нашедшему — вознаграждение', reward: 3000 },
+  { title: 'Клад во дворе', text: 'Дворник откопал старую жестянку с червонцами. Кто успеет первым — заберёт', reward: 3500 },
+  { title: 'Лотерея «Спортлото»', text: 'Выигрышный билет «Спортлото» уронили во дворе! Нашедшему —', reward: 5000 },
+];
+const EVENT_MIN = 25, EVENT_MAX = 40, EVENT_LIVE = 10;   // минуты
+let ev = null, evSeq = 0, evNext = Date.now() + 5 * 60000, evLast = -1;
+
+function eventMsg() {
+  return { t: 'event', id: ev.id, title: ev.title, text: ev.text, reward: ev.reward, x: ev.pos[0], y: ev.pos[1], z: ev.pos[2],
+    left: Math.max(0, Math.round((ev.until - Date.now()) / 1000)) };
+}
+function startEvent() {
+  let i;
+  do i = Math.floor(Math.random() * EVENT_SPOTS.length); while (i === evLast && EVENT_SPOTS.length > 1);
+  evLast = i;
+  const k = EVENT_KINDS[Math.floor(Math.random() * EVENT_KINDS.length)];
+  ev = { id: ++evSeq, pos: EVENT_SPOTS[i], title: k.title, text: `${k.text} ${k.reward} ₽.`, reward: k.reward, until: Date.now() + EVENT_LIVE * 60000 };
+  sendAll(eventMsg());
+  audit('событие', `${k.title} — точка ${i}`, []);
+}
+function endEvent(winner) {
+  if (!ev) return;
+  sendAll({ t: 'event_end', id: ev.id, win: winner ? winner.acc.nick : '', title: ev.title });
+  ev = null;
+  evNext = Date.now() + (EVENT_MIN + Math.random() * (EVENT_MAX - EVENT_MIN)) * 60000;
+}
+function onEventClaim(p, m) {
+  if (!ev || (m.id | 0) !== ev.id || !p.s) return;
+  const d = Math.hypot(p.s[0] - ev.pos[0], p.s[2] - ev.pos[2]);
+  if (d > 7) return notice(p, 'Подойди ближе к находке');
+  if ((p.flags || 0) >= 3) return notice(p, 'Награда недоступна: античит заметил подозрительные перемещения');
+  const reward = ev.reward;
+  setMoney(p, (p.acc.cash || 0) + reward, p.acc.bank || 0, `${ev.title}: +${reward} ₽`);
+  audit('находка', `${p.acc.nick} нашёл «${ev.title}» (+${reward} ₽)`, [p.acc.nick]);
+  endEvent(p);
+}
+setInterval(() => {
+  const now = Date.now();
+  if (ev && now > ev.until) endEvent(null);
+  else if (!ev && now >= evNext) {
+    if (online() >= 1) startEvent();
+    else evNext = now + 60000;       // никого нет — подождём
+  }
+}, 10000);
 
 function localChat(p, x, k, d) {
   for (const q of players.values()) if (q.name && (q === p || !p.s || !q.s || dist(p.s, q.s) < d)) send(q, { t: 'chat', n: '', x, k });
@@ -766,6 +932,7 @@ function onMessage(p, m) {
       send(p, { t: 'homes', taken: takenHomes(p) });
       send(p, { t: 'bizs', map: bizMap(p) });
       send(p, worldMsg());
+      if (ev) send(p, eventMsg());
       for (const q of players.values()) if (q !== p && q.name) send(q, { t: 'join', id: p.id, name: p.name, info: p.info });
       for (const q of players.values()) if (q !== p && q.name && q.pcars && q.pcars.length) send(p, { t: 'pcars', id: q.id, l: q.pcars });
       return log(`вошёл ${p.name} (#${p.id}), онлайн ${online()}`);
@@ -780,6 +947,8 @@ function onMessage(p, m) {
       return;
     case 'save': if (typeof m.d === 'string' && m.d.length < 300000) p.pendingSave = m.d; return;
     case 'say': return onSay(p, m);
+    case 'adm': return onAdminPanel(p);
+    case 'event_claim': return onEventClaim(p, m);
     case 'money': return onMoney(p, m);
     case 'give': return onGive(p, m);
     case 'faction': return onFaction(p, m);
@@ -838,7 +1007,7 @@ function suspect(p, why) {
   if (now - (p.suspT || 0) < 30000) return;
   p.suspT = now;
   p.flags = (p.flags || 0) + 1;
-  log(`подозрение: ${p.acc.nick} — ${why}`);
+  audit('античит', `${p.acc.nick} — ${why}`, [p.acc.nick]);
   for (const q of players.values()) if (admin(q) >= 1) notice(q, `[античит] ${p.acc.nick}: ${why} (/tp ${p.acc.nick} — проверить)`);
 }
 
@@ -855,20 +1024,29 @@ function drop(p) {
   }
 }
 
-// Рассылка положений: рядом (до 60 м) — 8 раз в секунду, до 150 м — 4, дальше — 2;
-// только изменившиеся состояния. Так трафик растёт медленнее числа игроков.
+// Рассылка положений: совсем рядом (до 40 м) — 8 раз в секунду, до 100 м — 4, до 200 — 2, дальше — 1;
+// только изменившиеся состояния и не больше MAX_SEEN ближайших. Так трафик почти не растёт с онлайном:
+// в толпе из 100 человек телефон получает данные о 40 ближайших, а дальние обновляются реже.
+const MAX_SEEN = 40;
 let tick = 0;
 setInterval(() => {
   tick++;
   for (const p of players.values()) {
     if (!p.name) continue;
     if (!p.seen) p.seen = new Map();
-    const l = [];
+    const near = [];
     for (const q of players.values()) {
       if (q === p || !q.s) continue;
       const d = p.s ? dist(p.s, q.s) : 0;
-      if (d > VIEW_DIST) continue;
-      const every = d < 60 ? 1 : d < 150 ? 2 : 4;
+      if (d <= VIEW_DIST) near.push([d, q]);
+    }
+    if (near.length > MAX_SEEN) {
+      near.sort((a, b) => a[0] - b[0]);
+      near.length = MAX_SEEN;
+    }
+    const l = [];
+    for (const [d, q] of near) {
+      const every = d < 40 ? 1 : d < 100 ? 2 : d < 200 ? 4 : 8;
       if ((tick + q.id) % every) continue;
       if (p.seen.get(q.id) === q.sN) continue;
       p.seen.set(q.id, q.sN);
@@ -879,4 +1057,4 @@ setInterval(() => {
 }, SEND_MS);
 
 loadWorld().then(() => server.listen(PORT, () =>
-  log(`City Alpha сервер запущен, порт ${PORT}; база: ${USE_FB ? 'Firebase' : 'в памяти (FIREBASE_URL/FIREBASE_SECRET не заданы)'}`)));
+  log(`СССР РП: сервер запущен, порт ${PORT}; база: ${USE_FB ? 'Firebase' : 'в памяти (FIREBASE_URL/FIREBASE_SECRET не заданы)'}`)));

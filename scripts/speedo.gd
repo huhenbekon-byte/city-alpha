@@ -92,7 +92,12 @@ func _draw() -> void:
     var blink := fmod(Time.get_ticks_msec() / 1000.0, 0.8) < 0.4
 
     # скорость
-    _text(Vector2(0, 122), str(speed), 112, CREAM, 186.0, HORIZONTAL_ALIGNMENT_CENTER)
+    # три цифры (100+) не влезают в 186 px крупным шрифтом — уменьшаем, иначе Godot обрезает «110» до «11»
+    var st := str(speed)
+    var sfs := 112
+    while sfs > 60 and _font.get_string_size(st, HORIZONTAL_ALIGNMENT_LEFT, -1, sfs).x > 180.0:
+        sfs -= 4
+    _text(Vector2(0, 122 - (112 - sfs) * 0.3), st, sfs, CREAM, 186.0, HORIZONTAL_ALIGNMENT_CENTER)
     _text(Vector2(0, 168), "К М / Ч", 30, CREAM, 186.0, HORIZONTAL_ALIGNMENT_CENTER)
 
     # бак

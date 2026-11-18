@@ -162,7 +162,7 @@ func do_action() -> void:
         "loader":
             if carrying == "box":
                 carrying = ""
-                paid.emit(60, "Коробка на складе: +60 ₽")
+                paid.emit(100, "Коробка на складе: +100 ₽")
                 _set_target(city.warehouse_pick, "ВЗЯТЬ КОРОБКУ", Color(1.0, 0.8, 0.1))
             else:
                 carrying = "box"
@@ -226,10 +226,14 @@ func _make_bus_route() -> Array:
     var route := []
     var cur: Vector3 = city.bus_spawn.origin
     for k in mini(5, left.size()):
-        var best := 0
+        # ближайшая остановка дальше 30 м (не та, у которой стоим); если таких нет — просто ближайшая
+        var best := -1
         for i in left.size():
-            if _dist(cur, left[i]) < _dist(cur, left[best]) and _dist(cur, left[i]) > 30.0:
+            var di := _dist(cur, left[i])
+            if di > 30.0 and (best < 0 or di < _dist(cur, left[best])):
                 best = i
+        if best < 0:
+            best = 0
         cur = left[best]
         route.append(cur)
         left.remove_at(best)

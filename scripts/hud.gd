@@ -20,6 +20,8 @@ const APPS := [
     ["taxi", "Такси", "car", Color(0.95, 0.75, 0.1)],
     ["car", "Моя машина", "key", Color(0.35, 0.38, 0.45)],
     ["biz", "Бизнес", "money", Color(0.6, 0.45, 0.1)],
+    ["players", "Игроки", "people", Color(0.75, 0.2, 0.15)],
+    ["admin", "Админ", "shield", Color(0.55, 0.08, 0.08)],
     ["emote", "Жесты", "people", Color(0.55, 0.3, 0.6)],
     ["skills", "Навыки", "star", Color(0.2, 0.55, 0.6)],
     ["achieve", "Достижения", "trophy", Color(0.75, 0.55, 0.1)],
@@ -52,7 +54,7 @@ var _app_btns := {}
 var _job_active := false
 
 # ---- чат-лента оповещений (как в RP-серверах): погода, зарплата, розыск, работа...
-const CHAT_LINES := 7          # сколько строк видно на экране
+const CHAT_LINES := 4          # сколько строк видно на экране (остальное — в истории чата)
 const CHAT_LIFE := 14.0        # через сколько секунд строка гаснет
 const CHAT_COLORS := {
     "info": Color(0.95, 0.95, 0.95), "money": Color(0.45, 0.95, 0.5), "weather": Color(0.55, 0.8, 1.0),
@@ -80,11 +82,13 @@ func _ready() -> void:
     _toast = _make_label(self, 32, Color(1, 1, 1))
     _toast.anchor_left = 0.0
     _toast.anchor_right = 1.0
-    _toast.offset_left = 0.0
-    _toast.offset_right = 0.0
+    _toast.offset_left = 290.0            # правее карты и кошелька — длинный текст переносится, а не уезжает за край
+    _toast.offset_right = -290.0
     _toast.offset_top = 215.0
-    _toast.offset_bottom = 265.0
+    _toast.offset_bottom = 300.0
     _toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    _toast.max_lines_visible = 2
     _toast.modulate.a = 0.0
 
     minimap = MinimapScript.new()
@@ -213,7 +217,8 @@ func set_job(text: String) -> void:
 
 func show_toast(text: String, kind := "info") -> void:
     _toast.text = text
-    _toast_time = 3.5
+    _toast.label_settings.font_size = 32 if text.length() < 40 else 26
+    _toast_time = clampf(2.5 + text.length() * 0.035, 3.5, 7.0)   # длинное — дольше на экране
     _toast.modulate.a = 1.0
     chat(text, kind)
 
@@ -228,6 +233,7 @@ func chat(text: String, kind := "info") -> void:
     var lbl := _make_label(_chat_box, 19, col)
     lbl.text = line
     lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    lbl.max_lines_visible = 2               # длинное сообщение — две строки, полностью в истории чата
     lbl.custom_minimum_size = Vector2(_chat_box.size.x, 0)
     _chat_rows.append([lbl, CHAT_LIFE])
     while _chat_rows.size() > CHAT_LINES:
@@ -240,8 +246,8 @@ func chat(text: String, kind := "info") -> void:
 
 func _build_chat() -> void:
     _chat_box = VBoxContainer.new()
-    _chat_box.position = Vector2(330, 8)
-    _chat_box.size = Vector2(620, 200)
+    _chat_box.position = Vector2(380, 8)    # правее иконок, выше плашки с ником — не перекрывает их
+    _chat_box.size = Vector2(560, 180)
     _chat_box.add_theme_constant_override("separation", 0)
     _chat_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
     add_child(_chat_box)
@@ -370,7 +376,8 @@ func _build_phone() -> void:
     _phone_money = _make_label(box, 26, Color(0.65, 1.0, 0.65))
     _phone_job = _make_label(box, 18, Color(0.85, 0.85, 0.9))
     _phone_job.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    _phone_job.custom_minimum_size = Vector2(320, 90)
+    _phone_job.custom_minimum_size = Vector2(320, 46)
+    _phone_job.max_lines_visible = 2
 
     var spacer := Control.new()
     spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -379,11 +386,11 @@ func _build_phone() -> void:
     var grid := GridContainer.new()
     grid.columns = 4
     grid.add_theme_constant_override("h_separation", 8)
-    grid.add_theme_constant_override("v_separation", 10)
+    grid.add_theme_constant_override("v_separation", 6)
     box.add_child(grid)
     for app: Array in APPS:
         var b := Button.new()
-        b.custom_minimum_size = Vector2(96, 96)
+        b.custom_minimum_size = Vector2(96, 80)   # 4 ряда по 4 — помещаются в телефон вместе с кнопкой «Закрыть»
         b.focus_mode = Control.FOCUS_NONE
         b.flat = true
         b.draw.connect(_draw_app.bind(b, app))
@@ -391,19 +398,27 @@ func _build_phone() -> void:
         b.pressed.connect(_on_app.bind(String(app[0])))
         grid.add_child(b)
         _app_btns[String(app[0])] = b
+        if String(app[0]) == "admin":
+            b.visible = false
     var close := _make_button(box, "Закрыть")
     close.pressed.connect(close_phone)
 
 
+## Показать или спрятать приложение (например, «Админ» — только администраторам).
+func set_app_visible(id: String, on: bool) -> void:
+    if _app_btns.has(id):
+        (_app_btns[id] as Control).visible = on
+
+
 func _draw_app(b: Button, app: Array) -> void:
     var col: Color = app[3]
-    var r := Rect2(Vector2((b.size.x - 64.0) * 0.5, 2), Vector2(64, 64))
-    Icons.panel(b, r, col.darkened(0.25) if b.is_pressed() else col, 16)
-    Icons.draw(b, String(app[2]), r.get_center(), 40, Color.WHITE)
+    var r := Rect2(Vector2((b.size.x - 56.0) * 0.5, 2), Vector2(56, 56))
+    Icons.panel(b, r, col.darkened(0.25) if b.is_pressed() else col, 14)
+    Icons.draw(b, String(app[2]), r.get_center(), 36, Color.WHITE)
     var font := ThemeDB.fallback_font
     var t := String(app[1])
-    var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
-    b.draw_string(font, Vector2((b.size.x - w) * 0.5, 88), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+    var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+    b.draw_string(font, Vector2((b.size.x - w) * 0.5, 76), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color.WHITE)
     if String(app[0]) == "sms" and _sms_badge > 0:
         b.draw_circle(Vector2(r.end.x, 6), 11, Color(0.9, 0.15, 0.15))
         var n := str(mini(_sms_badge, 9))

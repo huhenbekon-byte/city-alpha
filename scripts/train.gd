@@ -29,10 +29,36 @@ func _ready() -> void:
         _t = 6.0
         position.x = platform_x
     else:
+        _sync_to_clock()
+
+
+## Расписание по реальным часам: у всех игроков электричка приходит и уходит одновременно.
+const CYCLE := AWAY_TIME + MOVE_TIME + STAND_TIME + MOVE_TIME
+
+func _sync_to_clock() -> void:
+    var t := fmod(Time.get_unix_time_from_system(), CYCLE)
+    if t < AWAY_TIME:
         state = "away"
-        _t = 5.0
+        _t = AWAY_TIME - t
         position.x = platform_x + RUN
         visible = false
+    elif t < AWAY_TIME + MOVE_TIME:
+        state = "arriving"
+        _t = AWAY_TIME + MOVE_TIME - t
+        var k := clampf(1.0 - _t / MOVE_TIME, 0.0, 1.0)
+        position.x = platform_x - RUN * pow(1.0 - k, 2.0)
+        visible = true
+    elif t < AWAY_TIME + MOVE_TIME + STAND_TIME:
+        state = "standing"
+        _t = AWAY_TIME + MOVE_TIME + STAND_TIME - t
+        position.x = platform_x
+        visible = true
+    else:
+        state = "leaving"
+        _t = CYCLE - t
+        var k2 := clampf(1.0 - _t / MOVE_TIME, 0.0, 1.0)
+        position.x = platform_x + RUN * k2 * k2
+        visible = true
 
 
 func _physics_process(delta: float) -> void:
@@ -58,9 +84,7 @@ func _physics_process(delta: float) -> void:
                 if one_shot:
                     queue_free()
                     return
-                state = "away"
-                _t = AWAY_TIME
-                visible = false
+                _sync_to_clock()   # ушёл — следующий приход снова по общим часам
         "away":
             if _t <= 0.0:
                 state = "arriving"

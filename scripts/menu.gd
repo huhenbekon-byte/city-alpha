@@ -8,12 +8,13 @@ signal quit_pressed
 signal settings_changed
 signal settings_closed     # закрыли настройки, открытые со стартового экрана
 
+const Ui := preload("res://scripts/ussr_ui.gd")
 const SETTINGS_PATH := "user://settings.cfg"
 const QUALITY_NAMES := ["Низкое", "Среднее", "Высокое"]
 const VIEW_NAMES := ["Близко", "Средне", "Далеко"]
 const VOLUME_STEPS := [0.0, 0.25, 0.5, 0.75, 1.0]
 
-var settings := {"quality": 1, "shadows": true, "view": 1, "fps": true, "volume": 3, "music": 2}
+var settings := {"quality": 1, "shadows": true, "view": 1, "fps": true, "volume": 3, "music": 2, "lite": false}
 var started := false
 
 var _bg_image: TextureRect
@@ -29,6 +30,7 @@ var _view_btn: Button
 var _fps_btn: Button
 var _volume_btn: Button
 var _music_btn: Button
+var _lite_btn: Button
 var _settings_only := false   # открыты только настройки (шестерёнка на стартовом экране)
 var _dim: ColorRect
 
@@ -49,41 +51,67 @@ func _ready() -> void:
     _bg_image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
     _dim = ColorRect.new()
-    _dim.color = Color(0.03, 0.04, 0.07, 0.55)
+    _dim.color = Color(0.04, 0.02, 0.02, 0.72)
     add_child(_dim)
     _dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
     var center := CenterContainer.new()
     add_child(center)
     center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    # карточка меню: красная шапка со звездой, ниже кнопки
+    var card := PanelContainer.new()
+    card.add_theme_stylebox_override("panel", Ui.box(Ui.PANEL, Ui.GOLD_DIM, 3, 16, 22.0))
+    center.add_child(card)
     var col := VBoxContainer.new()
-    col.add_theme_constant_override("separation", 12)
-    center.add_child(col)
+    col.add_theme_constant_override("separation", 10)
+    card.add_child(col)
 
-    var title := _label(col, "CITY ALPHA", 64, Color(1, 1, 1))
-    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    _subtitle = _label(col, "", 20, Color(0.75, 0.8, 0.9))
-    _subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    var head := HBoxContainer.new()
+    head.alignment = BoxContainer.ALIGNMENT_CENTER
+    head.add_theme_constant_override("separation", 14)
+    col.add_child(head)
+    head.add_child(Ui.Emblem.new(30.0))
+    var tcol := VBoxContainer.new()
+    tcol.add_theme_constant_override("separation", 0)
+    head.add_child(tcol)
+    _label(tcol, "СССР РП", 52, Ui.GOLD)
+    _subtitle = _label(tcol, "", 18, Ui.CREAM.darkened(0.15))
+    var bar := ColorRect.new()
+    bar.color = Ui.RED
+    bar.custom_minimum_size = Vector2(0, 4)
+    col.add_child(bar)
 
     _main_box = VBoxContainer.new()
-    _main_box.add_theme_constant_override("separation", 12)
+    _main_box.add_theme_constant_override("separation", 10)
     col.add_child(_main_box)
     _play_btn = _button(_main_box, "Играть", _on_play)
+    Ui.style_button(_play_btn, true, 26)
     _button(_main_box, "Настройки", _show_settings)
     _reset_btn = _button(_main_box, "Сбросить прогресс", _on_reset)
     _button(_main_box, "Выйти из игры", _on_quit)
 
+    # настройки — две колонки, чтобы всё влезало на экран планшета
     _settings_box = VBoxContainer.new()
     _settings_box.add_theme_constant_override("separation", 10)
     _settings_box.visible = false
     col.add_child(_settings_box)
-    _quality_btn = _button(_settings_box, "", _cycle.bind("quality"))
-    _shadows_btn = _button(_settings_box, "", _cycle.bind("shadows"))
-    _view_btn = _button(_settings_box, "", _cycle.bind("view"))
-    _fps_btn = _button(_settings_box, "", _cycle.bind("fps"))
-    _volume_btn = _button(_settings_box, "", _cycle.bind("volume"))
-    _music_btn = _button(_settings_box, "", _cycle.bind("music"))
-    _button(_settings_box, "Назад", _show_main)
+    var grid := GridContainer.new()
+    grid.columns = 2
+    grid.add_theme_constant_override("h_separation", 10)
+    grid.add_theme_constant_override("v_separation", 10)
+    _settings_box.add_child(grid)
+    _lite_btn = _button(grid, "", _cycle.bind("lite"))
+    _quality_btn = _button(grid, "", _cycle.bind("quality"))
+    _shadows_btn = _button(grid, "", _cycle.bind("shadows"))
+    _view_btn = _button(grid, "", _cycle.bind("view"))
+    _fps_btn = _button(grid, "", _cycle.bind("fps"))
+    _volume_btn = _button(grid, "", _cycle.bind("volume"))
+    _music_btn = _button(grid, "", _cycle.bind("music"))
+    var hint := _label(grid, "Слабое устройство — меньше\nлюдей и машин, 30 кадров", 15, Ui.CREAM.darkened(0.3))
+    hint.custom_minimum_size = Vector2(360, 0)
+    var back := _button(_settings_box, "Назад", _show_main)
+    back.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+    Ui.style_button(back, true, 24)
     _refresh()
 
 
@@ -143,7 +171,7 @@ func open_settings_only() -> void:
 func _show_main() -> void:
     if _settings_only:
         _settings_only = false
-        _dim.color = Color(0.03, 0.04, 0.07, 0.55)
+        _dim.color = Color(0.04, 0.02, 0.02, 0.72)
         visible = false
         settings_closed.emit()
         return
@@ -161,12 +189,19 @@ func _cycle(key: String) -> void:
             settings[key] = (int(settings[key]) + 1) % VOLUME_STEPS.size()
         "shadows", "fps":
             settings[key] = not bool(settings[key])
+        "lite":
+            settings["lite"] = not bool(settings["lite"])
+            if settings["lite"]:     # слабое устройство: всё на минимум
+                settings["quality"] = 0
+                settings["shadows"] = false
+                settings["view"] = 0
     _refresh()
     save_settings()
     settings_changed.emit()
 
 
 func _refresh() -> void:
+    _lite_btn.text = "Слабое устройство: %s" % ("ВКЛ" if settings["lite"] else "выкл")
     _quality_btn.text = "Качество: %s" % QUALITY_NAMES[int(settings["quality"])]
     _shadows_btn.text = "Тени: %s" % ("вкл" if settings["shadows"] else "выкл")
     _view_btn.text = "Дальность: %s" % VIEW_NAMES[int(settings["view"])]
@@ -187,9 +222,28 @@ func volume() -> float:
 func load_settings() -> void:
     var cfg := ConfigFile.new()
     if cfg.load(SETTINGS_PATH) != OK:
+        # первый запуск: на слабом планшете или телефоне сразу включаем лёгкий режим
+        if is_weak_device():
+            settings["lite"] = true
+            settings["quality"] = 0
+            settings["shadows"] = false
+            settings["view"] = 0
         return
+    if not cfg.has_section_key("settings", "lite") and is_weak_device():
+        cfg.set_value("settings", "lite", true)
     for key: String in settings.keys():
         settings[key] = cfg.get_value("settings", key, settings[key])
+
+
+## Слабое устройство: мало памяти или видеокарта из бюджетных (Adreno 3xx–6x0, Mali-4xx/T/G5x, PowerVR).
+static func is_weak_device() -> bool:
+    var mem: Dictionary = OS.get_memory_info()
+    var phys := int(mem.get("physical", 0))
+    if phys > 0 and phys < 4500 * 1024 * 1024:
+        return true
+    var gpu := (RenderingServer.get_video_adapter_vendor() + " " + RenderingServer.get_video_adapter_name()).to_lower()
+    var rx := RegEx.create_from_string("adreno[^0-9]*([3-5][0-9][0-9]|6[0-1][0-9])\\b|mali-(4|t|g5[0-9]|g6[0-9]\\b)|powervr|ge8320")
+    return rx.search(gpu) != null
 
 
 func save_settings() -> void:
@@ -204,8 +258,8 @@ func _button(parent: Control, text: String, cb: Callable) -> Button:
     var b := Button.new()
     b.pressed.connect(_click)
     b.text = text
-    b.custom_minimum_size = Vector2(440, 64)
-    b.add_theme_font_size_override("font_size", 26)
+    b.custom_minimum_size = Vector2(360, 58)
+    Ui.style_button(b, false, 22)
     b.focus_mode = Control.FOCUS_NONE
     b.pressed.connect(cb)
     parent.add_child(b)
@@ -216,9 +270,10 @@ func _label(parent: Control, text: String, font_size: int, col: Color) -> Label:
     var l := Label.new()
     l.text = text
     var ls := LabelSettings.new()
+    ls.font = Ui.font()
     ls.font_size = font_size
     ls.font_color = col
-    ls.outline_size = 8
+    ls.outline_size = 6
     ls.outline_color = Color(0, 0, 0, 0.6)
     l.label_settings = ls
     parent.add_child(l)

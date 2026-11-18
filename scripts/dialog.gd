@@ -5,6 +5,8 @@ extends Panel
 
 signal closed
 
+const Ui := preload("res://scripts/ussr_ui.gd")
+
 var _title: Label
 var _text: Label
 var _input: LineEdit
@@ -12,12 +14,20 @@ var _buttons: VBoxContainer
 
 
 func _ready() -> void:
-    var sb := StyleBoxFlat.new()
-    sb.bg_color = Color(0.08, 0.09, 0.11, 0.96)
-    sb.set_corner_radius_all(24)
-    sb.border_color = Color(0.35, 0.35, 0.40)
-    sb.set_border_width_all(4)
+    # тёмная карточка с золотой рамкой и красной полосой сверху — общий стиль «СССР РП»
+    var sb := Ui.box(Color(0.1, 0.075, 0.065, 0.985), Ui.GOLD_DIM, 3, 18, 0.0)
+    sb.border_width_top = 10
+    sb.border_color = Ui.GOLD_DIM
     add_theme_stylebox_override("panel", sb)
+    var band := ColorRect.new()
+    band.color = Ui.RED
+    band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    add_child(band)
+    band.anchor_right = 1.0
+    band.offset_left = 18.0
+    band.offset_right = -18.0
+    band.offset_top = 3.0
+    band.offset_bottom = 9.0
     anchor_left = 0.5
     anchor_right = 0.5
     anchor_top = 0.5
@@ -33,9 +43,9 @@ func _ready() -> void:
     box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 22)
     box.add_theme_constant_override("separation", 10)
 
-    _title = _label(box, 28, Color(1, 1, 1))
+    _title = _label(box, 28, Ui.GOLD)
     _title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    _text = _label(box, 20, Color(0.85, 0.87, 0.92))
+    _text = _label(box, 20, Ui.CREAM)
     _text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     _text.custom_minimum_size = Vector2(470, 0)
 
@@ -63,15 +73,30 @@ func open(title: String, text: String, buttons: Array, input_hint := "") -> void
     _input.text = ""
     for c in _buttons.get_children():
         c.queue_free()
-    for item: Array in buttons:
+    var first := true
+    var two_cols := buttons.size() > 7   # много кнопок (панель админа) — в два столбца
+    var row: HBoxContainer = null
+    for i in buttons.size():
+        var item: Array = buttons[i]
         var b := Button.new()
         b.text = item[0]
-        b.custom_minimum_size = Vector2(0, 58)
-        b.add_theme_font_size_override("font_size", 22)
+        b.custom_minimum_size = Vector2(0, 50 if two_cols else 58)
+        b.clip_text = two_cols
+        Ui.style_button(b, first and buttons.size() > 1 and not String(item[0]).begins_with("Закрыть"), 19 if two_cols else 22)
+        first = false
         b.focus_mode = Control.FOCUS_NONE
         b.pressed.connect(_click)
         b.pressed.connect(item[1])
-        _buttons.add_child(b)
+        var last := i == buttons.size() - 1
+        if two_cols and not last:
+            if row == null or row.get_child_count() >= 2:
+                row = HBoxContainer.new()
+                row.add_theme_constant_override("separation", 8)
+                _buttons.add_child(row)
+            b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+            row.add_child(b)
+        else:
+            _buttons.add_child(b)
     visible = true
 
 
@@ -94,6 +119,7 @@ func _click() -> void:
 func _label(parent: Control, font_size: int, col: Color) -> Label:
     var l := Label.new()
     var ls := LabelSettings.new()
+    ls.font = Ui.font()
     ls.font_size = font_size
     ls.font_color = col
     ls.outline_size = 4

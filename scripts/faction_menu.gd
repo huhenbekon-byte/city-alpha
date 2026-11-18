@@ -343,7 +343,7 @@ func _draw_main(ci: Control) -> void:
     var c0 := CONTENT.position
     var w := (CONTENT.size.x - 16.0) / 2.0
     _card(ci, Rect2(c0, Vector2(w, 98)), "wallet", String(data.get("pay_word", "Зарплата")), String(data.get("pay", "")))
-    _card(ci, Rect2(c0 + Vector2(w + 16, 0), Vector2(w, 98)), "clock", "До получки", "%d мин" % int(data.get("payday_left", 0)))
+    _card(ci, Rect2(c0 + Vector2(w + 16, 0), Vector2(w, 98)), "clock", "До получки", "%d:%02d" % [int(data.get("payday_left", 0)) / 60, int(data.get("payday_left", 0)) % 60])
     _card(ci, Rect2(c0 + Vector2(0, 112), Vector2(w, 98)), "people", "Онлайн", "%d / %d" % [int(data.get("online", 1)), int(data.get("members", 1))])
     _card(ci, Rect2(c0 + Vector2(w + 16, 112), Vector2(w, 98)), "rank", "Ваш ранг", "%d / 6" % int(data.get("rank", 1)))
 

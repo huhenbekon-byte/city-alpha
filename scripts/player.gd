@@ -48,6 +48,7 @@ var _visual: Node3D
 var _cam_yaw: Node3D
 var _cam_pitch: Node3D
 var _spring: SpringArm3D
+var _probe_r := 0.22      # шар «пружины» камеры: меньше капсулы игрока (0.32), чтобы у стены не начинать внутри неё
 var _camera: Camera3D
 var _joints := {}
 var _phase := 0.0
@@ -110,7 +111,7 @@ func _setup_camera() -> void:
     _spring.margin = 0.2
     _spring.position.x = camera_side_offset
     var probe := SphereShape3D.new()
-    probe.radius = 0.25
+    probe.radius = _probe_r
     _spring.shape = probe
     _spring.add_excluded_object(get_rid())
     _cam_pitch.add_child(_spring)
@@ -281,7 +282,32 @@ var _jump_buf := 0.0
 var _down_until := 0.0      # сбит машиной — лежит и встаёт
 
 
+## Камера не должна заглядывать за стену: начало «пружины» сдвинуто вбок от головы (camera_side_offset),
+## и у самой стены оно оказывалось внутри неё — тогда SpringArm стену не видит и камера уходит наружу.
+## Каждый кадр проверяем лучом от головы вбок и, если там стена, придвигаем начало к голове.
+func _keep_camera_inside() -> void:
+    if _spring == null or _cam_yaw == null or _spring.shape == null:
+        return
+    var head := _cam_yaw.global_position
+    var side := _cam_pitch.global_transform.basis.x.normalized() * signf(camera_side_offset)
+    var q := PhysicsShapeQueryParameters3D.new()
+    q.shape = _spring.shape
+    q.exclude = [get_rid()]
+    var space := get_world_3d().direct_space_state
+    var off := absf(camera_side_offset)
+    for i in 4:          # 0.3 → 0.15 → 0.075 → 0: первое место, где шар не задевает стену
+        q.transform = Transform3D(Basis(), head + side * off)
+        if space.intersect_shape(q, 1).is_empty():
+            break
+        off = 0.0 if i >= 2 else off * 0.5
+    _spring.position.x = off * signf(camera_side_offset)
+
+
+var frozen := false   ## администратор заморозил — стоит на месте
+
+
 func _physics_process(delta: float) -> void:
+    _keep_camera_inside()
     _coyote = COYOTE if is_on_floor() else _coyote - delta
     _jump_buf = JUMP_BUFFER if Input.is_action_just_pressed("jump") else _jump_buf - delta
     if not is_on_floor():
@@ -293,6 +319,11 @@ func _physics_process(delta: float) -> void:
         velocity.y = jump_velocity
         _jump_buf = 0.0
         _coyote = 0.0
+    if frozen:                # заморожен администратором
+        velocity.x = 0.0
+        velocity.z = 0.0
+        move_and_slide()
+        return
     if _time < _down_until:   # лежит после удара машиной
         velocity.x = move_toward(velocity.x, 0.0, 8.0 * delta)
         velocity.z = move_toward(velocity.z, 0.0, 8.0 * delta)
@@ -904,8 +935,7 @@ func set_weapon(path: String, muzzle := Vector3.ZERO) -> void:
         return
     _gun = (ps as PackedScene).instantiate() as Node3D
     # ствол вперёд, когда персонаж держит пистолет двумя руками (рассчитано по позе Pistol_Idle)
-    _gun.transform = Transform3D(Basis(Vector3(0.03, 0.9824, -0.1844), Vector3(-0.0419, 0.1856, 0.9817),
-            Vector3(0.9987, -0.0217, 0.0467)), Vector3(0.0, 0.0556, 0.0251))
+    _gun.transform = GUN_XF
     _gun_holder.add_child(_gun)
     _gun_muzzle = muzzle
 
@@ -930,8 +960,14 @@ func set_bat(on: bool) -> void:
         _gun_holder = BoneAttachment3D.new()
         _gun_holder.bone_name = "hand_r"
         sk.add_child(_gun_holder)
-    _bat = Node3D.new()
-    _bat.name = "Bat"
+    _bat = make_bat()
+    _gun_holder.add_child(_bat)
+
+
+## Бита (общая модель — у игрока и у других игроков в сети): рукоять в кулаке, наклонена наружу.
+static func make_bat() -> Node3D:
+    var bat := Node3D.new()
+    bat.name = "Bat"
     var wood := StandardMaterial3D.new()
     wood.albedo_color = Color(0.78, 0.6, 0.38)
     wood.roughness = 0.55
@@ -946,7 +982,7 @@ func set_bat(on: bool) -> void:
     b.mesh = body
     b.material_override = wood
     b.position = Vector3(0, 0.32, 0)
-    _bat.add_child(b)
+    bat.add_child(b)
     var grip := CylinderMesh.new()
     grip.top_radius = 0.018
     grip.bottom_radius = 0.017
@@ -956,7 +992,7 @@ func set_bat(on: bool) -> void:
     g.mesh = grip
     g.material_override = tape
     g.position = Vector3(0, 0.0, 0)
-    _bat.add_child(g)
+    bat.add_child(g)
     var knob := CylinderMesh.new()
     knob.top_radius = 0.026
     knob.bottom_radius = 0.026
@@ -965,10 +1001,16 @@ func set_bat(on: bool) -> void:
     kn.mesh = knob
     kn.material_override = wood
     kn.position = Vector3(0, -0.085, 0)
-    _bat.add_child(kn)
+    bat.add_child(kn)
     # рукоять в кулаке, бита смотрит вверх-назад, как на плече
-    _bat.transform = Transform3D(Basis.from_euler(Vector3(deg_to_rad(155.0), 0.0, 0.0)), Vector3(0.0, 0.07, 0.02))
-    _gun_holder.add_child(_bat)
+    # наклонена наружу от тела — при ходьбе и беге не проходит сквозь плечо и руку
+    bat.transform = Transform3D(Basis.from_euler(Vector3(deg_to_rad(152.0), 0.0, deg_to_rad(-26.0))), Vector3(0.0, 0.07, 0.02))
+    return bat
+
+
+## Как держат пистолет/автомат в правой руке (по позе Pistol_Idle) — у игрока и у других игроков.
+const GUN_XF := Transform3D(Basis(Vector3(0.03, 0.9824, -0.1844), Vector3(-0.0419, 0.1856, 0.9817),
+        Vector3(0.9987, -0.0217, 0.0467)), Vector3(0.0, 0.0556, 0.0251))
 
 
 ## Где дуло (для вспышки и трассера). Без оружия — перед грудью.

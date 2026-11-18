@@ -1,5 +1,5 @@
 extends Node
-## Онлайн. Глобальный объект Net (autoload) — клиент сервера City Alpha.
+## Онлайн. Глобальный объект Net (autoload) — клиент сервера СССР РП.
 ## Сам сервер — tools/server/server.js (Node.js): его можно бесплатно запустить на Render.com,
 ## на любом VPS или на компьютере. Связь — WebSocket, сообщения в JSON (протокол описан в server.js).
 ##
@@ -144,7 +144,10 @@ func send_state(delta: float, st: Array) -> void:
                 _r(xf.origin.x), _r(xf.origin.y), _r(xf.origin.z)]
     var msg := JSON.stringify({"t": "st", "s": [_r(p.x), _r(p.y), _r(p.z), _r(float(st[1])), String(st[2]), _r(float(st[3])),
             car if not car.is_empty() else 0, xf_out, int(st[6]) if st.size() > 6 else 0,
-            int(st[7]) if st.size() > 7 else 100, "", int(st[8]) if st.size() > 8 else 0]})
+            int(st[7]) if st.size() > 7 else 100, "", int(st[8]) if st.size() > 8 else 0,
+            # 12 внешность (одежда, форма), 13 оружие в руках, 14 счётчик ударов/выстрелов, 15 фары/сирена
+            String(st[9]) if st.size() > 9 else "", String(st[10]) if st.size() > 10 else "",
+            int(st[11]) if st.size() > 11 else 0, int(st[12]) if st.size() > 12 else 0]})
     _idle_t += SEND_INTERVAL
     if msg == _last_st and _idle_t < 1.0:   # стоим на месте — не шлём одно и то же 8 раз в секунду
         return
@@ -289,7 +292,12 @@ func _on_message(m: Dictionary) -> void:
                         float(s[5]), car, xf, int(s[8]) if s.size() > 8 and s[8] is float else 0,
                         int(s[9]) if s.size() > 9 and s[9] is float else 100,
                         String(s[10]) if s.size() > 10 and s[10] is String else "",
-                        int(s[11]) if s.size() > 11 and s[11] is float else 0]])
+                        int(s[11]) if s.size() > 11 and s[11] is float else 0,
+                        # 10 внешность, 11 оружие, 12 счётчик ударов, 13 фары/сирена (у старых версий игры — пусто)
+                        String(s[12]) if s.size() > 12 and s[12] is String else "",
+                        String(s[13]) if s.size() > 13 and s[13] is String else "",
+                        int(s[14]) if s.size() > 14 and s[14] is float else 0,
+                        int(s[15]) if s.size() > 15 and s[15] is float else 0]])
             if not out.is_empty():
                 states_received.emit(out)
         _:
