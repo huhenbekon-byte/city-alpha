@@ -30,6 +30,7 @@ uniform sampler2D outfit_top : source_color, filter_linear_mipmap;
 uniform sampler2D outfit_bottom : source_color, filter_linear_mipmap;
 uniform float outfit_top_on = 0.0;
 uniform float outfit_bottom_on = 0.0;
+uniform float outfit_tint_mode = 0.0;   // 1 — перекрасить только светлое (полосы и надписи костюма «ОПГ»)
 uniform float outfit_shoes_on = 0.0;
 uniform vec4 outfit_tint = vec4(1.0, 1.0, 1.0, 0.0);   // перекраска (спортивные костюмы), a — сила
 uniform float cloth_scale = 8.0;
@@ -88,6 +89,12 @@ void fragment() {
 	base = mix(base, ot.rgb, outfit_top_on);
 	vec3 otc = mix(ot.rgb, vec3(dot(ot.rgb, vec3(0.333))) * outfit_tint.rgb * 2.6, outfit_tint.a);
 	vec3 obc = mix(ob.rgb, vec3(dot(ob.rgb, vec3(0.333))) * outfit_tint.rgb * 2.6, outfit_tint.a);
+	if (outfit_tint_mode > 0.5) {
+		float lt = dot(ot.rgb, vec3(0.333));
+		float lb = dot(ob.rgb, vec3(0.333));
+		otc = mix(ot.rgb, outfit_tint.rgb * (0.45 + 0.7 * lt), smoothstep(0.32, 0.55, lt) * outfit_tint.a);
+		obc = mix(ob.rgb, outfit_tint.rgb * (0.45 + 0.7 * lb), smoothstep(0.32, 0.55, lb) * outfit_tint.a);
+	}
 	jacket = mix(jacket, otc * oshade, ot.a * outfit_top_on);
 	pants = mix(pants, obc * oshade, ob.a * outfit_bottom_on);
 	shoes = mix(shoes, ob.rgb * oshade, ob.a * outfit_shoes_on);
@@ -99,12 +106,12 @@ void fragment() {
 	float vm = texture(vest_mask, UV).r * vest_on;
 	jacket = mix(jacket, texture(vest_tex, cuv).rgb * shade, vm);
 	vec4 pr = texture(print_tex, UV);
-	jacket = mix(jacket, pr.rgb * shade, pr.a * print_on);
+	jacket = mix(jacket, pr.rgb * shade, pr.a * print_on * (1.0 - outfit_top_on));   // на готовой форме шевроны уже нарисованы
 	col = mix(col, jacket, m.r);
 	col = mix(col, shoes, m.b);
 	float cloth = max(m.r, m.g);
 	vec4 lp = texture(lampas_tex, UV);
-	col = mix(col, lp.rgb * shade, lp.a * lampas_on * cloth);
+	col = mix(col, lp.rgb * shade, lp.a * lampas_on * cloth * (1.0 - outfit_bottom_on));   // на готовой форме лампасы уже нарисованы
 	vec4 tp = texture(tape_tex, UV);
 	col = mix(col, tp.rgb, tp.a * tape_on * cloth);
 	// швы: край рукавов и ворота, пояс между курткой и штанами

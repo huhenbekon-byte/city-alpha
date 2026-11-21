@@ -628,6 +628,14 @@ const MODELS := {
     "niva": "res://models/cars/niva.gltf",         # ВАЗ-2121 «Нива»
     "volga": "res://models/cars/volga.gltf",       # ГАЗ-3102 «Волга»
     "uaz_gas": "res://models/cars/uaz_gas.gltf",   # УАЗ-452 «Аварийная газовая служба 04»
+    # Набор «Orchids Simulator Traffic Car Pack» (Oren garage, CC-BY 4.0, models/cars/soviet/LICENSE.txt) —
+    # припаркованные «Жигули», «Нива», УАЗ, «Волга» и «Газели» со своей раскраской
+    "pk_lada_green": "res://models/cars/soviet/lada_green.glb", "pk_lada_gray": "res://models/cars/soviet/lada_gray.glb",
+    "pk_lada_blue": "res://models/cars/soviet/lada_blue.glb", "pk_lada_red": "res://models/cars/soviet/lada_red.glb",
+    "pk_lada_cherry": "res://models/cars/soviet/lada_cherry.glb", "pk_lada_white": "res://models/cars/soviet/lada_white.glb",
+    "pk_niva": "res://models/cars/soviet/niva_white.glb", "pk_uaz": "res://models/cars/soviet/uaz_green.glb",
+    "pk_volga": "res://models/cars/soviet/volga_rust.glb", "pk_uaz_police": "res://models/cars/soviet/uaz_police.glb",
+    "pk_gazelle": "res://models/cars/soviet/gazelle.glb",
 }
 
 static var _model_scenes := {}

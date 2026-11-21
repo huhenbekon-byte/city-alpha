@@ -14,7 +14,7 @@ const QUALITY_NAMES := ["Низкое", "Среднее", "Высокое"]
 const VIEW_NAMES := ["Близко", "Средне", "Далеко"]
 const VOLUME_STEPS := [0.0, 0.25, 0.5, 0.75, 1.0]
 
-var settings := {"quality": 1, "shadows": true, "view": 1, "fps": true, "volume": 3, "music": 2, "lite": false}
+var settings := {"quality": 1, "shadows": true, "view": 1, "fps": true, "volume": 3, "music": 2, "lite": false, "film": true}
 var started := false
 
 var _bg_image: TextureRect
@@ -30,6 +30,7 @@ var _view_btn: Button
 var _fps_btn: Button
 var _volume_btn: Button
 var _music_btn: Button
+var _film_btn: Button
 var _lite_btn: Button
 var _settings_only := false   # открыты только настройки (шестерёнка на стартовом экране)
 var _dim: ColorRect
@@ -107,6 +108,7 @@ func _ready() -> void:
     _fps_btn = _button(grid, "", _cycle.bind("fps"))
     _volume_btn = _button(grid, "", _cycle.bind("volume"))
     _music_btn = _button(grid, "", _cycle.bind("music"))
+    _film_btn = _button(grid, "", _cycle.bind("film"))
     var hint := _label(grid, "Слабое устройство — меньше\nлюдей и машин, 30 кадров", 15, Ui.CREAM.darkened(0.3))
     hint.custom_minimum_size = Vector2(360, 0)
     var back := _button(_settings_box, "Назад", _show_main)
@@ -187,7 +189,7 @@ func _cycle(key: String) -> void:
             settings["view"] = (int(settings["view"]) + 1) % 3
         "volume", "music":
             settings[key] = (int(settings[key]) + 1) % VOLUME_STEPS.size()
-        "shadows", "fps":
+        "shadows", "fps", "film":
             settings[key] = not bool(settings[key])
         "lite":
             settings["lite"] = not bool(settings["lite"])
@@ -206,6 +208,7 @@ func _refresh() -> void:
     _shadows_btn.text = "Тени: %s" % ("вкл" if settings["shadows"] else "выкл")
     _view_btn.text = "Дальность: %s" % VIEW_NAMES[int(settings["view"])]
     _fps_btn.text = "Показывать FPS: %s" % ("да" if settings["fps"] else "нет")
+    _film_btn.text = "Плёнка 80-х: %s" % ("вкл" if settings.get("film", true) else "выкл")
     var vol: float = VOLUME_STEPS[int(settings["volume"])]
     _volume_btn.text = "Звук: %d%%" % int(vol * 100.0)
     _music_btn.text = "Музыка и радио: %d%%" % int(music_volume() * 100.0)

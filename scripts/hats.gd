@@ -10,10 +10,11 @@ extends RefCounted
 ##   ondatra          — ондатровая шапка (старшие ОПГ, начальство)
 ##   fire_helmet      — пожарная каска с гребнем
 ##   med_cap          — белая медицинская шапочка с красным крестом
+##   platok           — бабушкин платок в цветочек (жители города)
 
 ## Закрывает ли убор макушку (тогда волосы прячем, чтобы не торчали).
 static func covers_hair(kind: String) -> bool:
-    return kind in ["petushok", "ondatra", "fire_helmet", "med_cap"]
+    return kind in ["petushok", "ondatra", "fire_helmet", "med_cap", "platok"]
 
 
 static func build(kind: String, col := Color(0, 0, 0, 0)) -> Node3D:
@@ -24,8 +25,8 @@ static func build(kind: String, col := Color(0, 0, 0, 0)) -> Node3D:
             _peaked(root, Color(0.72, 0.07, 0.06), Color(0.22, 0.25, 0.31), false)
         "militia_officer":
             _peaked(root, Color(0.72, 0.07, 0.06), Color(0.18, 0.21, 0.27), true)
-        "kgb":
-            _peaked(root, Color(0.22, 0.42, 0.85), Color(0.26, 0.29, 0.26), true)
+        "kgb":   # как на листе формы: тёмно-синяя тулья, чёрный околыш, красный кант, золотой шнур и звезда
+            _peaked(root, Color(0.06, 0.065, 0.085), Color(0.13, 0.15, 0.24), true, Color(0.78, 0.08, 0.07))
         "fedora":
             _fedora(root, col if col.a > 0.0 else Color(0.22, 0.22, 0.24))
         "petushok":
@@ -39,16 +40,28 @@ static func build(kind: String, col := Color(0, 0, 0, 0)) -> Node3D:
             _helmet(root, col if col.a > 0.0 else Color(0.75, 0.10, 0.07))
         "med_cap":
             _med_cap(root)
+        "platok":
+            _platok(root, col if col.a > 0.0 else Color(0.62, 0.18, 0.16))
+            root.set_meta("snug", true)
     return root
 
 
 # ---------------------------------------------------------------- фуражки
 
-static func _peaked(root: Node3D, band_col: Color, crown_col: Color, officer: bool) -> void:
+static func _peaked(root: Node3D, band_col: Color, crown_col: Color, officer: bool, piping := Color(0, 0, 0, 0)) -> void:
     _part(root, _cyl(0.114, 0.112, 0.048), band_col, Vector3.ZERO, Vector3.ONE)                     # околыш
     _part(root, _cyl(0.15, 0.116, 0.05), crown_col, Vector3(0, 0.049, -0.005), Vector3(1.0, 1.0, 1.1))  # тулья
     _part(root, _cyl(0.148, 0.15, 0.012), crown_col.darkened(0.1), Vector3(0, 0.08, -0.005), Vector3(1.0, 1.0, 1.1))
-    _part(root, _cyl(0.15, 0.15, 0.008), band_col.darkened(0.15), Vector3(0, 0.025, -0.005), Vector3(1.0, 1.0, 1.1))  # кант
+    if piping.a <= 0.0:
+        _part(root, _cyl(0.15, 0.15, 0.008), band_col.darkened(0.15), Vector3(0, 0.025, -0.005), Vector3(1.0, 1.0, 1.1))  # кант
+    if piping.a > 0.0:   # кант — тонкие кольца по краю тульи и по верху околыша
+        for pp: Array in [[0.147, 0.153, Vector3(0, 0.085, -0.005), Vector3(1.0, 1.0, 1.1)], [0.112, 0.117, Vector3(0, 0.022, 0.0), Vector3.ONE]]:
+            var t := TorusMesh.new()
+            t.inner_radius = pp[0]
+            t.outer_radius = pp[1]
+            t.rings = 32
+            t.ring_segments = 6
+            _part(root, t, piping, pp[2], pp[3])
     var v := _part(root, _cyl(0.1, 0.1, 0.01), Color(0.03, 0.03, 0.035), Vector3(0, -0.018, 0.085), Vector3(1.0, 1.0, 0.55))
     v.rotation.x = deg_to_rad(18.0)                                                                       # козырёк
     var gold := Color(0.95, 0.75, 0.2)
@@ -127,7 +140,8 @@ static func _kepka(root: Node3D, c: Color) -> void:
     var crown := SphereMesh.new()
     crown.radius = 0.135
     crown.height = 0.27
-    _part(root, crown, c, Vector3(0, 0.03, 0.012), Vector3(1.0, 0.36, 1.12))                                 # плоский верх
+    var cm := _part(root, crown, c, Vector3(0, 0.03, 0.012), Vector3(1.0, 0.36, 1.12))                       # плоский верх
+    (cm.material_override as StandardMaterial3D).roughness = 0.95       # сукно, не блестит
     var btn := SphereMesh.new()
     btn.radius = 0.012
     btn.height = 0.024
@@ -145,21 +159,49 @@ static func _ondatra(root: Node3D, c: Color) -> void:
     _part(root, _cyl(0.146, 0.146, 0.02), c.darkened(0.15), Vector3(0, 0.0, -0.004), Vector3(1.0, 1.0, 1.08))   # отворот
 
 
+## Пожарная каска (как у советских пожарных): гладкий купол по голове, низкий гребень, белая полоса,
+## номер «01» спереди, чёрный кожаный назатыльник сзади и тёмное забрало.
 static func _helmet(root: Node3D, c: Color) -> void:
     var dome := SphereMesh.new()
-    dome.radius = 0.15
-    dome.height = 0.3
+    dome.radius = 0.13
+    dome.height = 0.26
     dome.is_hemisphere = true
-    _part(root, dome, c, Vector3(0, 0.005, -0.006), Vector3(1.0, 0.95, 1.1))
-    var crest := BoxMesh.new()                                                                              # гребень
-    crest.size = Vector3(0.03, 0.04, 0.3)
-    var cr := _part(root, crest, c.lightened(0.15), Vector3(0, 0.135, -0.01), Vector3.ONE)
-    cr.rotation.x = deg_to_rad(-4.0)
-    _part(root, _cyl(0.175, 0.175, 0.012), c.darkened(0.2), Vector3(0, 0.0, -0.01), Vector3(1.0, 1.0, 1.15))  # поля
-    var badge := SphereMesh.new()
-    badge.radius = 0.02
-    badge.height = 0.04
-    _part(root, badge, Color(0.95, 0.75, 0.2), Vector3(0, 0.06, 0.155), Vector3(1.0, 1.0, 0.4))
+    dome.radial_segments = 28
+    dome.rings = 10
+    var d := _part(root, dome, c, Vector3(0, -0.012, -0.008), Vector3(1.0, 0.86, 1.13))
+    (d.material_override as StandardMaterial3D).roughness = 0.3            # лакированная
+    var crest := SphereMesh.new()                                                                           # гребень
+    crest.radius = 0.12
+    crest.height = 0.24
+    crest.is_hemisphere = true
+    _part(root, crest, c.lightened(0.08), Vector3(0, 0.0, -0.008), Vector3(0.14, 0.97, 1.16))
+    var white := Color(0.95, 0.95, 0.95) if c.v < 0.9 or c.s > 0.2 else Color(0.75, 0.1, 0.07)
+    _part(root, _cyl(0.1305, 0.1325, 0.016), white, Vector3(0, 0.03, -0.008), Vector3(1.0, 1.0, 1.13))  # полоса
+    _part(root, _cyl(0.137, 0.137, 0.01), c.darkened(0.25), Vector3(0, -0.012, -0.008), Vector3(1.0, 1.0, 1.13))  # кромка
+    for k in 7:   # назатыльник: чёрная кожа полукругом сзади, от уха до уха
+        var ang := deg_to_rad(95.0 + k * 28.3)
+        var seg := BoxMesh.new()
+        seg.size = Vector3(0.07, 0.085, 0.008)
+        var fp := _part(root, seg, Color(0.06, 0.06, 0.065), Vector3(sin(ang) * 0.138, -0.055, cos(ang) * 0.152 - 0.008), Vector3.ONE)
+        fp.rotation = Vector3(deg_to_rad(-8.0) * -cos(ang), ang, 0)
+        (fp.material_override as StandardMaterial3D).roughness = 0.6
+    var visor := BoxMesh.new()                                                                              # забрало
+    visor.size = Vector3(0.2, 0.075, 0.006)
+    var v := _part(root, visor, Color(0.15, 0.17, 0.2, 0.55), Vector3(0, -0.005, 0.15), Vector3.ONE)
+    v.rotation.x = deg_to_rad(-12.0)
+    var vm := v.material_override as StandardMaterial3D
+    vm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    vm.roughness = 0.1
+    var num := Label3D.new()                                                                                # «01»
+    num.text = "01"
+    num.font_size = 48
+    num.pixel_size = 0.0012
+    num.outline_size = 0
+    num.modulate = Color(0.97, 0.97, 0.95)
+    num.position = Vector3(0, 0.075, 0.128)
+    num.rotation.x = deg_to_rad(-28.0)
+    num.double_sided = false
+    root.add_child(num)
 
 
 static func _med_cap(root: Node3D) -> void:
@@ -177,6 +219,25 @@ static func _med_cap(root: Node3D) -> void:
 
 
 # ---------------------------------------------------------------- помощники
+
+## Платок: облегает голову, узел под подбородком.
+static func _platok(root: Node3D, c: Color) -> void:
+    var cap := SphereMesh.new()
+    cap.radius = 0.135
+    cap.height = 0.27
+    _part(root, cap, c, Vector3(0, 0.0, -0.012), Vector3(1.04, 0.95, 1.12))
+    _part(root, _cyl(0.13, 0.142, 0.13), c.darkened(0.06), Vector3(0, -0.06, -0.03), Vector3(1.04, 1.0, 1.0))     # по бокам головы
+    var knot := SphereMesh.new()
+    knot.radius = 0.03
+    knot.height = 0.06
+    _part(root, knot, c.darkened(0.12), Vector3(0, -0.2, 0.07), Vector3.ONE)
+    for k in 6:   # белые «цветочки»
+        var dot := SphereMesh.new()
+        dot.radius = 0.016
+        dot.height = 0.032
+        var a := float(k) / 6.0 * TAU
+        _part(root, dot, Color(0.95, 0.92, 0.8), Vector3(sin(a) * 0.11, 0.06 + 0.03 * cos(a * 2.0), cos(a) * 0.12), Vector3(1, 0.4, 1))
+
 
 static func _cyl(top: float, bottom: float, h: float) -> CylinderMesh:
     var m := CylinderMesh.new()

@@ -129,6 +129,10 @@ func _box(size: Vector3, pos: Vector3, mat: Material) -> void:
 
 
 func _build() -> void:
+    var t_side := _tex_mat("res://textures/transit/coach_side.png")
+    var t_end := _tex_mat("res://textures/transit/coach_end.png")
+    var t_roof := _tex_mat("res://textures/transit/coach_roof.png", false)
+    var textured := t_side != null and t_end != null and t_roof != null
     var green := _mat(Color(0.16, 0.36, 0.24))
     var blue := _mat(Color(0.20, 0.33, 0.62))
     var roofm := _mat(Color(0.35, 0.36, 0.37), 0.6)
@@ -146,6 +150,18 @@ func _build() -> void:
         var loco := w == wagons   # тепловоз впереди (по ходу +X)
         var length := 17.0 if loco else 22.0
         var cx := x + length * 0.5
+        if textured and not loco:
+            # плацкартный вагон по картинке: борта с тележками, торцы с переходом, крыша
+            _box(Vector3(length - 0.3, 3.4, 2.9), Vector3(cx, 2.7, 0), _mat(Color(0.25, 0.1, 0.08)))
+            _box(Vector3(length - 1.0, 0.9, 1.4), Vector3(cx, 0.75, 0), dark)
+            _quad(self, Vector2(length + 0.2, 4.6), Vector3(cx, 2.45, 1.56), 0.0, t_side)
+            _quad(self, Vector2(length + 0.2, 4.6), Vector3(cx, 2.45, -1.56), PI, t_side)
+            _quad(self, Vector2(3.1, 4.5), Vector3(x + length + 0.1, 2.4, 0), PI * 0.5, t_end)
+            _quad(self, Vector2(3.1, 4.5), Vector3(x - 0.1, 2.4, 0), -PI * 0.5, t_end)
+            _quad(self, Vector2(length, 2.9), Vector3(cx, 4.45, 0), 0.0, t_roof, true)
+            parts.append([x, length])
+            x += length + 0.8
+            continue
         _box(Vector3(length, 3.0, 3.1), Vector3(cx, 2.6, 0), blue if loco else green)
         _box(Vector3(length - 0.4, 0.5, 2.9), Vector3(cx, 4.35, 0), roofm)
         _box(Vector3(length + 0.02, 0.18, 3.14), Vector3(cx, 1.75, 0), stripe)
@@ -180,6 +196,35 @@ func _build() -> void:
         cs.position = Vector3(float(p[0]) + float(p[1]) * 0.5 - _length * 0.5, 2.4, 0)
         body.add_child(cs)
     add_child(body)
+
+
+## Текстура вагона (картинка с прозрачным фоном): если файла нет — null, строим как раньше.
+func _tex_mat(path: String, alpha := true) -> StandardMaterial3D:
+    if not ResourceLoader.exists(path):
+        return null
+    var m := StandardMaterial3D.new()
+    m.albedo_texture = load(path)
+    m.roughness = 0.8
+    m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+    if alpha:
+        m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+        m.alpha_scissor_threshold = 0.5
+    return m
+
+
+## Плоская картинка: лицом в +Z, повёрнута на yaw (или лёжа — крыша).
+func _quad(parent: Node3D, size: Vector2, pos: Vector3, yaw: float, mat: Material, lying := false) -> void:
+    var mi := MeshInstance3D.new()
+    var q := QuadMesh.new()
+    q.size = size
+    mi.mesh = q
+    mi.material_override = mat
+    mi.position = pos
+    if lying:
+        mi.rotation = Vector3(-PI * 0.5, yaw, 0)
+    else:
+        mi.rotation.y = yaw
+    parent.add_child(mi)
 
 
 func _label(text: String, pos: Vector3, yaw: float, size: int) -> void:

@@ -82,7 +82,30 @@ const SLOTS := [
         ["смуглая", Color(0.70, 0.50, 0.35), 0],
         ["тёмная", Color(0.45, 0.30, 0.20), 0],
     ]},
+    # телосложение: 5-й элемент — «рост, плечи и грудь, живот, бёдра» (множители; см. outfits.gd apply_build)
+    {"id": "build", "name": "Телосложение", "items": [
+        ["обычное", Color(0.72, 0.6, 0.5), 0, "", "1,1,1,1"],
+        ["худощавое", Color(0.8, 0.7, 0.6), 500, "", "1.01,0.92,0.88,0.9"],
+        ["спортивное", Color(0.6, 0.5, 0.4), 1500, "", "1.02,1.13,0.97,1.07"],
+        ["плотное", Color(0.65, 0.55, 0.45), 500, "", "0.99,1.08,1.22,1.1"],
+        ["высокий", Color(0.75, 0.65, 0.55), 1000, "", "1.07,1.02,1,1.02"],
+        ["невысокий", Color(0.7, 0.62, 0.52), 500, "", "0.93,1,1.02,1"],
+        ["богатырь", Color(0.55, 0.45, 0.35), 3000, "", "1.06,1.17,1.08,1.12"],
+    ]},
 ]
+
+
+## Телосложение: [рост, плечи, живот, бёдра].
+static func build(look: Dictionary) -> Array:
+    for slot: Dictionary in SLOTS:
+        if slot["id"] == "build":
+            var items: Array = slot["items"]
+            var item: Array = items[clampi(int(look.get("build", 0)), 0, items.size() - 1)]
+            var out := []
+            for v: String in String(item[4]).split(","):
+                out.append(float(v))
+            return out
+    return [1.0, 1.0, 1.0, 1.0]
 
 
 ## Головной убор из раздела «Шапки»: [вид для hats.gd, цвет] (вид "" — без шапки).
@@ -104,7 +127,7 @@ static func default_look() -> Dictionary:
 
 ## Ткань по умолчанию для каждого раздела (у вещи может быть своя — 4-й элемент).
 const DEFAULT_TEX := {"jacket": "cloth_nylon", "pants": "cloth_denim", "shoes": "cloth_sneaker",
-        "hair": "hair", "skin": "skin"}
+        "hair": "hair", "skin": "skin", "build": ""}
 
 
 ## Цвет значка вещи в магазине (у тканей со своим цветом — цвет ткани).

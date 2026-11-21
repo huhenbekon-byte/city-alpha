@@ -23,6 +23,7 @@ const APPS := [
     ["players", "Игроки", "people", Color(0.75, 0.2, 0.15)],
     ["admin", "Админ", "shield", Color(0.55, 0.08, 0.08)],
     ["radio", "Рация", "radio", Color(0.25, 0.35, 0.3)],
+    ["docs", "Паспорт", "card", Color(0.6, 0.1, 0.08)],
     ["emote", "Жесты", "people", Color(0.55, 0.3, 0.6)],
     ["skills", "Навыки", "star", Color(0.2, 0.55, 0.6)],
     ["achieve", "Достижения", "trophy", Color(0.75, 0.55, 0.1)],
@@ -63,6 +64,9 @@ const CHAT_COLORS := {
     "warn": Color(1.0, 0.45, 0.35), "faction": Color(0.4, 0.65, 1.0), "job": Color(1.0, 0.85, 0.3),
     "sms": Color(1.0, 0.6, 0.85), "news": Color(0.85, 0.75, 1.0), "time": Color(0.75, 0.75, 0.8),
     "say": Color(1.0, 1.0, 1.0), "shout": Color(1.0, 0.75, 0.4),
+    "ooc": Color(0.7, 0.7, 0.72), "whisper": Color(0.8, 0.8, 0.85), "dep": Color(1.0, 0.55, 0.3),
+    "ad": Color(0.55, 1.0, 0.55), "doc": Color(1.0, 0.9, 0.55), "me": Color(0.85, 0.6, 1.0),
+    "family": Color(0.4, 0.95, 0.85), "call": Color(1.0, 0.8, 0.95),
 }
 var chat_time_text := ""       # «[12:30]» перед строкой — задаёт main.gd
 var _chat_box: VBoxContainer

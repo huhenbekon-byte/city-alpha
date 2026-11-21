@@ -145,6 +145,24 @@ func set_carry(what: String) -> void:
         bm.size = Vector3(0.6, 0.45, 0.5)
         mat.albedo_color = Color(0.72, 0.55, 0.35)
         _carry_node.position = Vector3(0, 1.15, -0.45)
+    elif what == "mail":   # почтовая сумка на боку
+        bm.size = Vector3(0.12, 0.32, 0.42)
+        mat.albedo_color = Color(0.36, 0.24, 0.14)
+        _carry_node.position = Vector3(0.3, 0.95, 0)
+    elif what == "broom":  # метла в руке, черенком вверх
+        bm.size = Vector3(0.05, 1.5, 0.05)
+        mat.albedo_color = Color(0.6, 0.45, 0.25)
+        _carry_node.position = Vector3(-0.32, 0.95, -0.15)
+        _carry_node.rotation.x = -0.25
+        var bristle := MeshInstance3D.new()
+        var bb := BoxMesh.new()
+        bb.size = Vector3(0.28, 0.32, 0.1)
+        bristle.mesh = bb
+        var bmat := StandardMaterial3D.new()
+        bmat.albedo_color = Color(0.75, 0.62, 0.3)
+        bristle.material_override = bmat
+        bristle.position = Vector3(0, -0.85, 0)
+        _carry_node.add_child(bristle)
     else:
         bm.size = Vector3(0.3, 0.3, 1.6)
         mat.albedo_color = Color(0.45, 0.30, 0.18)
@@ -171,6 +189,10 @@ func set_look(colors: Dictionary, textures := {}) -> void:
                 _look_col[slot] = colors[slot]
         OutfitsScript.apply(_body_sh, String(_look_tex.get("jacket", "")), String(_look_tex.get("pants", "")),
                 String(_look_tex.get("shoes", "")), _look_col.get("jacket", Color.WHITE), female)
+        if _model and not _custom_skin:   # фигура — под новую форму
+            OutfitsScript.apply_build(_model, _build if not _build.is_empty() else [1, 1, 1, 1], model_scale,
+                    String(_look_tex.get("jacket", "")), String(_look_tex.get("pants", "")), female)
+        _apply_gear()
         for slot: String in ["jacket", "pants", "shoes"]:
             if colors.has(slot):
                 var c: Color = colors[slot]
@@ -304,6 +326,14 @@ func _keep_camera_inside() -> void:
 
 
 var frozen := false   ## администратор заморозил — стоит на месте
+var _build: Array = []   ## телосложение [рост, плечи, живот, бёдра]
+
+
+func set_build(b: Array) -> void:
+    _build = b
+    if _model and not _custom_skin:
+        OutfitsScript.apply_build(_model, b, model_scale, String(_look_tex.get("jacket", "")), String(_look_tex.get("pants", "")), female)
+var escort_vel := Vector3.ZERO   ## в наручниках ведут за собой
 
 
 func _physics_process(delta: float) -> void:
@@ -315,13 +345,15 @@ func _physics_process(delta: float) -> void:
         if velocity.y > 0.0 and not Input.is_action_pressed("jump"):
             g *= 1.8                       # кнопку отпустили — прыжок ниже
         velocity.y -= g * delta
-    if _jump_buf > 0.0 and _coyote > 0.0 and _time >= _down_until and seated == "":
+    if _jump_buf > 0.0 and _coyote > 0.0 and _time >= _down_until and seated == "" and not frozen:
         velocity.y = jump_velocity
         _jump_buf = 0.0
         _coyote = 0.0
-    if frozen:                # заморожен администратором
-        velocity.x = 0.0
-        velocity.z = 0.0
+    if frozen:                # заморожен администратором, в наручниках или ранен
+        velocity.x = escort_vel.x   # в наручниках: идёт за милиционером (main.gd задаёт скорость)
+        velocity.z = escort_vel.z
+        if escort_vel.length() > 0.1:
+            _visual.rotation.y = lerp_angle(_visual.rotation.y, atan2(-escort_vel.x, -escort_vel.z), 0.2)
         move_and_slide()
         return
     if _time < _down_until:   # лежит после удара машиной
@@ -407,7 +439,10 @@ func _setup_model() -> void:
     if model_faces_plus_z:
         m.rotation.y = PI
     m.scale = Vector3.ONE * model_scale
+    if not _build.is_empty():
+        OutfitsScript.apply_build(m, _build, model_scale, String(_look_tex.get("jacket", "")), String(_look_tex.get("pants", "")), female)
     _visual.add_child(m)
+    _apply_gear.call_deferred()
 
     var players := m.find_children("*", "AnimationPlayer", true, false)
     if players.is_empty():
@@ -758,6 +793,14 @@ var _body_sh: ShaderMaterial = null
 var _look_tex := {}     # текущие ткани (для готовой формы — scripts/outfits.gd)
 var _look_col := {}
 const OutfitsScript := preload("res://scripts/outfits.gd")
+const GearScript := preload("res://scripts/gear.gd")
+var gear_rank := 2   ## звание в организации — звёзды на погонах (main.gd ставит перед set_look)
+
+
+## Объёмные детали формы (погоны, ремень, кобура...) — под текущую одежду.
+func _apply_gear() -> void:
+    if _model and not _custom_skin:
+        GearScript.apply(_model, String(_look_tex.get("jacket", "")), String(_look_tex.get("pants", "")), female, gear_rank)
 var _hair_mat: StandardMaterial3D = null
 
 
@@ -1218,7 +1261,7 @@ func _process_seated() -> void:
             if _anim.current_animation != an:
                 _anim.play(an, 0.3)
             _anim.speed_scale = 1.0
-    if seated == "sit" or seated == "pose":
+    if (seated == "sit" or seated == "pose") and not frozen:   # раненый лежит, пока не поднимут
         var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
         if touch and touch.joy_vector.length() > 0.3:
             input = touch.joy_vector

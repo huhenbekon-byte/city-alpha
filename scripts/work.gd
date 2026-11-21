@@ -4,6 +4,8 @@ extends Node3D
 ##   truck  — дальнобойщик: отвезти груз на точку за городом;
 ##   loader — грузчик: носить коробки из фуры на склад (пешком);
 ##   lumber — лесоруб: срубить дерево и отнести бревно на лесопилку (пешком);
+##   post   — почтальон: взять сумку на почте и разнести письма по подъездам (пешком);
+##   sweep  — дворник: подмести мусор и листья во дворах (пешком);
 ##   exam   — практический экзамен: проехать маршрут без превышения скорости.
 ## Машину для работы создаёт main.gd по сигналу vehicle_needed.
 
@@ -42,6 +44,10 @@ var _time_left := 0.0
 var _penalties := 0
 var _penalty_cd := 0.0
 var _rng := RandomNumberGenerator.new()
+var _letters := 0
+const POST_BAG := 5          # писем в сумке
+const POST_PAY := 90         # за письмо
+const SWEEP_PAY := 70        # за чистый двор
 
 
 func _ready() -> void:
@@ -69,6 +75,14 @@ func start(job_kind: String) -> void:
         "lumber":
             _new_tree()
             message.emit("Лесоруб: руби деревья и носи брёвна на лесопилку")
+        "post":
+            _letters = 0
+            _set_target(city.post_office, "ВЗЯТЬ ПОЧТУ", Color(1.0, 0.8, 0.1))
+            message.emit("Почтальон: возьми сумку с письмами и разнеси по подъездам")
+        "sweep":
+            carrying = "broom"
+            _new_litter(Vector3.ZERO)
+            message.emit("Дворник: подметай дворы — мусор отмечен на карте")
         "exam":
             # маршрут от автошколы (автодром и внешнее кольцо), если она построена
             var from_school: bool = city != null and not (city.exam_route as Array).is_empty()
@@ -154,6 +168,10 @@ func action_text(focus: Vector3, in_car: bool) -> String:
             return "ПОЛОЖИТЬ" if carrying == "box" else "ВЗЯТЬ"
         "lumber":
             return "СДАТЬ" if carrying == "log" else "РУБИТЬ"
+        "post":
+            return "ОТДАТЬ ПИСЬМО" if carrying == "mail" else "ВЗЯТЬ ПОЧТУ"
+        "sweep":
+            return "МЕСТИ"
     return ""
 
 
@@ -181,6 +199,30 @@ func do_action() -> void:
                     carrying = "log"
                     message.emit("Дерево срублено! Неси бревно на лесопилку")
                     _set_target(city.log_pile, "ЛЕСОПИЛКА", Color(0.2, 1.0, 0.4))
+        "post":
+            if carrying == "mail":
+                _letters -= 1
+                Sfx.play("click")
+                paid.emit(POST_PAY, "Письмо доставлено: +%d ₽ (осталось %d)" % [POST_PAY, _letters])
+                if _letters <= 0:
+                    carrying = ""
+                    message.emit("Сумка пуста — возвращайся на почту")
+                    _set_target(city.post_office, "ВЗЯТЬ ПОЧТУ", Color(1.0, 0.8, 0.1))
+                else:
+                    _new_address(target)
+            else:
+                carrying = "mail"
+                _letters = POST_BAG
+                Sfx.play("click")
+                message.emit("В сумке %d писем — адреса на карте" % POST_BAG)
+                _new_address(target)
+        "sweep":
+            _chops += 1
+            Sfx.play("step", -4.0, _rng.randf_range(0.8, 1.1))
+            if _chops >= 3:
+                _chops = 0
+                paid.emit(SWEEP_PAY, "Двор чистый: +%d ₽" % SWEEP_PAY)
+                _new_litter(target)
 
 
 func status_text(focus: Vector3, in_vehicle: bool) -> String:
@@ -200,6 +242,12 @@ func status_text(focus: Vector3, in_vehicle: bool) -> String:
             if carrying == "log":
                 return "Лесоруб: неси бревно на лесопилку — %d м" % d
             return "Лесоруб: руби дерево (%d/4) — %d м" % [_chops, d]
+        "post":
+            if carrying == "mail":
+                return "Почтальон: письмо в подъезд — %d м (в сумке %d)" % [d, _letters]
+            return "Почтальон: возьми почту — %d м" % d
+        "sweep":
+            return "Дворник: подмети (%d/3) — %d м" % [_chops, d]
         "exam":
             var sec := maxi(0, int(_time_left))
             return "Экзамен: метка %d/%d · %d м · %d:%02d · нарушений %d/3" % [
@@ -262,6 +310,33 @@ func _new_tree() -> void:
     var t: Vector3 = trees[_rng.randi() % trees.size()]
     _chops = 0
     _set_target(t, "СРУБИТЬ", Color(1.0, 0.8, 0.1))
+
+
+## Следующий адрес почтальона: подъезд в 25–140 м от текущего места.
+func _new_address(from: Vector3) -> void:
+    var pts: Array = city.dropoffs
+    var ok: Array = []
+    for p: Vector3 in pts:
+        var d := _dist(from, p)
+        if d > 25.0 and d < 140.0:
+            ok.append(p)
+    var to: Vector3 = (ok[_rng.randi() % ok.size()] if not ok.is_empty() else pts[_rng.randi() % pts.size()])
+    _set_target(to, "ПИСЬМО: кв. %d" % _rng.randi_range(1, 120), Color(0.2, 1.0, 0.4))
+
+
+## Следующий мусор для дворника: недалеко (до 120 м), если есть.
+func _new_litter(from: Vector3) -> void:
+    var pts: Array = city.litter_spots if not (city.litter_spots as Array).is_empty() else city.dropoffs
+    if from == Vector3.ZERO:
+        from = city.post_office
+    var ok: Array = []
+    for p: Vector3 in pts:
+        var d := _dist(from, p)
+        if d > 12.0 and d < 120.0:
+            ok.append(p)
+    var to: Vector3 = (ok[_rng.randi() % ok.size()] if not ok.is_empty() else pts[_rng.randi() % pts.size()])
+    _chops = 0
+    _set_target(to, "МУСОР", Color(1.0, 0.8, 0.1))
 
 
 func _set_target(pos: Vector3, title: String, col: Color) -> void:

@@ -1,0 +1,5 @@
+Машины в этой папке вырезаны из набора «Orchids Simulator Traffic Car Pack»
+Автор: Oren garage (https://sketchfab.com/playmode280513)
+Источник: https://sketchfab.com/3d-models/orchids-simulator-traffic-car-pack-2fc5970d5ba2415fa98ec98b8801e794
+Лицензия: CC-BY 4.0 (http://creativecommons.org/licenses/by/4.0/)
+Изменения: отдельные машины вынесены в свои файлы, текстуры уменьшены до 512 px.

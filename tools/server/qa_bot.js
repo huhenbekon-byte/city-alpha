@@ -1,4 +1,4 @@
-// QA-бот для онлайн-проверки: node qa_bot.js [ник] — выполняет команды из ЛС «Тестера» (CMD:COME, CMD:LOOK, CMD:CALL ...)
+// QA-бот для онлайн-проверки: node qa_bot.js [ник] — выполняет команды из ЛС «Иван_Тестов» (CMD:COME, CMD:LOOK, CMD:CALL, CMD:B, CMD:PASS, CMD:HITS, CMD:REVIVE, CMD:SMS, CMD:TRADE ...)
 // QA-бот: выполняет команды из ЛС «Тестера» и отвечает, что видит.
 const URL = 'ws://localhost:7777';
 const NICK = process.argv[2] || 'Бот_Петя';
@@ -9,7 +9,7 @@ const names = {};
 const seenT = {};
 let lastCall = null, cash = null, lastEvent = null;
 function send(o) { ws.readyState === 1 && ws.send(JSON.stringify(o)); }
-function pm(t) { send({ t: 'say', x: `/pm Тестер REPLY:${t}` }); }
+function pm(t) { send({ t: 'say', x: `/pm Иван_Тестов REPLY:${t}` }); }
 function st() { send({ t: 'st', s: [pos[0], pos[1], pos[2], 0, anim, 1, 0, 0, wanted, 100, '', 0, look, '', 0, 0] }); }
 function log(...a) { console.log('BOT', ...a); }
 function connect() {
@@ -20,12 +20,12 @@ function connect() {
     const m = JSON.parse(ev.data);
     if (m.t === 'auth_ok') { cash = m.prof ? m.prof.cash : null; send({ t: 'hello', name: NICK, look: {}, sex: 'm' }); }
     else if (m.t === 'auth_err') log('auth_err', m.msg);
-    else if (m.t === 'welcome') { me = m.id; for (const e of m.list || []) { names[e[0]] = e[1]; if (e[1] === "Тестер") client = e[0]; } log('welcome id', me); }
-    else if (m.t === 'join') { names[m.id] = m.name; if (m.name === 'Тестер') client = m.id; }
-    else if (m.t === 'sts') for (const [id, s] of m.l) { seen[id] = s; seenT[id] = Date.now(); if (names[id] === 'Тестер') client = id; }
+    else if (m.t === 'welcome') { me = m.id; for (const e of m.list || []) { names[e[0]] = e[1]; if (e[1] === "Иван_Тестов") client = e[0]; } log('welcome id', me); }
+    else if (m.t === 'join') { names[m.id] = m.name; if (m.name === 'Иван_Тестов') client = m.id; }
+    else if (m.t === 'sts') for (const [id, s] of m.l) { seen[id] = s; seenT[id] = Date.now(); if (names[id] === 'Иван_Тестов') client = id; }
     else if (m.t === 'money_set') { cash = m.cash; log('money_set', m.cash, m.bank, m.msg); }
     else if (m.t === 'ask') { log('ask', m.kind); send({ t: 'answer', id: m.id, ok: true }); }
-    else if (m.t === 'act') log('act', m.kind, m.name || '');
+    else if (m.t === 'act') { log('act', m.kind, m.name || ''); if (m.kind === 'search') send({ t: 'search_res', to: m.from, items: ['финский нож', 'товар: 3 шт.'] }); }
     else if (m.t === 'call_taken') log('call_taken by', m.by);
     else if (m.t === 'faction_set') log('faction_set', m.fid, m.rank);
     else if (m.t === 'event') { lastEvent = m; log('event', m.title); }
@@ -55,6 +55,13 @@ function cmd(c) {
     case 'LOOK': pm(`id=${client} age=${client>=0?Date.now()-(seenT[client]||0):-1} look=${cs ? cs[12] : 'none'} anim=${cs ? cs[4] : 'none'} yaw=${cs ? cs[3] : '?'} car=${cs ? JSON.stringify(cs[6]) : ''} wanted=${cs ? cs[8] : ''}`); break;
     case 'CASH': pm(`cash=${cash}`); break;
     case 'LOOKUP': send({ t: 'lookup' }); break;
+    case 'B': send({ t: 'say', x: '/b ' + a.join(' ') }); break;
+    case 'D': send({ t: 'say', x: '/d ' + a.join(' ') }); break;
+    case 'PASS': send({ t: 'say', x: '/pass ' + client }); break;
+    case 'REVIVE': send({ t: 'say', x: '/revive ' + client }); break;
+    case 'HITS': { let n = +a[0] || 5; const iv = setInterval(() => { send({ t: 'act', to: client, kind: 'hit', dmg: 15, melee: true }); if (--n <= 0) clearInterval(iv); }, 350); break; }
+    case 'SMS': send({ t: 'say', x: '/sms ' + client + ' ' + a.join(' ') }); break;
+    case 'TRADE': send({ t: 'trade', to: client, item: a[0], price: +a[1] || 0 }); break;
     case 'QUIT': ws.close(); MODE = 'login'; setTimeout(connect, 1500); break;   // переподключение
   }
 }

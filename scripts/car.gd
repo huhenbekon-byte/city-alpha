@@ -71,6 +71,9 @@ var _headlight: SpotLight3D
 var _night := false
 var lights_override := -1      # -1 — фары по времени суток, 0 — выключены, 1 — включены
 var locked := false            # двери закрыты на замок
+var registered := true         # стоит на учёте в ГАИ (новая с рынка — нет, пока не поставишь)
+var inspect_day := -1000       # день последнего техосмотра (действует 30 игровых дней)
+var impounded := false         # эвакуирована на штрафстоянку
 var freshener := false         # тюнинг: «ёлочка» на зеркале
 var loud := false              # тюнинг: прямоток — громче и басовитей
 var lowered := false           # тюнинг: занижение

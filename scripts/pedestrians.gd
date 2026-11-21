@@ -47,6 +47,9 @@ var focus := Vector3.ZERO
 var _peds: Array = []
 var _rng := RandomNumberGenerator.new()
 var _skin: StandardMaterial3D
+## [рост, плечи, живот, бёдра] — обычные чаще
+const BUILDS := [[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1], [1.01, 0.92, 0.88, 0.9], [1.02, 1.1, 0.97, 1.05],
+        [0.99, 1.06, 1.2, 1.08], [1.05, 1.02, 1, 1.02], [0.95, 1, 1.03, 1]]
 var _body_meshes := {}
 var _leg_meshes := {}
 
@@ -110,7 +113,7 @@ func _process(delta: float) -> void:
         var to := goal - pos
         to.y = 0.0
         var dir := to.normalized() if to.length() > 0.01 else Vector3.FORWARD
-        var fear: float = p["fear"]
+        var fear: float = p.get("fear", 0.0)
         if fear > 0.0:
             p["fear"] = fear - delta
         var stop := false
@@ -276,7 +279,8 @@ func _make_ped() -> Dictionary:
         hip.add_child(leg)
         legs.append(hip)
     return {"root": root, "legs": legs, "pos": Vector3.ZERO, "corners": [], "idx": 0,
-            "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0}
+            "phase": _rng.randf() * TAU, "speed_k": 1.0, "down": false, "timer": 0.0, "fear": 0.0, "dodge": Vector3.ZERO,
+            "dodge_t": 0.0, "acts": []}
 
 
 ## Туловище, руки и голова — один меш (рубашка, брюки, кожа, волосы).
@@ -444,6 +448,10 @@ func _make_ped_3d() -> Dictionary:
     mat.set_shader_parameter("print_on", 0.0)
     mat.set_shader_parameter("skin_tint", SKIN_TINTS[_rng.randi() % SKIN_TINTS.size()])
     preload("res://scripts/outfits.gd").apply(mat, String(top[0]), pants_name, shoes_name, Color.WHITE, female)
+    # телосложение: прохожие разного роста и комплекции
+    var bl: Array = BUILDS[_rng.randi() % BUILDS.size()]
+    preload("res://scripts/outfits.gd").apply_build(model, [bl[0] * _rng.randf_range(0.97, 1.03), bl[1], bl[2], bl[3]], model.scale.x,
+            String(top[0]), pants_name, female)
 
     # причёска и цвет волос
     var hair_mat := StandardMaterial3D.new()
@@ -523,7 +531,7 @@ func scare(from: Vector3, radius: float) -> void:
         var pos: Vector3 = p.get("vpos", p["pos"])
         if pos.distance_to(from) > radius:
             continue
-        var was: float = p["fear"]
+        var was: float = p.get("fear", 0.0)
         p["fear"] = _rng.randf_range(5.0, 9.0)
         if was > 0.0:
             continue

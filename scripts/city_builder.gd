@@ -45,6 +45,10 @@ const PARKED_COLORS := [
     Color(0.92, 0.92, 0.90), Color(0.45, 0.06, 0.10), Color(0.12, 0.30, 0.22),
     Color(0.15, 0.20, 0.40), Color(0.10, 0.10, 0.11), Color(0.62, 0.64, 0.66),
 ]
+## Припаркованные машины: 6 своих моделей в цветах выше + 10 из набора Oren garage (своя раскраска)
+const PARKED_MODELS := ["vaz2106", "vaz2108", "moskvich", "vaz2101", "uaz469", "niva",
+        "pk_lada_green", "pk_lada_gray", "pk_lada_blue", "pk_lada_red", "pk_lada_cherry", "pk_lada_white",
+        "pk_niva", "pk_uaz", "pk_volga", "pk_gazelle"]
 
 var rng := RandomNumberGenerator.new()
 
@@ -100,6 +104,10 @@ var truck_depot := Vector3.ZERO       # дальнобойщик: где взя�
 var truck_drops: Array[Vector3] = []  # дальнобойщик: куда возить
 var forest_trees: Array[Vector3] = [] # лесоруб: деревья под рубку
 var log_pile := Vector3.ZERO          # лесоруб: куда носить брёвна
+var port_store := Vector3.ZERO       # порт: дверь склада патронов (захват ОПГ)
+var impound_lot := Vector3.ZERO       # штрафстоянка ГАИ (у порта)
+var post_office := Vector3.ZERO       # почтальон: где брать почту (киоск «Газеты» — отделение связи)
+var litter_spots: Array[Vector3] = [] # дворник: мусор и листья во дворах
 ## Фракции: id -> {"door", "marker", "spawn", "out_yaw", "name"} — вход, метка автопарка, где появляется машина.
 var faction_sites := {}
 ## Интерьеры: id -> {"spawn", "exit", "hr", "desk"} — комнаты стоят далеко за городом.
@@ -156,6 +164,7 @@ func _ready() -> void:
     _build_billboards()
     _service(Vector3(243 + OUT, 0, -14), Vector3(0, 0, 1))
     _service(Vector3(-248 - OUT, 0, -48), Vector3(0, 0, 1))
+    _build_port()
     _shore_life()
     _build_home_interiors()
     _build_podezd()
@@ -249,6 +258,8 @@ func _tpl_square() -> void:
     _kiosk(_p(27, -9), Vector3(-1, 0, 0), "ПИВО", Color(0.75, 0.45, 0.10))
     _kiosk(_p(-27, 22), Vector3(1, 0, 0), "ГАЗЕТЫ", Color(0.90, 0.50, 0.10), false)
     driving_school = _p(-27, 22) + Vector3(2.8, 0, 0)   # если отдельного здания нет
+    if post_office == Vector3.ZERO:
+        post_office = _p(-27, 22) + Vector3(2.8, 0, 0)
     _kiosk(_p(27, 22), Vector3(-1, 0, 0), "ВИДЕОСАЛОН", Color(0.25, 0.20, 0.45), false)
     _metro_pavilion(_p(-19, -20), Vector3(0, 0, 1), "Площадь Ленина")
     _occupy(_p(-19, -20), 6.0, 6.0)
@@ -606,7 +617,7 @@ func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color, is_pickup := 
         _occupy(p, sz.x + 1.0, sz.z + 1.0)
         building_rects.append(Rect2(p.x - sz.x * 0.5, p.z - sz.z * 0.5, sz.x, sz.z))
         if is_pickup:
-            pickups.append({"pos": p + facing * (sz.z * 0.5 + 1.6), "name": text})
+            pickups.append({"pos": p + facing * (sz.z * 0.5 + 1.6), "name": text, "dir": facing})
         return
     _solid(Vector3(3.2, 2.6, 2.4), p + Vector3(0, 1.3, 0), _tinted("kiosk_siding", col.lightened(0.15), 2.0), yaw)
     _deco(Vector3(2.6, 1.2, 0.05), p + b * Vector3(0, 1.35, 1.21), _m["vitrine"], yaw)
@@ -617,7 +628,7 @@ func _kiosk(p: Vector3, facing: Vector3, text: String, col: Color, is_pickup := 
     _occupy(p, 4.0, 4.0)
     building_rects.append(Rect2(p.x - 1.6, p.z - 1.6, 3.2, 3.2))
     if is_pickup:
-        pickups.append({"pos": p + facing * 2.8, "name": text})
+        pickups.append({"pos": p + facing * 2.8, "name": text, "dir": facing})
 
 
 func _bus_stop(p: Vector3, facing: Vector3) -> void:
@@ -720,7 +731,7 @@ func _parked_car(p: Vector3, yaw: float) -> void:
     body.rotation.y = yaw
     add_child(body)
     CarModel.add_collision(body)
-    _put("car%d" % (rng.randi() % PARKED_COLORS.size()), body.position, yaw)
+    _put("car%d" % (rng.randi() % PARKED_MODELS.size()), body.position, yaw)
 
 
 ## Лавки: [середина сиденья на земле, куда смотрит] — на них можно сесть.
@@ -1460,8 +1471,11 @@ func _define_batches() -> void:
         door_mat.uv1_scale = Vector3(1.0 / 2.6, -1.0 / 2.1, 1.0 / 2.6)
         door_mat.uv1_offset = Vector3(0.5, 0.5, 0.5)
     _batch("garage_door", _box_mesh(Vector3(2.6, 2.1, 0.06)), door_mat, 140.0)
-    for i in PARKED_COLORS.size():
-        _batch("car%d" % i, CarModel.parked_mesh(PARKED_COLORS[i], ["vaz2106", "vaz2108", "moskvich", "vaz2101", "uaz469", "niva"][i % 6]), null, 160.0, true)
+    for i in PARKED_MODELS.size():
+        var pmesh: Mesh = CarModel.parked_mesh(PARKED_COLORS[i % PARKED_COLORS.size()], PARKED_MODELS[i])
+        if pmesh == null:   # модели нет — машина из старого набора
+            pmesh = CarModel.parked_mesh(PARKED_COLORS[i % PARKED_COLORS.size()], PARKED_MODELS[i % 6])
+        _batch("car%d" % i, pmesh, null, 160.0, true)
     _define_sign_batches()
 
 
@@ -3674,6 +3688,8 @@ func _decals_rest() -> void:
     for p: Vector3 in dropoffs:
         var r := _drng.randf()
         var off := Vector3(_drng.randf_range(-2.5, 2.5), 0, _drng.randf_range(-2.5, 2.5))
+        if r < 0.65:
+            litter_spots.append(p + off)
         if r < 0.3:
             _put("dec_litter", p + off + Vector3(0, 0.02, 0), _drng.randf() * TAU, Color.WHITE, Vector3(1.4, 1, 1.4))
         elif r < 0.65:
@@ -4708,6 +4724,8 @@ func _coast(isl: Rect2) -> void:
     var par := _tinted("granite_red", Color(0.92, 0.92, 0.92), 2.6)
     var gaps: Array[Vector2] = [Vector2(RIVER_X1, BRIDGE_Z), Vector2(RIVER_X0, BRIDGE_Z),
             Vector2(VILLAGE_X, VILLAGE_BRIDGE.x), Vector2(VILLAGE_X, VILLAGE_BRIDGE.y)]
+    for pz: float in [4.0, 22.0, 40.0]:   # проход на причал порта
+        gaps.append(Vector2(ISLAND_KAZAN.position.x, pz))
     var corners := [isl.position, Vector2(isl.end.x, isl.position.y), isl.end, Vector2(isl.position.x, isl.end.y)]
     for k in 4:
         var a: Vector2 = corners[k]
@@ -4750,6 +4768,68 @@ func _coast(isl: Rect2) -> void:
 
 
 ## Набережные: фонари и лавочки вдоль парапета (лицом к морю), полоса деревьев за ними.
+## Казанский речной порт (запад острова): причал с контейнерами и кранами, теплоход, склад № 3
+## (за него воюют ОПГ — там патроны) и штрафстоянка ГАИ. Координаты совпадают с HARBOR в server.js.
+func _build_port() -> void:
+    var x0 := ISLAND_KAZAN.position.x          # берег (-520)
+    var land_c := Vector3(x0 + 26.0, 0, 22.0)
+    _occupy(land_c, 54.0, 52.0)
+    _flat(land_c, Vector2(52.0, 50.0), _m["yard_asphalt"], 0.016)
+    # причал над водой
+    var deck := _mat(Color(0.5, 0.49, 0.46), 0.95)
+    _solid(Vector3(44.0, 2.0, 46.0), Vector3(x0 - 21.0, -0.9, 22.0), deck)
+    for z: float in range(0, 46, 6):   # швартовые тумбы
+        _deco(Vector3(0.5, 0.6, 0.5), Vector3(x0 - 42.5, 0.4, float(z)), _m["metal"])
+    # контейнеры в штабелях
+    var cols := [Color(0.62, 0.16, 0.12), Color(0.18, 0.36, 0.55), Color(0.28, 0.45, 0.22), Color(0.75, 0.55, 0.15), Color(0.45, 0.45, 0.47)]
+    var rng := RandomNumberGenerator.new()
+    rng.seed = 7
+    for row in 3:
+        for k in 4:
+            var h := rng.randi_range(1, 3)
+            for lvl in h:
+                var c: Color = cols[rng.randi() % cols.size()]
+                _solid(Vector3(6.0, 2.5, 2.4), Vector3(x0 - 10.0 - row * 8.0, 1.25 + lvl * 2.55, 4.0 + k * 3.0), _tinted("kiosk_siding", c, 2.0))
+    # портовые краны
+    var crane := _mat(Color(0.85, 0.62, 0.12), 0.6)
+    for cz: float in [20.0, 38.0]:
+        var cx := x0 - 34.0
+        for lx: float in [-2.5, 2.5]:
+            for lz: float in [-2.5, 2.5]:
+                _solid(Vector3(0.6, 14.0, 0.6), Vector3(cx + lx, 7.0, cz + lz), crane)
+        _deco(Vector3(6.0, 3.0, 6.0), Vector3(cx, 15.5, cz), crane)
+        _deco(Vector3(22.0, 0.8, 0.9), Vector3(cx - 9.0, 17.0, cz), crane)
+        _deco(Vector3(0.08, 9.0, 0.08), Vector3(cx - 18.0, 12.4, cz), _m["metal"])
+        _deco(Vector3(1.2, 0.5, 1.2), Vector3(cx - 18.0, 7.9, cz), _m["metal"])
+    # теплоход у причала
+    var hull := _mat(Color(0.12, 0.13, 0.15), 0.6)
+    _solid(Vector3(9.0, 4.0, 36.0), Vector3(x0 - 49.0, 0.4, 22.0), hull)
+    _deco(Vector3(9.1, 0.5, 36.1), Vector3(x0 - 49.0, 2.2, 22.0), _m["red"])
+    _solid(Vector3(7.0, 3.2, 10.0), Vector3(x0 - 49.0, 4.0, 33.0), _m["white"])
+    _deco(Vector3(7.1, 0.9, 10.1), Vector3(x0 - 49.0, 4.6, 33.0), _m["glass"])
+    _deco(Vector3(1.4, 3.0, 1.4), Vector3(x0 - 49.0, 7.0, 31.0), _m["red"])
+    _label("ВОЛГО-ДОН", Vector3(x0 - 44.4, 1.2, 22.0), Vector3(1, 0, 0), 120, Color(0.95, 0.95, 0.9))
+    # склад № 3 — тот самый
+    var wall := _tinted("kiosk_siding", Color(0.55, 0.53, 0.48), 2.0)
+    var wc := Vector3(x0 + 20.0, 3.5, 40.0)
+    _solid(Vector3(16.0, 7.0, 10.0), wc, wall)
+    _deco(Vector3(16.6, 0.4, 10.6), wc + Vector3(0, 3.7, 0), _m["roof"])
+    _deco(Vector3(4.0, 4.0, 0.1), Vector3(wc.x, 2.0, wc.z - 5.02), _m["shutter"])
+    _label("СКЛАД № 3", Vector3(wc.x, 5.3, wc.z - 5.1), Vector3(0, 0, -1), 90, Color(0.9, 0.85, 0.7))
+    port_store = Vector3(wc.x, 0.0, wc.z - 6.5)
+    # ворота порта и вывеска
+    for gz: float in [8.0, 36.0]:
+        _solid(Vector3(0.8, 6.0, 0.8), Vector3(x0 + 50.0, 3.0, gz), _m["concrete"])
+    _deco(Vector3(0.6, 1.4, 29.0), Vector3(x0 + 50.0, 6.4, 22.0), _m["red"])
+    _label("КАЗАНСКИЙ РЕЧНОЙ ПОРТ", Vector3(x0 + 50.35, 6.4, 22.0), Vector3(1, 0, 0), 110, Color(1.0, 0.9, 0.55))
+    _label("КАЗАНСКИЙ РЕЧНОЙ ПОРТ", Vector3(x0 + 49.65, 6.4, 22.0), Vector3(-1, 0, 0), 110, Color(1.0, 0.9, 0.55))
+    # штрафстоянка ГАИ: сетка-забор и будка
+    impound_lot = Vector3(x0 + 34.0, 0.0, 8.0)
+    _deco(Vector3(14.0, 1.8, 0.1), impound_lot + Vector3(0, 0.9, -5.0), _m["metal"])
+    _solid(Vector3(2.4, 2.6, 2.4), impound_lot + Vector3(8.0, 1.3, -3.0), _tinted("kiosk_siding", Color(0.3, 0.45, 0.7), 2.0))
+    _label("ШТРАФСТОЯНКА", impound_lot + Vector3(8.0, 2.9, -1.75), Vector3(0, 0, 1), 60, Color(0.95, 0.95, 0.95))
+
+
 func _shore_life() -> void:
     var gaps: Array[Vector2] = [Vector2(RIVER_X1, BRIDGE_Z), Vector2(RIVER_X0, BRIDGE_Z),
             Vector2(VILLAGE_X, VILLAGE_BRIDGE.x), Vector2(VILLAGE_X, VILLAGE_BRIDGE.y)]

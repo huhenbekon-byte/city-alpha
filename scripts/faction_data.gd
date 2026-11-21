@@ -115,10 +115,7 @@ const UNIFORMS := {
     ],
     # КГБ: оперативники в штатском (костюм, плащ, пальто и шляпа), старшие — в кителе и фуражке КГБ.
     "kgb": [
-        {"from": 1, "jacket": "cloth_suit_gray", "pants": "cloth_suit_gray", "shoes": "cloth_leather_black", "cap": "fedora", "cap_col": Color(0.32, 0.32, 0.34)},
-        {"from": 2, "jacket": "cloth_gabardine", "pants": "cloth_suit_gray", "shoes": "cloth_leather_black", "cap": "fedora", "cap_col": Color(0.30, 0.26, 0.22)},
-        {"from": 3, "jacket": "cloth_coat_dark", "pants": "cloth_suit_gray", "shoes": "cloth_leather_black", "cap": "fedora", "cap_col": Color(0.10, 0.10, 0.11)},
-        {"from": 4, "jacket": "uni_kgb", "pants": "uni_kgb", "shoes": "cloth_leather_black", "badge": true, "cap": "kgb"},
+        {"from": 1, "jacket": "uni_kgb", "pants": "uni_kgb", "shoes": "cloth_leather_black", "badge": true, "cap": "kgb"},
         {"from": 6, "jacket": "uni_kgb", "pants": "uni_kgb", "shoes": "cloth_leather_black", "badge": true, "lampas": true, "cap": "kgb"},
     ],
     # Мэрия: клерк в белой рубашке, служащие в сером костюме, руководство в синем в полоску, мэр — в шляпе.
@@ -158,18 +155,19 @@ static func _gang_uniform(id: String, rank: int) -> Dictionary:
     var st: Dictionary = GANG_STYLE.get(id, GANG_STYLE["universam"])
     var ts: String = st["ts"]
     var c: Color = st["col"]
+    var opg := "uni_opg_" + ts.trim_prefix("ts_")   # чёрный костюм «ОПГ», полосы — цветом банды
     match clampi(rank, 1, 6):
         1:
-            return {"jacket": ts, "pants": ts, "shoes": "cloth_sneaker", "lampas": true, "badge": true, "cap": "petushok", "cap_col": c}
+            return {"jacket": opg, "pants": opg, "shoes": "cloth_sneaker", "badge": true, "cap": "petushok", "cap_col": c}
         2:
-            return {"jacket": "cloth_bolonya_green", "pants": ts, "shoes": "cloth_sneaker", "lampas": true, "cap": "petushok", "cap_col": c}
+            return {"jacket": "cloth_bolonya_green", "pants": opg, "shoes": "cloth_sneaker", "cap": "petushok", "cap_col": c}
         3:
             return {"jacket": "velour" if id == "kavkaz" else "cloth_leather_black", "pants": "cloth_acidwash",
                     "shoes": "cloth_sneaker", "cap": "kepka", "cap_col": Color(0.12, 0.12, 0.13) if id == "kavkaz" else Color(0.32, 0.3, 0.28)}
         4:
             return {"jacket": "cloth_dublenka", "pants": "cloth_wool_black", "shoes": "cloth_leather_black", "cap": "ondatra"}
-    return {"jacket": "cloth_coat_dark", "pants": "cloth_wool_black", "shoes": "cloth_leather_black", "cap": "ondatra",
-            "cap_col": Color(0.2, 0.15, 0.11)}
+    return {"jacket": "uni_avtoritet", "pants": "uni_avtoritet", "shoes": "cloth_leather_black", "cap": "kepka",
+            "cap_col": Color(0.13, 0.13, 0.14)}
 
 
 static func uniform(id: String, rank: int) -> Dictionary:

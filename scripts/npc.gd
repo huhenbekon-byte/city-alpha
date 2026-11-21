@@ -23,6 +23,9 @@ var name_y := 2.12
 var hat := ""                  # головной убор (см. hats.gd): "petushok", "militia"...
 var hat_col := Color(0, 0, 0, 0)
 var name_col := Color(1.0, 0.95, 0.8)
+var build: Array = []          ## телосложение [рост, плечи, живот, бёдра] (clothes.gd)
+var rank := 2                  ## звание — звёзды на погонах (детали формы, gear.gd)
+var skin_col := Color(0.87, 0.68, 0.55)
 var _name_l: Label3D
 var remote := false            # другой игрок по сети: анимации задаёт main.gd через play_anim()
 const Hats := preload("res://scripts/hats.gd")
@@ -57,6 +60,14 @@ func _ready() -> void:
             add_child(m)
             _model = m
             _dress(m)
+            if build.is_empty() and not remote:   # жители города — разной комплекции
+                var r := absi(hash(npc_name + str(global_position.snapped(Vector3.ONE)))) % 6
+                build = [[1, 1, 1, 1], [1, 1, 1, 1], [1.01, 0.93, 0.9, 0.92], [1.02, 1.08, 0.98, 1.04],
+                        [0.99, 1.05, 1.17, 1.07], [1.04, 1.02, 1, 1.02]][r]
+                if anim.begins_with("sit") or anim.begins_with("pose_"):
+                    build = [1.0, build[1], build[2], build[3]]   # сидячим рост не меняем — точно на скамейке
+            preload("res://scripts/outfits.gd").apply_build(m, build if not build.is_empty() else [1, 1, 1, 1], m.scale.x, jacket, pants, female)
+            preload("res://scripts/gear.gd").apply(m, jacket, pants, female, rank)
             var players := m.find_children("*", "AnimationPlayer", true, false)
             if not players.is_empty():
                 _ap = players[0] as AnimationPlayer
@@ -195,7 +206,7 @@ func _dress(m: Node) -> void:
         mat.set_shader_parameter(slot + "_col", Vector3(1, 1, 1))
     mat.set_shader_parameter("long_sleeves", 0.0 if short_sleeves else 1.0)
     mat.set_shader_parameter("print_on", 0.0)
-    mat.set_shader_parameter("skin_tint", Vector3(1.0, 0.97, 0.95))
+    mat.set_shader_parameter("skin_tint", Vector3(skin_col.r / 0.87 * 1.0, skin_col.g / 0.68 * 0.97, skin_col.b / 0.55 * 0.95))
     preload("res://scripts/outfits.gd").apply(mat, jacket, pants, shoes, Color.WHITE, female)
     var hair := StandardMaterial3D.new()
     hair.albedo_color = hair_color

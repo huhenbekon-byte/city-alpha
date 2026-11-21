@@ -91,16 +91,17 @@ static func set_hair(mat: ShaderMaterial, hair: Color, on := true) -> void:
 ## Покрой по образу или ткани куртки: [толщина куртки, толщина брюк (м), низ куртки (доля роста, 0 — по поясу),
 ## насколько сгладить ягодицы]. Китель и пиджак закрывают ягодицы, халат — до колен, боёвка пожарного толстая.
 const FIT := {
-    "militia": [0.012, 0.015, 0.465, 0.75], "kgb": [0.012, 0.015, 0.465, 0.75], "doctor": [0.013, 0.012, 0.30, 0.7],
-    "fire": [0.026, 0.028, 0.45, 0.8], "leader": [0.014, 0.014, 0.49, 0.7], "bomber": [0.016, 0.014, 0.50, 0.65],
-    "tracksuit": [0.012, 0.016, 0.0, 0.7], "passerby": [0.010, 0.012, 0.0, 0.6],
-    "uni_mayor": [0.012, 0.015, 0.465, 0.75], "uni_kitel": [0.012, 0.015, 0.465, 0.75], "cloth_suit_gray": [0.011, 0.014, 0.47, 0.7],
-    "cloth_suit_navy": [0.011, 0.014, 0.47, 0.7], "cloth_coat_dark": [0.016, 0.013, 0.30, 0.7],
-    "cloth_gabardine": [0.014, 0.013, 0.30, 0.7], "cloth_dublenka": [0.022, 0.013, 0.44, 0.65],
-    "cloth_alyaska": [0.022, 0.013, 0.47, 0.6], "cloth_quilted_navy": [0.018, 0.012, 0.48, 0.55],
-    "cloth_leather_black": [0.013, 0.013, 0.49, 0.55], "cloth_leather_brown": [0.013, 0.013, 0.49, 0.55],
+    "militia": [0.006, 0.0075, 0.465, 0.9], "kgb": [0.006, 0.0075, 0.465, 0.9], "doctor": [0.0065, 0.006, 0.3, 0.85],
+    "fire": [0.013, 0.014, 0.45, 0.95], "leader": [0.007, 0.007, 0.49, 0.85], "bomber": [0.008, 0.007, 0.5, 0.8],
+    "tracksuit": [0.006, 0.008, 0.0, 0.85], "passerby": [0.005, 0.006, 0.0, 0.75],
+    "ambulance": [0.007, 0.007, 0.49, 0.85], "opg": [0.006, 0.008, 0.0, 0.85], "avtoritet": [0.007, 0.007, 0.47, 0.85],
+    "uni_mayor": [0.006, 0.0075, 0.465, 0.9], "uni_kitel": [0.006, 0.0075, 0.465, 0.9], "cloth_suit_gray": [0.0055, 0.007, 0.47, 0.85],
+    "cloth_suit_navy": [0.0055, 0.007, 0.47, 0.85], "cloth_coat_dark": [0.008, 0.0065, 0.3, 0.85],
+    "cloth_gabardine": [0.007, 0.0065, 0.3, 0.85], "cloth_dublenka": [0.011, 0.0065, 0.44, 0.8],
+    "cloth_alyaska": [0.011, 0.0065, 0.47, 0.75], "cloth_quilted_navy": [0.009, 0.006, 0.48, 0.7],
+    "cloth_leather_black": [0.0065, 0.0065, 0.49, 0.7], "cloth_leather_brown": [0.0065, 0.0065, 0.49, 0.7],
 }
-const FIT_DEFAULT := [0.008, 0.011, 0.0, 0.6]
+const FIT_DEFAULT := [0.004, 0.0055, 0.0, 0.75]
 
 
 static func set_fit(mat: ShaderMaterial, key: String, jacket: String) -> void:
@@ -111,16 +112,87 @@ static func set_fit(mat: ShaderMaterial, key: String, jacket: String) -> void:
     mat.set_shader_parameter("butt_flat", float(f[3]))
 
 
+## Подгонка фигуры под форму организации: [грудь, живот, таз и ягодицы, ноги, руки] (толщина, 1 — как у модели).
+## Базовая модель «качок», поэтому всем чуть стройнее; пожарным в боёвке — меньше всего.
+const SLIM := {
+    "militia": [0.95, 0.92, 0.86, 0.86, 0.84], "kgb": [0.95, 0.92, 0.86, 0.86, 0.84],
+    "doctor": [0.93, 0.92, 0.88, 0.86, 0.84], "ambulance": [0.95, 0.93, 0.87, 0.86, 0.85],
+    "fire": [1.0, 0.96, 0.9, 0.9, 0.9], "opg": [0.92, 0.9, 0.85, 0.84, 0.82], "tracksuit": [0.92, 0.9, 0.85, 0.84, 0.82],
+    "avtoritet": [0.97, 0.98, 0.88, 0.87, 0.86], "leader": [0.97, 0.98, 0.88, 0.87, 0.86],
+    "bomber": [0.97, 0.94, 0.87, 0.86, 0.86], "passerby": [0.93, 0.92, 0.87, 0.86, 0.84],
+}
+const SLIM_DEFAULT := [0.93, 0.92, 0.87, 0.86, 0.84]
+const SLIM_F_DEFAULT := [0.96, 0.94, 0.93, 0.9, 0.86]
+
+
+static func slim_for(jacket: String, pants: String, female := false) -> Array:
+    var k := String((TOP_F if female else TOP).get(jacket, ""))
+    if jacket.begins_with("uni_opg"):
+        k = "opg"
+    if k == "":
+        k = String((BOTTOM_F if female else BOTTOM).get(pants, ""))
+    var sl: Array = SLIM.get(k, SLIM_F_DEFAULT if female else SLIM_DEFAULT)
+    if female:   # у женщин таз и бёдра не сужаем так сильно
+        sl = [sl[0], sl[1], lerpf(float(sl[2]), 1.0, 0.5), lerpf(float(sl[3]), 1.0, 0.3), sl[4]]
+    return sl
+
+
+## Телосложение на скелете: b = [рост, плечи, живот, бёдра] (магазин), slim — подгонка под форму (slim_for).
+## Масштаб кости переходит на дочерние, поэтому задаём «итоговую» толщину каждой кости и делим на родителя.
+static func apply_build(model: Node3D, b: Array, base_scale: float, jacket := "", pants := "", female := false) -> void:
+    if model == null or b.size() < 4:
+        return
+    var sl := slim_for(jacket, pants, female)
+    model.scale = Vector3.ONE * base_scale * float(b[0])
+    var chest := float(b[1]) * float(sl[0])
+    var belly := float(b[2]) * float(sl[1])
+    var hips := float(sl[2]) * lerpf(1.0, float(b[3]), 0.5)
+    var legs := float(b[3]) * float(sl[3])
+    var arms := float(sl[4]) * (float(b[1]) if float(b[1]) > 1.0 else 1.0)
+    var calf := lerpf(1.0, legs, 0.6)
+    var fore := lerpf(1.0, arms, 0.7)
+    var want := {
+        "pelvis": Vector3(hips, 1.0, hips), "spine_01": Vector3(lerpf(hips, belly, 0.5), 1.0, lerpf(hips, belly, 0.5)),
+        "spine_02": Vector3(belly, 1.0, belly), "spine_03": Vector3(chest, 1.0, chest * 0.6 + 0.4),
+        "neck_01": Vector3.ONE, "clavicle_l": Vector3.ONE, "clavicle_r": Vector3.ONE,
+    }
+    for side: String in ["l", "r"]:
+        want["upperarm_" + side] = Vector3(arms, 1.0, arms)
+        want["lowerarm_" + side] = Vector3(fore, 1.0, fore)
+        want["hand_" + side] = Vector3.ONE
+        want["thigh_" + side] = Vector3(legs, 1.0, legs)
+        want["calf_" + side] = Vector3(calf, 1.0, calf)
+        want["foot_" + side] = Vector3.ONE
+    for sk: Node in model.find_children("*", "Skeleton3D", true, false):
+        var s := sk as Skeleton3D
+        var acc := {}   # итоговая толщина кости
+        for i in s.get_bone_count():   # кости идут от корня к детям
+            var n := s.get_bone_name(i)
+            var p := s.get_bone_parent(i)
+            var parent_c: Vector3 = acc.get(p, Vector3.ONE) if p >= 0 else Vector3.ONE
+            var c: Vector3 = want.get(n, parent_c)
+            acc[i] = c
+            if want.has(n) or not parent_c.is_equal_approx(Vector3.ONE):
+                s.set_bone_pose_scale(i, c / parent_c)
+
+
+static func _bscale(s: Skeleton3D, bone: String, sc: Vector3) -> void:
+    var i := s.find_bone(bone)
+    if i >= 0:
+        s.set_bone_pose_scale(i, sc)
+
+
 ## ткань куртки → форма (верх: куртка и рукава)
 const TOP := {
     "uni_militia": "militia", "uni_kgb": "kgb", "uni_doctor": "doctor", "uni_canvas": "fire",
+    "uni_scrubs": "ambulance", "uni_avtoritet": "avtoritet", "uni_kitel": "militia", "uni_shirt": "militia",
     "cloth_tracksuit": "tracksuit", "ts_black": "tracksuit", "ts_red": "tracksuit", "ts_green": "tracksuit",
     "ts_blue": "tracksuit", "ts_yellow": "tracksuit",
     "cloth_bolonya_green": "bomber", "cloth_leather_black": "leader", "cloth_corduroy": "passerby",
 }
 ## ткань штанов → форма (низ: штаны)
 const BOTTOM := {
-    "uni_navy": "militia", "uni_kgb": "kgb", "uni_canvas": "fire",
+    "uni_navy": "militia", "uni_kgb": "kgb", "uni_canvas": "fire", "uni_scrubs": "ambulance", "uni_avtoritet": "avtoritet",
     "cloth_tracksuit": "tracksuit", "ts_black": "tracksuit", "ts_red": "tracksuit", "ts_green": "tracksuit",
     "ts_blue": "tracksuit", "ts_yellow": "tracksuit",
     "cloth_jersey_gray": "bomber", "cloth_wool_black": "leader", "cloth_trousers_brown": "passerby",
@@ -130,7 +202,8 @@ const TOP_F := {
     "uni_militia": "militia", "uni_kitel": "militia", "uni_shirt": "militia",
     "uni_kgb": "kgb", "uni_mayor": "kgb", "cloth_suit_gray": "kgb", "cloth_suit_navy": "kgb", "cloth_gabardine": "kgb",
     "cloth_coat_dark": "kgb",
-    "uni_doctor": "doctor", "uni_scrubs": "doctor", "cloth_cotton_white": "doctor", "uni_canvas": "fire",
+    "uni_doctor": "doctor", "uni_scrubs": "ambulance", "cloth_cotton_white": "doctor", "uni_canvas": "fire",
+    "uni_avtoritet": "avtoritet",
     "cloth_tracksuit": "tracksuit", "ts_black": "tracksuit", "ts_red": "tracksuit", "ts_green": "tracksuit",
     "ts_blue": "tracksuit", "ts_yellow": "tracksuit",
     "cloth_leather_black": "leader", "velour": "leader", "cloth_bolonya_green": "leader", "cloth_dublenka": "leader",
@@ -138,7 +211,7 @@ const TOP_F := {
 }
 const BOTTOM_F := {
     "uni_navy": "militia", "uni_kgb": "kgb", "cloth_suit_gray": "kgb", "cloth_suit_navy": "kgb",
-    "uni_scrubs": "doctor", "uni_canvas": "fire",
+    "uni_scrubs": "ambulance", "uni_canvas": "fire", "uni_avtoritet": "avtoritet",
     "cloth_tracksuit": "tracksuit", "ts_black": "tracksuit", "ts_red": "tracksuit", "ts_green": "tracksuit",
     "ts_blue": "tracksuit", "ts_yellow": "tracksuit",
     "cloth_wool_black": "leader", "cloth_acidwash": "passerby", "cloth_denim_blue": "passerby", "cloth_denim": "passerby",
@@ -151,6 +224,10 @@ const TINT := {
     "ts_black": Color(0.16, 0.16, 0.18), "ts_blue": Color(0.05, 0.16, 0.50), "ts_green": Color(0.08, 0.30, 0.18),
     "ts_yellow": Color(0.88, 0.62, 0.05),
 }
+
+## чёрный костюм «ОПГ» (uni_opg_<цвет>): полосы и надписи — цветом банды
+const OPG_STRIPES := {"red": Color(0.85, 0.12, 0.1), "blue": Color(0.2, 0.4, 0.95), "yellow": Color(1.0, 0.78, 0.12),
+    "green": Color(0.2, 0.7, 0.3)}
 
 static var _cache := {}
 
@@ -169,6 +246,10 @@ static func apply(mat: ShaderMaterial, jacket: String, pants: String, shoes: Str
         return
     var top_n := String((TOP_F if female else TOP).get(jacket, ""))
     var bot_n := String((BOTTOM_F if female else BOTTOM).get(pants, ""))
+    if jacket.begins_with("uni_opg"):
+        top_n = "opg"
+    if pants.begins_with("uni_opg"):
+        bot_n = "opg"
     if not (human_f() if female else human()):
         top_n = ""; bot_n = ""          # образы запечены под новую модель
     var pre := "outfit_f_" if female else "outfit_"
@@ -189,6 +270,15 @@ static func apply(mat: ShaderMaterial, jacket: String, pants: String, shoes: Str
         tint = Color(c.r, c.g, c.b, 1.0)
     elif key == "cloth_tracksuit" and not jacket_col.is_equal_approx(Color.WHITE):
         tint = Color(jacket_col.r, jacket_col.g, jacket_col.b, 1.0)
+    var mode := 0.0
+    if top_n == "opg" or bot_n == "opg":
+        var gc := (jacket if top_n == "opg" else pants).trim_prefix("uni_opg_")
+        tint = Color(1, 1, 1, 0)
+        if OPG_STRIPES.has(gc):
+            var c2: Color = OPG_STRIPES[gc]
+            tint = Color(c2.r, c2.g, c2.b, 1.0)
+        mode = 1.0
     mat.set_shader_parameter("outfit_tint", tint)
+    mat.set_shader_parameter("outfit_tint_mode", mode)
     if top_t:
         mat.set_shader_parameter("hair_on", 0.0)     # лицо и волосы — из образа

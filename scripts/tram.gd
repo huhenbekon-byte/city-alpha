@@ -242,6 +242,8 @@ func _spawn_car(s0: float) -> void:
 
 
 func _tram_mesh(body: Node3D) -> void:
+    if _tram_textured(body):
+        return
     var red := _mat(Color(0.75, 0.1, 0.08), 0.45)
     var cream := _mat(Color(0.93, 0.89, 0.76), 0.5)
     var glass := _mat(Color(0.15, 0.2, 0.24), 0.08, 0.3)
@@ -293,6 +295,77 @@ func _tram_mesh(body: Node3D) -> void:
     _box(body, Vector3(1.5, 0.05, 0.12), Vector3(0, 4.82, pz), grey)
 
 
+## Текстура вагона (картинка с прозрачным фоном): если файла нет — null, строим как раньше.
+func _tex_mat(path: String, alpha := true) -> StandardMaterial3D:
+    if not ResourceLoader.exists(path):
+        return null
+    var m := StandardMaterial3D.new()
+    m.albedo_texture = load(path)
+    m.roughness = 0.8
+    m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+    if alpha:
+        m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+        m.alpha_scissor_threshold = 0.5
+    return m
+
+
+## Плоская картинка: лицом в +Z, повёрнута на yaw (или лёжа — крыша).
+func _quad(parent: Node3D, size: Vector2, pos: Vector3, yaw: float, mat: Material, lying := false) -> void:
+    var mi := MeshInstance3D.new()
+    var q := QuadMesh.new()
+    q.size = size
+    mi.mesh = q
+    mi.material_override = mat
+    mi.position = pos
+    if lying:
+        mi.rotation = Vector3(-PI * 0.5, yaw, 0)
+    else:
+        mi.rotation.y = yaw
+    parent.add_child(mi)
+
+
+var _tmats := {}
+
+## Трамвай по картинкам (textures/transit/tram_*.png): борта, перед «14», зад, крыша, тележки.
+func _tram_textured(body: Node3D) -> bool:
+    if _tmats.is_empty():
+        for n: String in ["side", "front", "back", "bogie"]:
+            _tmats[n] = _tex_mat("res://textures/transit/tram_%s.png" % n)
+        _tmats["roof"] = _tex_mat("res://textures/transit/tram_roof.png", false)
+    for k: String in _tmats:
+        if _tmats[k] == null:
+            return false
+    var half := LEN * 0.5
+    var dark := _mat(Color(0.08, 0.08, 0.09), 0.8)
+    var grey := _mat(Color(0.55, 0.56, 0.58), 0.5, 0.5)
+    _box(body, Vector3(WIDTH - 0.08, 2.7, LEN - 0.3), Vector3(0, 1.75, 0), _mat(Color(0.2, 0.3, 0.4), 0.8), 0.0, true)   # кузов внутри
+    for sx: float in [1.0, -1.0]:
+        _quad(body, Vector2(LEN - 0.2, 2.95), Vector3(sx * WIDTH * 0.5, 1.72, 0), sx * PI * 0.5, _tmats["side"])
+    _quad(body, Vector2(WIDTH, 3.05), Vector3(0, 1.72, half - 0.1), 0.0, _tmats["front"])
+    _quad(body, Vector2(WIDTH, 3.05), Vector3(0, 1.72, -half + 0.1), PI, _tmats["back"])
+    _quad(body, Vector2(WIDTH - 0.1, LEN - 0.4), Vector3(0, 3.11, 0), 0.0, _tmats["roof"], true)
+    var lamp := StandardMaterial3D.new()
+    lamp.albedo_color = Color(1.0, 0.95, 0.8)
+    lamp.emission_enabled = true
+    lamp.emission = Color(1.0, 0.92, 0.7)
+    lamp.emission_energy_multiplier = 1.5
+    for x: float in [-0.62, 0.62]:
+        _box(body, Vector3(0.18, 0.18, 0.03), Vector3(x, 0.93, half - 0.07), lamp)
+    # тележки
+    for z: float in [half - 3.2, -half + 3.2]:
+        _box(body, Vector3(WIDTH - 0.5, 0.45, 2.4), Vector3(0, 0.32, z), dark)
+        for sx: float in [1.0, -1.0]:
+            _quad(body, Vector2(2.4, 0.9), Vector3(sx * (WIDTH * 0.5 - 0.2), 0.45, z), sx * PI * 0.5, _tmats["bogie"])
+    # пантограф
+    var pz := 1.0
+    _box(body, Vector3(1.2, 0.08, 0.5), Vector3(0, 3.38, pz), grey)
+    for k: float in [-1.0, 1.0]:
+        var arm := _box(body, Vector3(0.05, 1.6, 0.05), Vector3(0, 4.05, pz + 0.35 * k), grey)
+        arm.rotation.x = 0.45 * k
+    _box(body, Vector3(1.5, 0.05, 0.12), Vector3(0, 4.82, pz), grey)
+    return true
+
+
 func _physics_process(delta: float) -> void:
     for c: Dictionary in cars:
         var s: float = c["s"]
@@ -302,8 +375,11 @@ func _physics_process(delta: float) -> void:
         var dir: Vector3 = sd[1]
         # стоим на остановке
         if float(c["wait"]) > 0.0:
-            c["wait"] = float(c["wait"]) - delta
+            var was := float(c["wait"])
+            c["wait"] = was - delta
             speed = 0.0
+            if was > 1.0 and float(c["wait"]) <= 1.0 and (c["body"] as Node3D).visible:   # звонок перед отправлением
+                Sfx.play_at("tram_bell", pos, -4.0)
         else:
             var want := CRUISE
             # следующая остановка: плавно тормозим

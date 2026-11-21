@@ -10,6 +10,13 @@ const AREA = 220;                       // боты бегают по квадр
 const run = Math.random().toString(36).slice(2, 6);
 
 const bots = [];
+// RP-ник для бота: Бот_Ххххх (сервер принимает только Имя_Фамилия буквами)
+const ABC = 'абвгдежзиклмнопрстуфхцчшэюя';
+function rpNick(i) {
+  let n = Math.floor(Math.random() * 1e6) * 1000 + i, t = '';
+  for (let k = 0; k < 7; k++) { t += ABC[n % ABC.length]; n = Math.floor(n / ABC.length); }
+  return 'Бот_Н' + t;
+}
 let joined = 0, errors = 0, bytesIn = 0, msgsIn = 0, pings = [], authErr = {};
 
 function bot(i) {
@@ -18,7 +25,7 @@ function bot(i) {
     const ws = new WebSocket(URL);
     b.ws = ws;
     const timer = setTimeout(() => resolve(b), 15000);
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'auth', mode: 'register', nick: `bot_${run}_${i}`, pass: 'test1234', sex: i % 3 ? 'm' : 'f' }));
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'auth', mode: 'register', nick: rpNick(i), pass: 'test1234', sex: i % 3 ? 'm' : 'f' }));
     ws.onerror = () => { errors++; clearTimeout(timer); resolve(b); };
     ws.onmessage = ev => {
       const s = typeof ev.data === 'string' ? ev.data : '';

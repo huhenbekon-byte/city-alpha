@@ -526,6 +526,19 @@ def beep():
     return finish(s * np.exp(-t * 6) * np.minimum(1, t * 200), 0.6, 4000)
 
 
+def tram_bell():
+    """Звонок трамвая: водитель дважды бьёт по чашке — «дзынь-дзынь»."""
+    x = buf(1.6)
+    for at in (0.0, 0.32):
+        n = int(1.2 * SR)
+        t = t_(n)
+        s = (sine(1180, n) * 0.6 + sine(2950, n) * 0.25 + sine(4300, n) * 0.08) * np.exp(-t * 4.5)
+        s += bp(noise(n), 2000, 5000) * np.exp(-t * 60) * 0.3
+        put(x, at, s)
+    x = A.reverb(x, 0.5, 0.2, 4000, 0.4)
+    return finish(x, 0.5, 6000)
+
+
 SOUNDS = {
     'click': click, 'notify': notify, 'error': error, 'coin': coin, 'cash': cash, 'levelup': levelup,
     'phone': phone, 'radio_tune': radio_tune,
@@ -536,7 +549,7 @@ SOUNDS = {
     'car_door': car_door, 'lock': lock, 'engine_start': lambda: engine_start(False), 'scooter_start': lambda: engine_start(True),
     'door': door, 'pigeon': pigeon, 'sparrow': sparrow, 'crow': crow, 'dog': dog,
     'crickets': crickets, 'rumble': rumble, 'rain': rain, 'thunder': thunder, 'siren': siren,
-    'firework': firework, 'beep': beep,
+    'firework': firework, 'beep': beep, 'tram_bell': tram_bell,
 }
 
 if __name__ == '__main__':

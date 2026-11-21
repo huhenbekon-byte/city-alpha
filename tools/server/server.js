@@ -103,8 +103,13 @@ async function loadWorld() {
     world.homes = (await dbGet('world/homes')) || {};
     world.biz = (await dbGet('world/biz')) || {};
     world.leaders = (await dbGet('world/leaders')) || {};
+    world.budget = (await dbGet('world/budget')) || 0;
+    world.tax = (await dbGet('world/tax')) || 0;
+    world.families = (await dbGet('world/families')) || {};
     world.members = (await dbGet('world/members')) || {};
     world.owner = (await dbGet('world/owner')) || '';
+    world.port = (await dbGet('world/port')) || { owner: '', ammo: 200 };
+    world.gstock = (await dbGet('world/gstock')) || {};
     log(`мир загружен: районов ${Object.keys(world.turf).length}, домов занято ${Object.keys(world.homes).length}`);
   } catch (e) { log('не удалось загрузить мир: ' + e.message); }
 }
@@ -241,6 +246,7 @@ async function onAuth(p, m) {
     let acc = await dbGet('accounts/' + key);
     if (m.mode === 'register') {
       if (acc) return send(p, { t: 'auth_err', msg: 'Такой ник уже занят — выбери другой или войди' });
+      if (!RP_NICK.test(nick)) return send(p, { t: 'auth_err', msg: 'RP-ник: Имя_Фамилия с большой буквы, например Иван_Петров' });
       const salt = crypto.randomBytes(16).toString('hex');
       acc = { nick, salt, hash: hashPass(pass, salt), created: Date.now(), save: '', saved_at: 0,
               cash: START_MONEY, bank: 0, faction: '', rank: 0, rank_t: 0, admin: 0, home: -1,
@@ -315,7 +321,8 @@ async function onTokenAuth(p, m) {
 function profile(p) {
   const a = p.acc;
   return { cash: a.cash, bank: a.bank, faction: a.faction, rank: a.rank, admin: a.admin, home: a.home,
-           leader: isLeader(p), ver: p.ver, sex: a.sex || 'm' };
+           leader: isLeader(p), ver: p.ver, sex: a.sex || 'm',
+           family: a.family && world.families[a.family] ? world.families[a.family].name : '' };
 }
 
 function takenHomes(p) {
@@ -518,7 +525,10 @@ function onAnswer(q, m) {
   q.asks.delete(m.id | 0);
   const p = players.get(a.from);
   if (!p || !p.acc || Date.now() - a.t > 60000) return;
-  if (!m.ok) return notice(p, `${q.acc.nick} отказался`);
+  if (!m.ok) {
+    if (a.kind === 'ticket') send(q, { t: 'act', from: p.id, name: p.acc.nick, kind: 'su', stars: 1, why: 'отказ платить штраф' });
+    return notice(p, `${q.acc.nick} отказался`);
+  }
   if (a.kind === 'heal') {
     if ((q.acc.cash || 0) < 300) return notice(q, 'Нужно 300 ₽ наличными');
     setMoney(q, q.acc.cash - 300, q.acc.bank || 0, 'Оплата лечения 300 ₽');
@@ -528,10 +538,253 @@ function onAnswer(q, m) {
     if (q.acc.faction || p.acc.faction !== a.fid) return;
     setFaction(q, a.fid, 1, 'Ты принят в организацию');
     factionChat(a.fid, '', `${q.acc.nick} принят в организацию (пригласил ${p.acc.nick})`);
+  } else if (a.kind === 'family') {
+    const fam = world.families[a.fid];
+    if (!fam || q.acc.family) return;
+    fam.members[q.acc.key] = q.acc.nick;
+    q.acc.family = a.fid; persist(q, { family: a.fid }); saveFam(a.fid);
+    send(q, { t: 'prof', prof: profile(q) });
+    famChat(a.fid, '', `${q.acc.nick} вступил в семью «${fam.name}»`);
+  } else if (a.kind === 'call') {
+    if (p.callWith || q.callWith) return notice(q, 'Линия занята');
+    p.callWith = q.id; q.callWith = p.id;
+    for (const r of [p, q]) send(r, { t: 'chat', n: '📞', x: `Разговор: ${p.acc.nick} — ${q.acc.nick}. Пиши /t текст, /h — положить трубку`, k: 'call' });
+  } else if (a.kind === 'trade') {
+    if (a.price > 0) {
+      if ((q.acc.cash || 0) < a.price) return notice(q, 'Не хватает наличных');
+      setMoney(q, q.acc.cash - a.price, q.acc.bank || 0, `Купил «${a.item}»: −${a.price} ₽`);
+      setMoney(p, (p.acc.cash || 0) + a.price, p.acc.bank || 0, `Продал «${a.item}»: +${a.price} ₽`);
+      audit('сделка', `${p.acc.nick} → ${q.acc.nick}: «${a.item}» за ${a.price} ₽`, [p.acc.nick, q.acc.nick]);
+    }
+    send(p, { t: 'trade_done', item: a.item, sold: true, who: q.acc.nick });
+    send(q, { t: 'trade_done', item: a.item, sold: false, who: p.acc.nick });
+  } else if (a.kind === 'med') {
+    if ((q.acc.cash || 0) < 500) return notice(q, 'Нужно 500 ₽ наличными');
+    setMoney(q, q.acc.cash - 500, q.acc.bank || 0, 'Медкарта: −500 ₽');
+    setMoney(p, (p.acc.cash || 0) + 500, p.acc.bank || 0, `${q.acc.nick} оплатил медосмотр`);
+    send(q, { t: 'act', from: p.id, name: p.acc.nick, kind: 'medcard' });
+  } else if (a.kind === 'gun') {
+    if ((q.acc.cash || 0) < 3000) return notice(q, 'Нужно 3000 ₽ наличными');
+    setMoney(q, q.acc.cash - 3000, q.acc.bank || 0, 'Лицензия на оружие: −3000 ₽');
+    addBudget(3000, `лицензия ${q.acc.nick}`);
+    send(q, { t: 'act', from: p.id, name: p.acc.nick, kind: 'gunlic' });
+  } else if (a.kind === 'ticket') {
+    if ((q.acc.cash || 0) + (q.acc.bank || 0) < a.sum) { notice(p, `${q.acc.nick} нечем платить — объяви в розыск (/su)`); return notice(q, 'Не хватает денег на штраф'); }
+    const c = Math.min(q.acc.cash || 0, a.sum);
+    setMoney(q, (q.acc.cash || 0) - c, (q.acc.bank || 0) - (a.sum - c), `Штраф ${a.sum} ₽ оплачен (${a.why})`);
+    addBudget(a.sum, `штраф ${q.acc.nick}: ${a.why}`);
+    notice(p, `${q.acc.nick} оплатил штраф ${a.sum} ₽ — деньги ушли в казну`);
+    audit('штраф', `${p.acc.nick} → ${q.acc.nick} ${a.sum} ₽: ${a.why}`, [p.acc.nick, q.acc.nick]);
   } else if (a.kind === 'passport') {
     send(p, { t: 'chat', n: '', x: `Паспорт: ${q.acc.nick}. Организация: ${q.acc.faction || 'нет'}, ранг ${q.acc.rank}`, k: 'info' });
   }
 }
+
+// ---------------------------------------------------------------- порт (склад патронов ОПГ), банк, лотерея
+// Порт: в западной части Казани склад с патронами. Владеет одна ОПГ — её люди возят ящики (по 50) к себе в общак.
+// Захват: 90 с держаться у склада (45 м). Если у склада больше защитников, чем нападающих, — таймер стоит.
+const HARBOR = { x: -500, z: 33, r: 45, CAP: 90000, CD: 15 * 60000, BOX: 50, MAX: 400 };
+world.port = world.port || { owner: '', ammo: 200 };
+world.gstock = world.gstock || {};
+let portCap = null;          // { gid, until, by, empty }
+let portCd = 0;
+function nearPort(p) { return p.s && Math.hypot(p.s[0] - HARBOR.x, p.s[2] - HARBOR.z) < HARBOR.r; }
+function portMsg(p) {
+  const f = p && p.acc ? p.acc.faction : '';
+  return { t: 'port', owner: world.port.owner, ammo: world.port.ammo,
+    cap: portCap ? { gid: portCap.gid, left: Math.max(0, Math.round((portCap.until - Date.now()) / 1000)) } : null,
+    stock: GANGS.includes(f) ? (world.gstock[f] | 0) : 0 };
+}
+function portAll() { for (const q of players.values()) if (q.name) send(q, portMsg(q)); }
+function savePort() { dbLater('world', { port: world.port }); }
+function gangName(g) { return { tyap: 'Тяп-Ляп', universam: 'Универсам', solnce: 'Солнце', kavkaz: 'Кавказ' }[g] || g; }
+function onPort(p, m) {
+  if (!p.acc) return;
+  const f = p.acc.faction, a = String(m.a || '');
+  if (a === 'state') return send(p, portMsg(p));
+  if (!GANGS.includes(f)) return notice(p, 'Склад порта — дела ОПГ');
+  if (a === 'cap') {
+    if (!nearPort(p)) return notice(p, 'Ты не у склада');
+    if (world.port.owner === f) return notice(p, 'Склад и так ваш');
+    if (portCap) return notice(p, 'Склад уже штурмуют');
+    if (Date.now() < portCd) return notice(p, `Склад недавно брали. Следующий захват через ${Math.ceil((portCd - Date.now()) / 60000)} мин`);
+    portCap = { gid: f, until: Date.now() + HARBOR.CAP, by: p.acc.nick, empty: 0 };
+    sendAll({ t: 'chat', n: '', x: `⚠ ${gangName(f)} штурмует склад в порту! Владелец: ${world.port.owner ? gangName(world.port.owner) : 'никто'}`, k: 'faction' },
+      q => q.acc && (GANGS.includes(q.acc.faction) || POLICE.includes(q.acc.faction)));
+    log(`[порт] захват начал ${p.acc.nick} (${f})`);
+    return portAll();
+  }
+  if (a === 'load') {
+    if (world.port.owner !== f) return notice(p, 'Склад не ваш — сначала захватите');
+    if (!nearPort(p)) return notice(p, 'Ты не у склада');
+    if (p.portBox) return notice(p, 'Ящик уже у тебя в руках');
+    if (world.port.ammo < HARBOR.BOX) return notice(p, 'На складе пусто — ждите теплоход');
+    world.port.ammo -= HARBOR.BOX; p.portBox = true; savePort();
+    send(p, { t: 'port_box', on: true });
+    return portAll();
+  }
+  if (a === 'deliver') {
+    if (!p.portBox) return;
+    p.portBox = false;
+    world.gstock[f] = (world.gstock[f] | 0) + HARBOR.BOX;
+    dbLater('world/gstock', { [f]: world.gstock[f] });
+    send(p, { t: 'port_box', on: false });
+    for (const q of players.values()) if (q.acc && q.acc.faction === f) send(q, { t: 'chat', n: '', x: `${p.acc.nick} привёз ящик патронов в общак (+${HARBOR.BOX}). В общаке: ${world.gstock[f]}`, k: 'faction' });
+    return send(p, portMsg(p));
+  }
+  if (a === 'take') {
+    const n = Math.max(1, Math.min(60, m.n | 0));
+    const have = world.gstock[f] | 0;
+    if (have <= 0) return notice(p, 'В общаке нет патронов — везите из порта');
+    const got = Math.min(n, have);
+    world.gstock[f] = have - got;
+    dbLater('world/gstock', { [f]: world.gstock[f] });
+    send(p, { t: 'ammo', n: got });
+    return send(p, portMsg(p));
+  }
+  if (a === 'drop' && p.portBox) {   // ящик потерян (упал, арест, вышел)
+    p.portBox = false;
+    send(p, { t: 'port_box', on: false });
+  }
+}
+setInterval(() => {   // теплоход понемногу подвозит патроны
+  if (world.port.ammo < HARBOR.MAX) { world.port.ammo = Math.min(HARBOR.MAX, world.port.ammo + 5); savePort(); }
+  portAll();
+}, 60000);
+setInterval(() => {   // захват склада
+  if (!portCap) return;
+  let att = 0, def = 0;
+  for (const q of players.values()) {
+    if (!q.acc || !nearPort(q) || q.injured) continue;
+    if (q.acc.faction === portCap.gid) att++;
+    else if (world.port.owner && q.acc.faction === world.port.owner) def++;
+  }
+  const now = Date.now();
+  if (att === 0) {
+    portCap.empty += 2;
+    if (portCap.empty >= 10) {
+      sendAll({ t: 'chat', n: '', x: `Штурм склада сорван: ${gangName(portCap.gid)} ушли из порта`, k: 'faction' }, q => q.acc && GANGS.includes(q.acc.faction));
+      portCap = null; portCd = now + 5 * 60000;
+      return portAll();
+    }
+  } else portCap.empty = 0;
+  if (def > att) portCap.until += 2000;   // защитников больше — склад держится
+  if (now >= portCap.until) {
+    const g = portCap.gid;
+    world.port.owner = g; savePort();
+    sendAll({ t: 'chat', n: '', x: `Склад в порту теперь держит ${gangName(g)}`, k: 'faction' }, q => q.acc && (GANGS.includes(q.acc.faction) || POLICE.includes(q.acc.faction)));
+    log(`[порт] склад взяли ${g}`);
+    portCap = null; portCd = now + HARBOR.CD;
+  }
+  portAll();
+}, 2000);
+
+// Банк: кредит (до 50 000 ₽, +10 %, на 3 дня), вклад (+1 % в час, не больше +30 %).
+const LOAN_MAX = 50000, LOAN_FEE = 0.10, LOAN_DAYS = 3, DEP_RATE = 0.01, DEP_CAP = 0.30;
+function bankMsg(p) {
+  const a = p.acc;
+  return { t: 'bank_st', loan: a.loan ? a.loan.due : 0, until: a.loan ? a.loan.until : 0,
+    dep: a.dep ? a.dep.sum : 0, dep_gain: a.dep ? depGain(a.dep) : 0 };
+}
+function depGain(d) { return Math.floor(d.sum * Math.min(DEP_CAP, DEP_RATE * (Date.now() - d.t) / 3600000)); }
+function loanOverdue(p) {
+  const a = p.acc;
+  if (!a || !a.loan || Date.now() < a.loan.until) return;
+  let due = a.loan.due, c = a.cash | 0, b = a.bank | 0;
+  const fb = Math.min(b, due); b -= fb; due -= fb;
+  const fc = Math.min(c, due); c -= fc; due -= fc;
+  if (due <= 0) { a.loan = null; persist(p, { loan: null }); setMoney(p, c, b, 'Банк списал просроченный кредит'); }
+  else {   // не хватило — остаток растёт на 10 %, срок ещё сутки
+    a.loan = { due: Math.ceil(due * 1.1), until: Date.now() + 86400000 }; persist(p, { loan: a.loan });
+    setMoney(p, c, b, `Просрочка кредита! Списано всё, долг ${a.loan.due} ₽ (+10 %)`);
+  }
+}
+function onBank(p, m) {
+  if (!p.acc) return;
+  const a = p.acc, op = String(m.a || ''), sum = Math.trunc(+m.sum || 0);
+  if (op === 'loan') {
+    if (a.loan) return notice(p, 'Сначала погаси старый кредит');
+    if (!(sum >= 1000 && sum <= LOAN_MAX)) return notice(p, `Кредит: от 1 000 до ${LOAN_MAX} ₽`);
+    a.loan = { due: Math.ceil(sum * (1 + LOAN_FEE)), until: Date.now() + LOAN_DAYS * 86400000 };
+    persist(p, { loan: a.loan });
+    setMoney(p, a.cash | 0, (a.bank | 0) + sum, `Кредит ${sum} ₽ на карту. Вернуть ${a.loan.due} ₽ за ${LOAN_DAYS} дня`);
+    log(`[банк] кредит ${a.nick} ${sum}`);
+  } else if (op === 'repay') {
+    if (!a.loan) return notice(p, 'Кредита нет');
+    const pay = Math.min(a.loan.due, (a.bank | 0) + (a.cash | 0));
+    if (pay <= 0) return notice(p, 'Нечем платить');
+    let b = a.bank | 0, c = a.cash | 0;
+    const fb = Math.min(b, pay); b -= fb; c -= pay - fb;
+    a.loan.due -= pay;
+    if (a.loan.due <= 0) a.loan = null;
+    persist(p, { loan: a.loan || null });
+    setMoney(p, c, b, a.loan ? `Внесено ${pay} ₽, осталось ${a.loan.due} ₽` : 'Кредит погашен полностью');
+  } else if (op === 'dep') {
+    if (!(sum >= 1000) || sum > (a.bank | 0)) return notice(p, 'Вклад: от 1 000 ₽ и не больше, чем на карте');
+    const old = a.dep ? a.dep.sum + depGain(a.dep) : 0;
+    a.dep = { sum: old + sum, t: Date.now() };
+    persist(p, { dep: a.dep });
+    setMoney(p, a.cash | 0, (a.bank | 0) - sum, `На вклад ${sum} ₽. Растёт на 1 % в час`);
+  } else if (op === 'wd') {
+    if (!a.dep) return notice(p, 'Вклада нет');
+    const total = a.dep.sum + depGain(a.dep);
+    a.dep = null; persist(p, { dep: null });
+    setMoney(p, a.cash | 0, (a.bank | 0) + total, `Вклад закрыт: ${total} ₽ на карту`);
+  }
+  send(p, bankMsg(p));
+}
+setInterval(() => { for (const p of players.values()) if (p.acc) loanOverdue(p); }, 300000);
+
+// Лотерея «Спортлото 3 из 20»: билет 200 ₽, розыгрыш каждые 30 минут (в :00 и :30 по Москве).
+const LOTTO_PRICE = 200, LOTTO_MAX = 5;
+const lotto = { tickets: [], pool: 10000, last: null };
+function lottoNext() { const s = 1800000; return Math.ceil((Date.now() + 1) / s) * s; }
+function lottoMsg(p) {
+  const key = p.acc ? p.acc.key : '';
+  return { t: 'lotto', next: Math.round((lottoNext() - Date.now()) / 1000), pool: lotto.pool,
+    my: lotto.tickets.filter(t => t.key === key).map(t => t.nums), last: lotto.last };
+}
+function onLotto(p, m) {
+  if (!p.acc) return;
+  if (m.a === 'buy') {
+    const nums = Array.isArray(m.nums) ? [...new Set(m.nums.map(x => x | 0))] : [];
+    if (nums.length !== 3 || nums.some(x => x < 1 || x > 20)) return notice(p, 'Выбери 3 разных числа от 1 до 20');
+    if (lotto.tickets.filter(t => t.key === p.acc.key).length >= LOTTO_MAX) return notice(p, `Не больше ${LOTTO_MAX} билетов на розыгрыш`);
+    const c = p.acc.cash | 0, b = p.acc.bank | 0;
+    if (c + b < LOTTO_PRICE) return notice(p, 'Не хватает денег на билет');
+    const fc = Math.min(c, LOTTO_PRICE);
+    setMoney(p, c - fc, b - (LOTTO_PRICE - fc), '');
+    lotto.tickets.push({ key: p.acc.key, nick: p.acc.nick, nums: nums.sort((x, y) => x - y) });
+    lotto.pool += LOTTO_PRICE / 2;
+    addBudget(LOTTO_PRICE / 2, 'лотерея');
+  }
+  send(p, lottoMsg(p));
+}
+function lottoDraw() {
+  const pool = [...Array(20)].map((_, i) => i + 1);
+  const win = [];
+  while (win.length < 3) win.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  win.sort((x, y) => x - y);
+  const jack = lotto.tickets.filter(t => t.nums.filter(x => win.includes(x)).length === 3);
+  const winners = [];
+  for (const t of lotto.tickets) {
+    const hit = t.nums.filter(x => win.includes(x)).length;
+    let prize = hit === 2 ? 1000 : hit === 1 ? 200 : 0;
+    if (hit === 3) prize = Math.floor(lotto.pool / jack.length);
+    if (!prize) continue;
+    winners.push([t.nick, prize]);
+    for (const q of players.values()) if (q.acc && q.acc.key === t.key) {
+      setMoney(q, q.acc.cash | 0, (q.acc.bank | 0) + prize, `Спортлото: угадано ${hit} из 3 — выигрыш ${prize} ₽ на карту`);
+    }
+    // кто вышел — выигрыш сгорает (купил билет — жди розыгрыша в игре)
+  }
+  if (jack.length) lotto.pool = 10000;
+  lotto.last = { nums: win, winners: winners.sort((a, b) => b[1] - a[1]).slice(0, 5) };
+  const big = winners.length ? ` Лучший выигрыш: ${winners[0][0]} — ${winners[0][1]} ₽` : '';
+  if (lotto.tickets.length) sendAll({ t: 'chat', n: '', x: `Спортлото: выпали ${win.join(', ')}. Билетов: ${lotto.tickets.length}.${big}`, k: 'ad' });
+  lotto.tickets = [];
+}
+(function lottoTimer() { setTimeout(() => { lottoDraw(); lottoTimer(); }, lottoNext() - Date.now() + 500); })();
 
 function onTurf(p, m) {
   if (!p.acc || !GANGS.includes(p.acc.faction)) return;
@@ -620,14 +873,17 @@ function worldMsg() {
   const h = crypto.createHash('md5').update('w' + period).digest()[0];
   const month = new Date(Date.now() + 3 * 3600000).getUTCMonth() + 1;
   const list = [12, 1, 2].includes(month) ? WEATHERS.winter : [3, 11].includes(month) ? WEATHERS.edge : WEATHERS.warm;
-  return { t: 'world', min, day, weather: list[h % list.length] };
+  return { t: 'world', min, day, weather: list[h % list.length], tax: world.tax || 0 };
 }
 setInterval(() => sendAll(worldMsg()), 15000);
 
 // ---------------------------------------------------------------- чат и команды
 const HELP = [
-  '/g текст — всем на сервере · /f текст — рация фракции · /pm ник текст — личное',
-  '/me действие · /do описание · /try действие (удачно/неудачно) · /report текст — админам',
+  'Чат: обычный текст — рядом · /s крик · /w шёпот · /b OOC · /me /do /try /todo фраза*действие · /pm ник текст · /g всем · /ad объявление',
+  'Фракции: /r рация · /d госволна · /f чат. Документы: /pass /lic /med ID. /id ник — узнать ID · /budget — казна · /report текст',
+  'Милиция/КГБ: /cuff /uncuff /follow /search ID · /ticket ID сумма причина · /su ID звёзды причина · /givegun ID.  Врач: /givemed ID · /revive ID',
+  'Семья: /fcreate Название · /finvite ID · /fam текст · /finfo · /fput /ftake сумма · /fkick ник · /fleave.  Телефон: /sms ID текст · /call ID · /t текст · /h',
+  'Суд (мэрия 3+): /sentence ID минуты статья · /free ID.  Выборы: /election · /candidate · /vote ник.  Мэр: /tax 0–20 · /payout фракция сумма',
   'Лидер: /rank ник N · /uninvite ник · /roster.  Админ: /help admin',
 ].join('\n');
 const REPORTS = [];
@@ -717,6 +973,7 @@ async function onSay(p, m) {
       return notice(p, 'Игрок не найден');
     }
   }
+  if (rpCommand(p, cmd, arg, rest, lvl) || rpCommand2(p, cmd, arg, rest, lvl)) return;   // RP-команды — для всех игроков
   if (!lvl) return notice(p, 'Неизвестная команда. /help — список');
   switch (cmd) {
     case '/a': return sendAll({ t: 'chat', n: `[A] ${p.acc.nick}`, x: rest, k: 'admin' }, q => admin(q) >= 1);
@@ -902,11 +1159,409 @@ function onCall(p, m) {
 }
 function onCallTake(p, m) {
   const c = CALLS.get(m.id | 0);
-  if (!p.acc || !POLICE.includes(p.acc.faction) || !c) return;
+  if (!p.acc || !(POLICE.includes(p.acc.faction) || MEDIC.includes(p.acc.faction)) || !c) return;
   if (c.taken) return notice(p, `Вызов уже принял ${c.taken}`);
   c.taken = p.acc.nick;
-  for (const q of players.values()) if (q.acc && (q.acc.nick === c.from || POLICE.includes(q.acc.faction)))
+  for (const q of players.values()) if (q.acc && (q.acc.nick === c.from || POLICE.includes(q.acc.faction) || MEDIC.includes(q.acc.faction)))
     send(q, { t: 'call_taken', id: c.id, by: p.acc.nick, from: c.from });
+}
+
+// ---------------------------------------------------------------- RP-команды (как на CRMP)
+// Ник — Имя_Фамилия. Чаты: /b (OOC), /s (крик), /w (шёпот), /todo, /r (рация фракции), /d (госволна), /ad (газета).
+// Документы: /pass /lic /med ник — показать; врач выдаёт медкарту (/givemed), милиция — лицензию на оружие (/givegun).
+// Милиция и КГБ: /cuff /uncuff /follow /search /ticket /su. Врачи поднимают раненых (/revive), вызовы приходят по рации.
+const STATE = ['mayor', 'police', 'police_p', 'hospital', 'hospital_p', 'fire', 'kgb'];
+const RP_NICK = /^[A-ZА-ЯЁ][a-zа-яё]{1,14}_[A-ZА-ЯЁ][a-zа-яё]{1,16}$/;
+const FAC_TAG = { mayor: 'Мэрия', police: 'Милиция', police_p: 'Милиция ПТГ', hospital: 'Больница', hospital_p: 'Больница ПТГ',
+  fire: 'Пожарные', kgb: 'КГБ', tyap: 'Тяп-Ляп', universam: 'Универсам', solnce: 'Солнечные', kavkaz: 'Кавказ' };
+world.budget = world.budget || 0;
+
+// игрок по нику или по ID (как на CRMP: /cuff 12)
+function target(s) {
+  const t = String(s || '');
+  if (/^\d+$/.test(t)) { const q = players.get(+t); return q && q.acc ? q : null; }
+  return byNick(t);
+}
+function addBudget(n, why) {
+  world.budget = (world.budget || 0) + n;
+  dbLater('world', { budget: world.budget });
+  if (why) audit('казна', `+${n} ₽: ${why}`, []);
+}
+function docCard(p) {
+  const d = p.docs || {};
+  return d;
+}
+function rpCommand(p, cmd, arg, rest, lvl) {
+  const nick = p.acc.nick;
+  const fac = p.acc.faction || '';
+  const q = target(arg[0]);
+  const tail = rest.slice((arg[0] || '').length).trim();
+  switch (cmd) {
+    case '/b': return rest ? (localChat(p, `(( ${nick} [${p.id}]: ${rest} ))`, 'ooc', CHAT_DIST), true) : (notice(p, '/b текст — OOC-чат (не от лица персонажа)'), true);
+    case '/s': return rest ? (localChat(p, `${nick} кричит: ${rest}!`, 'say', CHAT_DIST * 2), true) : true;
+    case '/w': return rest ? (localChat(p, `${nick} шепчет: ${rest}`, 'whisper', 4), true) : true;
+    case '/todo': {
+      const i = rest.indexOf('*');
+      if (i < 1) return notice(p, '/todo фраза*действие — например: /todo Держи*протягивая паспорт'), true;
+      localChat(p, `«${rest.slice(0, i).trim()}» — сказал ${nick}, ${rest.slice(i + 1).trim()}`, 'me', CHAT_DIST);
+      return true;
+    }
+    case '/r':
+      if (!fac) return notice(p, 'Ты не в организации'), true;
+      if (rest) factionChat(fac, `[R] ${nick}`, rest);
+      return true;
+    case '/d': {
+      if (!STATE.includes(fac)) return notice(p, 'Госволна — только для госслужб'), true;
+      if (!rest) return true;
+      for (const r of players.values()) if (r.acc && STATE.includes(r.acc.faction))
+        send(r, { t: 'chat', n: `[${FAC_TAG[fac]}] ${nick}`, x: rest, k: 'dep' });
+      return true;
+    }
+    case '/ad': {
+      if (!rest) return notice(p, '/ad текст — объявление в газету «Вечерний город» (200 ₽)'), true;
+      if (Date.now() - (p.adT || 0) < 60000) return notice(p, 'Новое объявление — не чаще раза в минуту'), true;
+      if ((p.acc.cash || 0) < 200) return notice(p, 'Объявление стоит 200 ₽ наличными'), true;
+      p.adT = Date.now();
+      setMoney(p, p.acc.cash - 200, p.acc.bank || 0, 'Объявление в газету: −200 ₽');
+      addBudget(200, '');
+      sendAll({ t: 'chat', n: `Объявление (${nick})`, x: rest.slice(0, 150), k: 'ad' });
+      return true;
+    }
+    case '/id': {
+      const list = [...players.values()].filter(r => r.acc && r.name && r.acc.nick.toLowerCase().includes(String(arg[0] || '').toLowerCase()));
+      notice(p, list.length ? list.slice(0, 8).map(r => `${r.acc.nick} [${r.id}]`).join(' · ') : 'Никого не нашёл');
+      return true;
+    }
+    case '/budget': notice(p, `Казна города: ${world.budget || 0} ₽ (штрафы, налоги, объявления)`); return true;
+    // ---------------- документы
+    case '/pass': case '/lic': case '/med': {
+      if (!q || q === p) return notice(p, `${cmd} ник или ID — показать документ игроку рядом`), true;
+      if (!near(p, q, 5)) return notice(p, 'Подойди ближе'), true;
+      const d = p.docs || {};
+      let text;
+      if (cmd === '/pass') text = `Паспорт гражданина СССР: ${d.name || nick}. Прописка: ${d.city || 'Казань'}. Организация: ${FAC_TAG[fac] || 'не работает'}`;
+      else if (cmd === '/lic') text = `Права: ${(d.lic || []).length ? d.lic.join(', ') : 'нет'}. Лицензия на оружие: ${d.gun ? 'есть' : 'нет'}`;
+      else text = `Медкарта: ${d.med ? 'здоров, годен' : 'нет медкарты'}`;
+      localChat(p, `* ${nick} показал документ ${q.acc.nick}`, 'me', 15);
+      send(q, { t: 'chat', n: `Документ ${nick}`, x: text, k: 'doc' });
+      send(p, { t: 'chat', n: `Ты показал ${q.acc.nick}`, x: text, k: 'doc' });
+      return true;
+    }
+    case '/givemed': {
+      if (!MEDIC.includes(fac)) return notice(p, 'Медкарту выдаёт врач'), true;
+      if (!q || !near(p, q, 5)) return notice(p, '/givemed ник или ID (игрок рядом)'), true;
+      askPlayer(p, q, 'med', `Врач ${nick} проводит медосмотр и оформляет медкарту (500 ₽). Согласен?`);
+      return true;
+    }
+    case '/givegun': {
+      if (!POLICE.includes(fac) || (p.acc.rank | 0) < 3) return notice(p, 'Лицензию выдаёт милиция с 3 ранга'), true;
+      if (!q || !near(p, q, 5)) return notice(p, '/givegun ник или ID (игрок рядом)'), true;
+      askPlayer(p, q, 'gun', `${nick} оформляет лицензию на оружие (3000 ₽). Согласен?`);
+      return true;
+    }
+    // ---------------- милиция
+    case '/cuff': case '/uncuff': case '/follow': case '/search': case '/su': case '/ticket': {
+      if (!POLICE.includes(fac)) return notice(p, 'Это может только милиция или КГБ'), true;
+      if (!q || q === p) return notice(p, `${cmd} ник или ID`), true;
+      if (cmd !== '/su' && !near(p, q, 4)) return notice(p, 'Подойди ближе'), true;
+      if (cmd === '/cuff') { q.cuffed = p.id; send(q, { t: 'act', from: p.id, name: nick, kind: 'cuff' }); localChat(p, `* ${nick} надел наручники на ${q.acc.nick}`, 'me', 20); }
+      else if (cmd === '/uncuff') { q.cuffed = 0; q.follow = 0; send(q, { t: 'act', from: p.id, name: nick, kind: 'uncuff' }); localChat(p, `* ${nick} снял наручники с ${q.acc.nick}`, 'me', 20); }
+      else if (cmd === '/follow') {
+        if (q.cuffed !== p.id) return notice(p, 'Сначала надень наручники (/cuff)'), true;
+        q.follow = q.follow === p.id ? 0 : p.id;
+        send(q, { t: 'act', from: p.id, name: nick, kind: q.follow ? 'follow' : 'unfollow' });
+        localChat(p, `* ${nick} ${q.follow ? 'повёл за собой' : 'отпустил'} ${q.acc.nick}`, 'me', 20);
+      } else if (cmd === '/search') {
+        p.searchT = Date.now();
+        send(q, { t: 'act', from: p.id, name: nick, kind: 'search' });
+        localChat(p, `* ${nick} обыскивает ${q.acc.nick}`, 'me', 20);
+      } else if (cmd === '/su') {
+        const st = Math.max(1, Math.min(5, parseInt(arg[1], 10) || 1));
+        const why = rest.split(/\s+/).slice(2).join(' ') || 'нарушение';
+        send(q, { t: 'act', from: p.id, name: nick, kind: 'su', stars: st, why });
+        sendAll({ t: 'chat', n: '', x: `${nick} объявил в розыск ${q.acc.nick} (${'★'.repeat(st)}): ${why}`, k: 'faction' }, r => r.acc && POLICE.includes(r.acc.faction));
+        audit('розыск', `${nick} → ${q.acc.nick} ${st}★: ${why}`, [nick, q.acc.nick]);
+      } else if (cmd === '/ticket') {
+        const sum = parseInt(arg[1], 10);
+        const why = rest.split(/\s+/).slice(2).join(' ') || 'нарушение';
+        if (!(sum >= 100 && sum <= 5000)) return notice(p, '/ticket ник сумма(100–5000) причина'), true;
+        askPlayer(p, q, 'ticket', `${nick} выписал штраф ${sum} ₽: ${why}. Оплатить? (Отказ — розыск)`, { sum, why });
+      }
+      return true;
+    }
+    case '/revive': {
+      if (!MEDIC.includes(fac)) return notice(p, 'Поднимает раненых только врач'), true;
+      if (!q || !near(p, q, 4)) return notice(p, '/revive ник или ID (раненый рядом)'), true;
+      if (!q.injured) return notice(p, 'Этот человек не ранен'), true;
+      q.injured = false;
+      send(q, { t: 'act', from: p.id, name: nick, kind: 'revive' });
+      setMoney(p, p.acc.cash || 0, (p.acc.bank || 0) + 500, `Помощь раненому ${q.acc.nick}: +500 ₽ на карту`);
+      localChat(p, `* ${nick} оказал первую помощь ${q.acc.nick}`, 'me', 20);
+      audit('реанимация', `${nick} поднял ${q.acc.nick}`, [nick, q.acc.nick]);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Телефон сообщает: здоровье кончилось — ранен и лежит. Врачи получают вызов.
+function onInjured(p, m) {
+  if (!p.acc) return;
+  p.injured = !!m.on;
+  if (!p.injured) return;
+  const x = +m.x, z = +m.z;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+  const id = ++callSeq;
+  CALLS.set(id, { id, from: p.acc.nick, fac: 'hospital', x, z, text: `Ранен ${p.acc.nick} [${p.id}]`, t: Date.now(), taken: '' });
+  for (const q of players.values()) if (q.acc && MEDIC.includes(q.acc.faction))
+    send(q, { t: 'call', id, from: p.acc.nick, fac: 'hospital', x, z, text: `Ранен ${p.acc.nick} [${p.id}] — нужна помощь`, med: true });
+}
+// Ответ телефона на обыск: что нашли — милиционеру.
+function onSearchRes(p, m) {
+  const cop = players.get(m.to | 0);
+  if (!cop || !cop.acc || Date.now() - (cop.searchT || 0) > 15000) return;
+  const items = Array.isArray(m.items) ? m.items.slice(0, 12).map(s => String(s).slice(0, 40)) : [];
+  send(cop, { t: 'chat', n: `Обыск ${p.acc.nick}`, x: items.length ? items.join(', ') : 'ничего запрещённого', k: 'doc' });
+}
+// Документы с телефона (паспорт, права, лицензии, медкарта) — чтобы показывать их другим.
+function onDocs(p, m) {
+  if (!p.acc) return;
+  p.docs = { name: String(m.name || '').slice(0, 40), city: String(m.city || '').slice(0, 20),
+    lic: Array.isArray(m.lic) ? m.lic.slice(0, 4).map(s => String(s).slice(0, 2)) : [], gun: !!m.gun, med: !!m.med };
+}
+
+// ---------------------------------------------------------------- семьи, суд и тюрьма, выборы мэра, налоги, телефон, торговля
+world.families = world.families || {};
+world.tax = world.tax || 0;
+let election = null;   // { until, cands: {key: {nick, votes}}, voters: {key: true} }
+
+function famOf(p) { return p.acc && p.acc.family ? world.families[p.acc.family] : null; }
+function saveFam(fid) { dbLater('world/families', { [fid]: world.families[fid] || null }); }
+function famChat(fid, from, x) {
+  for (const q of players.values()) if (q.acc && q.acc.family === fid) send(q, { t: 'chat', n: from, x, k: 'family' });
+}
+function isJudge(p) {
+  return (p.acc.faction === 'mayor' && (p.acc.rank | 0) >= 3) || admin(p) >= 2;
+}
+function jailMsg(q) {
+  const left = Math.ceil(((q.acc.jail_until || 0) - Date.now()) / 1000);
+  if (left > 0) send(q, { t: 'act', from: 0, name: 'Народный суд', kind: 'jail', sec: left, why: q.acc.jail_why || '' });
+}
+function finishElection() {
+  if (!election) return;
+  const list = Object.entries(election.cands).sort((a, b) => b[1].votes - a[1].votes);
+  election = null;
+  for (const [key, c] of list) {
+    const w = [...players.values()].find(q => q.acc && q.acc.key === key);
+    if (!w) continue;
+    setFaction(w, 'mayor', 99);
+    world.leaders.mayor = key;
+    dbLater('world/leaders', { mayor: key });
+    send(w, { t: 'faction_set', fid: 'mayor', rank: 99, leader: true, msg: 'Ты избран мэром города!' });
+    audit('выборы', `мэр — ${c.nick} (${c.votes} голосов)`, [c.nick]);
+    return sendAll({ t: 'chat', n: 'Избирком', x: `Выборы окончены. Мэр города — ${c.nick} (${c.votes} голосов)!`, k: 'ad' });
+  }
+  sendAll({ t: 'chat', n: 'Избирком', x: 'Выборы не состоялись: никого из кандидатов нет в городе', k: 'ad' });
+}
+setInterval(() => { if (election && Date.now() > election.until) finishElection(); }, 5000);
+
+function rpCommand2(p, cmd, arg, rest, lvl) {
+  const nick = p.acc.nick;
+  const q = target(arg[0]);
+  const tail = rest.slice((arg[0] || '').length).trim();
+  const fam = famOf(p);
+  switch (cmd) {
+    // ---------------- семьи
+    case '/fcreate': {
+      if (fam) return notice(p, 'Ты уже в семье (/fleave — выйти)'), true;
+      const name = rest.replace(/[^A-Za-zА-Яа-яЁё0-9 _-]/g, '').trim().slice(0, 20);
+      if (name.length < 3) return notice(p, '/fcreate Название — создать семью (30 000 ₽ наличными)'), true;
+      if (Object.values(world.families).some(f => f.name.toLowerCase() === name.toLowerCase())) return notice(p, 'Семья с таким названием уже есть'), true;
+      if ((p.acc.cash || 0) < 30000) return notice(p, 'Создание семьи стоит 30 000 ₽ наличными'), true;
+      setMoney(p, p.acc.cash - 30000, p.acc.bank || 0, `Семья «${name}» создана: −30 000 ₽`);
+      const fid = 'f' + Date.now().toString(36);
+      world.families[fid] = { name, leader: p.acc.key, members: { [p.acc.key]: nick }, bank: 0 };
+      p.acc.family = fid; persist(p, { family: fid }); saveFam(fid);
+      send(p, { t: 'prof', prof: profile(p) });
+      audit('семья', `${nick} создал семью «${name}»`, [nick]);
+      sendAll({ t: 'chat', n: '', x: `В городе новая семья — «${name}» (глава ${nick})`, k: 'family' });
+      return true;
+    }
+    case '/finvite':
+      if (!fam || fam.leader !== p.acc.key) return notice(p, 'Приглашать может глава семьи'), true;
+      if (!q || q === p || q.acc.family) return notice(p, '/finvite ID — игрок без семьи'), true;
+      if (!near(p, q, 6)) return notice(p, 'Подойди ближе'), true;
+      askPlayer(p, q, 'family', `${nick} зовёт тебя в семью «${fam.name}». Вступить?`, { fid: p.acc.family });
+      return true;
+    case '/fleave': {
+      if (!fam) return notice(p, 'Ты не в семье'), true;
+      const fid = p.acc.family;
+      delete fam.members[p.acc.key];
+      p.acc.family = ''; persist(p, { family: '' });
+      send(p, { t: 'prof', prof: profile(p) });
+      const rest_ = Object.keys(fam.members);
+      if (!rest_.length) { delete world.families[fid]; famChat(fid, '', ''); }
+      else if (fam.leader === p.acc.key) { fam.leader = rest_[0]; famChat(fid, '', `${nick} ушёл, глава семьи теперь — ${fam.members[rest_[0]]}`); }
+      else famChat(fid, '', `${nick} ушёл из семьи`);
+      saveFam(fid);
+      return notice(p, 'Ты вышел из семьи'), true;
+    }
+    case '/fkick': {
+      if (!fam || fam.leader !== p.acc.key) return notice(p, 'Выгонять может глава семьи'), true;
+      const key = Object.keys(fam.members).find(k => fam.members[k].toLowerCase() === String(arg[0] || '').toLowerCase());
+      if (!key || key === p.acc.key) return notice(p, '/fkick ник'), true;
+      const who = fam.members[key];
+      delete fam.members[key];
+      const qq = [...players.values()].find(r => r.acc && r.acc.key === key);
+      if (qq) { qq.acc.family = ''; notice(qq, `Тебя исключили из семьи «${fam.name}»`); send(qq, { t: 'prof', prof: profile(qq) }); }
+      dbLater('accounts/' + key, { family: '' });
+      saveFam(p.acc.family);
+      famChat(p.acc.family, '', `${who} исключён из семьи`);
+      return true;
+    }
+    case '/fam':
+      if (!fam) return notice(p, 'Ты не в семье'), true;
+      if (rest) famChat(p.acc.family, `[${fam.name}] ${nick}`, rest);
+      return true;
+    case '/finfo':
+      if (!fam) return notice(p, 'Ты не в семье. /fcreate Название — создать (30 000 ₽)'), true;
+      notice(p, `Семья «${fam.name}». Глава: ${fam.members[fam.leader] || '?'}. Состав (${Object.keys(fam.members).length}): ${Object.values(fam.members).slice(0, 15).join(', ')}. Казна семьи: ${fam.bank} ₽`);
+      return true;
+    case '/fput': case '/ftake': {
+      if (!fam) return notice(p, 'Ты не в семье'), true;
+      const n = parseInt(arg[0], 10);
+      if (!(n > 0)) return notice(p, `${cmd} сумма`), true;
+      if (cmd === '/fput') {
+        if ((p.acc.cash || 0) < n) return notice(p, 'Не хватает наличных'), true;
+        setMoney(p, p.acc.cash - n, p.acc.bank || 0, `В казну семьи: −${n} ₽`);
+        fam.bank += n;
+      } else {
+        if (fam.leader !== p.acc.key) return notice(p, 'Брать из казны может глава'), true;
+        if (fam.bank < n) return notice(p, `В казне только ${fam.bank} ₽`), true;
+        fam.bank -= n;
+        setMoney(p, (p.acc.cash || 0) + n, p.acc.bank || 0, `Из казны семьи: +${n} ₽`);
+      }
+      saveFam(p.acc.family);
+      famChat(p.acc.family, '', `${nick} ${cmd === '/fput' ? 'положил в казну' : 'взял из казны'} ${n} ₽ (в казне ${fam.bank} ₽)`);
+      return true;
+    }
+    // ---------------- суд и тюрьма
+    case '/sentence': {
+      if (!isJudge(p)) return notice(p, 'Приговор выносит судья (мэрия с 3 ранга) или администрация'), true;
+      const min = Math.max(1, Math.min(30, parseInt(arg[1], 10) || 0));
+      const why = rest.split(/\s+/).slice(2).join(' ') || 'по решению суда';
+      if (!q || !parseInt(arg[1], 10)) return notice(p, '/sentence ID минуты(1–30) статья'), true;
+      q.acc.jail_until = Date.now() + min * 60000; q.acc.jail_why = why;
+      persist(q, { jail_until: q.acc.jail_until, jail_why: why });
+      jailMsg(q);
+      audit('приговор', `${nick}: ${q.acc.nick} — ${min} мин (${why})`, [nick, q.acc.nick]);
+      sendAll({ t: 'chat', n: 'Народный суд', x: `${q.acc.nick} приговорён к ${min} мин колонии: ${why}`, k: 'ad' });
+      return true;
+    }
+    case '/free':
+      if (!isJudge(p) && !POLICE.includes(p.acc.faction)) return notice(p, 'Освобождает суд или милиция'), true;
+      if (!q) return notice(p, '/free ID'), true;
+      q.acc.jail_until = 0; persist(q, { jail_until: 0 });
+      send(q, { t: 'act', from: p.id, name: nick, kind: 'free' });
+      notice(p, `${q.acc.nick} освобождён`);
+      return true;
+    // ---------------- выборы и бюджет
+    case '/election': {
+      if (arg[0] === 'start') {
+        if (lvl < 3) return notice(p, 'Выборы объявляет администрация (3+)'), true;
+        const min = Math.max(2, Math.min(60, parseInt(arg[1], 10) || 15));
+        election = { until: Date.now() + min * 60000, cands: {}, voters: {} };
+        sendAll({ t: 'chat', n: 'Избирком', x: `Объявлены выборы мэра! ${min} мин. Кандидаты: /candidate. Голосовать: /vote ник`, k: 'ad' });
+        return true;
+      }
+      if (arg[0] === 'stop' && lvl >= 3) { finishElection(); return true; }
+      if (!election) return notice(p, 'Выборов сейчас нет'), true;
+      const l = Object.values(election.cands).map(c => `${c.nick}: ${c.votes}`).join(' · ') || 'кандидатов пока нет';
+      notice(p, `Выборы мэра — осталось ${Math.ceil((election.until - Date.now()) / 60000)} мин. ${l}`);
+      return true;
+    }
+    case '/candidate':
+      if (!election) return notice(p, 'Выборов сейчас нет'), true;
+      if (GANGS.includes(p.acc.faction)) return notice(p, 'Члены ОПГ не могут баллотироваться'), true;
+      election.cands[p.acc.key] = election.cands[p.acc.key] || { nick, votes: 0 };
+      sendAll({ t: 'chat', n: 'Избирком', x: `${nick} выдвинул свою кандидатуру в мэры`, k: 'ad' });
+      return true;
+    case '/vote': {
+      if (!election) return notice(p, 'Выборов сейчас нет'), true;
+      if (election.voters[p.acc.key]) return notice(p, 'Ты уже проголосовал'), true;
+      const key = Object.keys(election.cands).find(k => election.cands[k].nick.toLowerCase() === String(arg[0] || '').toLowerCase());
+      if (!key) return notice(p, '/vote ник кандидата (/election — список)'), true;
+      election.voters[p.acc.key] = true;
+      election.cands[key].votes++;
+      notice(p, `Голос за ${election.cands[key].nick} принят`);
+      return true;
+    }
+    case '/tax': {
+      if (world.leaders.mayor !== p.acc.key && lvl < 3) return notice(p, 'Налог устанавливает мэр'), true;
+      const n = Math.max(0, Math.min(20, parseInt(arg[0], 10)));
+      if (!Number.isFinite(n)) return notice(p, `/tax 0–20 (сейчас ${world.tax}%)`), true;
+      world.tax = n; dbLater('world', { tax: n });
+      sendAll(worldMsg());
+      sendAll({ t: 'chat', n: 'Мэрия', x: `Подоходный налог теперь ${n}% — с зарплат во фракциях`, k: 'ad' });
+      return true;
+    }
+    case '/payout': {
+      if (world.leaders.mayor !== p.acc.key && lvl < 3) return notice(p, 'Распределяет бюджет мэр'), true;
+      const fid = arg[0]; const n = parseInt(arg[1], 10);
+      if (!FACTIONS.includes(fid) || !(n > 0)) return notice(p, '/payout фракция сумма — премия лидеру из казны'), true;
+      if ((world.budget || 0) < n) return notice(p, `В казне только ${world.budget || 0} ₽`), true;
+      const lead = [...players.values()].find(r => r.acc && r.acc.key === world.leaders[fid]);
+      if (!lead) return notice(p, 'Лидера этой организации нет в городе'), true;
+      world.budget -= n; dbLater('world', { budget: world.budget });
+      setMoney(lead, lead.acc.cash || 0, (lead.acc.bank || 0) + n, `Мэрия перечислила ${n} ₽ на нужды организации`);
+      audit('бюджет', `${nick}: ${n} ₽ → ${fid} (${lead.acc.nick})`, [nick, lead.acc.nick]);
+      notice(p, `Перечислено ${n} ₽. В казне осталось ${world.budget} ₽`);
+      return true;
+    }
+    // ---------------- телефон
+    case '/sms': {
+      if (!q || q === p || !tail) return notice(p, '/sms ID текст'), true;
+      send(q, { t: 'sms', from: nick, x: tail.slice(0, 200) });
+      notice(p, `СМС для ${q.acc.nick} отправлено`);
+      return true;
+    }
+    case '/call':
+      if (!q || q === p) return notice(p, '/call ID — позвонить'), true;
+      if (p.callWith || q.callWith) return notice(p, 'Линия занята'), true;
+      askPlayer(p, q, 'call', `Входящий звонок: ${nick}. Ответить?`);
+      return true;
+    case '/t': {
+      const o = players.get(p.callWith | 0);
+      if (!o) { p.callWith = 0; return notice(p, 'Ты ни с кем не говоришь (/call ID)'), true; }
+      if (rest) for (const r of [p, o]) send(r, { t: 'chat', n: `📞 ${nick}`, x: rest, k: 'call' });
+      localChat(p, `* ${nick} говорит по телефону`, 'me', 8);
+      return true;
+    }
+    case '/h': {
+      const o = players.get(p.callWith | 0);
+      p.callWith = 0;
+      if (o) { o.callWith = 0; notice(o, `${nick} положил трубку`); }
+      return notice(p, 'Разговор окончен'), true;
+    }
+  }
+  return false;
+}
+
+// Торговля между игроками: продать или подарить вещь из сумки.
+function onTrade(p, m) {
+  const q = players.get(m.to | 0);
+  const item = String(m.item || '').slice(0, 40);
+  const price = Math.max(0, Math.min(200000, Math.trunc(+m.price || 0)));
+  if (!p.acc || !q || !q.acc || q === p || !item) return;
+  if (!near(p, q, 5)) return notice(p, 'Подойди ближе');
+  askPlayer(p, q, 'trade', price ? `${p.acc.nick} продаёт «${item}» за ${price} ₽. Купить?` : `${p.acc.nick} дарит тебе «${item}». Принять?`, { item, price });
+}
+// Налог с зарплаты (телефон сам вычитает и сообщает)
+function onTax(p, m) {
+  const n = Math.max(0, Math.min(5000, Math.trunc(+m.n || 0)));
+  if (!p.acc || !n || Date.now() - (p.taxT || 0) < 60000) return;
+  p.taxT = Date.now();
+  addBudget(n, '');
 }
 
 // ---------------------------------------------------------------- события сервера
@@ -984,6 +1639,8 @@ function onMessage(p, m) {
       send(p, worldMsg());
       if (ev) send(p, eventMsg());
       p.joinT = Date.now();
+      jailMsg(p);
+      send(p, portMsg(p)); send(p, bankMsg(p)); loanOverdue(p);
       for (const q of players.values()) if (q !== p && q.name) send(q, { t: 'join', id: p.id, name: p.name, info: p.info });
       for (const q of players.values()) if (q !== p && q.name && q.pcars && q.pcars.length) send(p, { t: 'pcars', id: q.id, l: q.pcars });
       return log(`вошёл ${p.name} (#${p.id}), онлайн ${online()}`);
@@ -1003,6 +1660,11 @@ function onMessage(p, m) {
     case 'lookup': return onLookup(p);
     case 'call': return onCall(p, m);
     case 'call_take': return onCallTake(p, m);
+    case 'injured': return onInjured(p, m);
+    case 'search_res': return onSearchRes(p, m);
+    case 'docs': return onDocs(p, m);
+    case 'trade': return onTrade(p, m);
+    case 'tax': return onTax(p, m);
     case 'money': return onMoney(p, m);
     case 'give': return onGive(p, m);
     case 'faction': return onFaction(p, m);
@@ -1010,6 +1672,9 @@ function onMessage(p, m) {
     case 'act': return onAct(p, m);
     case 'answer': return onAnswer(p, m);
     case 'turf': return onTurf(p, m);
+    case 'port': return onPort(p, m);
+    case 'bank': return onBank(p, m);
+    case 'lotto': return onLotto(p, m);
     case 'home': return onHome(p, m);
     case 'biz': return onBiz(p, m);
     case 'crash': {   // журнал вылета с телефона игрока — в лог сервера (Render → Logs)
@@ -1067,6 +1732,8 @@ function suspect(p, why) {
 
 function drop(p) {
   if (!players.has(p.id)) return;
+  const peer = players.get(p.callWith | 0);
+  if (peer) { peer.callWith = 0; notice(peer, 'Связь прервалась'); }
   if (p.acc && memo.has(p.acc.key)) memo.get(p.acc.key).sale = p.sale;
   flushSave(p);
   if (p.acc && p.acc.cash != null) persist(p, { cash: p.acc.cash, bank: p.acc.bank, last_seen: Date.now() });

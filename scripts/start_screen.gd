@@ -472,7 +472,7 @@ func ask_login() -> Array:
     var title := _text(box, "ВХОД В АККАУНТ", 40, GOLD)
     title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     var nick := LineEdit.new()
-    nick.placeholder_text = "Ник (например, Иван_Петров)"
+    nick.placeholder_text = "RP-ник: Имя_Фамилия (Иван_Петров)"
     nick.max_length = 20
     nick.custom_minimum_size = Vector2(0, 64)
     nick.add_theme_font_size_override("font_size", 28)
